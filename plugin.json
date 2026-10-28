@@ -1,0 +1,11 @@
+{
+  "name": "Pioneer Volume",
+  "author": "you",
+  "flags": [],
+  "api_version": 1,
+  "publish": {
+    "tags": ["utility"],
+    "description": "Absolute volume slider for Pioneer AVRs over the network",
+    "image": ""
+  }
+}
