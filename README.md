@@ -31,6 +31,13 @@ The workflow builds the plugin and attaches `pioneer-volume.zip` to a GitHub rel
 
 ## Protocol notes
 
-Pioneer's telnet-style control on port 23 (falls back to 8102). `###VL` sets
-volume (0-185, 161 = 0 dB, 0.5 dB steps), `?V` queries it, `MO`/`MF` mute/unmute.
-The slider is capped at 161 (0 dB); change `MAX_VOL` in `main.py` to alter that.
+The plugin tries, in order, whichever protocol your AVR answers:
+
+1. **eISCP on port 60128** (Onkyo-style, used by recent Pioneer VSX models).
+   Volume is `MVLxx` (hex), mute is `AMT00`/`AMT01`. 0.5 dB per step; on a
+   VSX-935 raw 48 = -58 dB and 50 = -57 dB, so 0 dB is raw 164.
+2. **Pioneer text protocol on port 23 or 8102.** `###VL` sets volume
+   (0-185, 161 = 0 dB, 0.5 dB steps), `MO`/`MF` mute/unmute. The slider shows dB.
+
+The slider cap defaults to 100 (about -32 dB, eISCP) or 161 / 0 dB (text protocol). Change it in
+the plugin's settings, since the right value depends on the AVR model.
