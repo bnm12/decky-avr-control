@@ -18,6 +18,7 @@ type State = {
   zero?: number;
   error?: string;
 };
+type Receiver = { ip: string; model: string; id: string };
 
 const getState = callable<[], State>("get_state");
 const setVolume = callable<[number], State>("set_volume");
@@ -25,6 +26,8 @@ const setMute = callable<[boolean], State>("set_mute");
 const getHost = callable<[], string>("get_host");
 const setHost = callable<[string], void>("set_host");
 const setMax = callable<[number], void>("set_max");
+const discover = callable<[], Receiver[]>("discover");
+const selectReceiver = callable<[string, string], void>("select_receiver");
 
 // 0.5 dB per step; `zero` is the raw value that equals 0 dB.
 const toDb = (v: number, zero: number) => {
@@ -40,6 +43,9 @@ function Content() {
   const [muted, setMuted] = useState(false);
   const [host, setHostState] = useState("");
   const [err, setErr] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [found, setFound] = useState<Receiver[]>([]);
+  const [searching, setSearching] = useState(false);
   const timer = useRef<number | undefined>(undefined);
   const capRaw = parseInt(maxText, 10);
   const capDb = Number.isNaN(capRaw) ? "" : ` (${toDb(capRaw, zero)})`;
@@ -58,9 +64,35 @@ function Content() {
     }
   };
 
+  const choose = async (r: Receiver) => {
+    await selectReceiver(r.ip, r.id);
+    setHostState(r.ip);
+    setNote(`Using ${r.model} at ${r.ip}`);
+    await refresh();
+  };
+
+  const search = async (auto: boolean) => {
+    setSearching(true);
+    setNote(null);
+    try {
+      const list = await discover();
+      setFound(list);
+      if (list.length === 0) {
+        setNote("No receiver found. Enter its IP address manually.");
+      } else if (auto && list.length === 1) {
+        await choose(list[0]);
+      }
+    } finally {
+      setSearching(false);
+    }
+  };
+
   useEffect(() => {
-    getHost().then(setHostState);
-    refresh();
+    getHost().then((h) => {
+      setHostState(h);
+      if (h) refresh();
+      else search(true); // first run: look for the receiver automatically
+    });
   }, []);
 
   const onSlide = (v: number) => {
@@ -104,7 +136,28 @@ function Content() {
           </PanelSectionRow>
         )}
       </PanelSection>
-      <PanelSection title="Settings">
+      <PanelSection title="Receiver">
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            disabled={searching}
+            onClick={() => search(false)}
+          >
+            {searching ? "Searching…" : "Search network"}
+          </ButtonItem>
+        </PanelSectionRow>
+        {note && (
+          <PanelSectionRow>
+            <div>{note}</div>
+          </PanelSectionRow>
+        )}
+        {found.map((r) => (
+          <PanelSectionRow key={r.id}>
+            <ButtonItem layout="below" onClick={() => choose(r)}>
+              {r.model} ({r.ip})
+            </ButtonItem>
+          </PanelSectionRow>
+        ))}
         <PanelSectionRow>
           <TextField
             label="AVR IP address"

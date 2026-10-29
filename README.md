@@ -10,7 +10,9 @@ AVRs (tested target: VSX-935) over the network, instead of CEC volume up/down.
 2. Unzip it into `~/homebrew/plugins/` so you end up with
    `~/homebrew/plugins/pioneer-volume/` (needs sudo).
 3. `sudo systemctl restart plugin_loader`
-4. Open the Quick Access menu, enter the AVR's IP, and tap Save & connect.
+4. Open the Quick Access menu. On first run the plugin searches the network for
+   the receiver by itself; otherwise tap **Search network**, or enter the IP
+   manually and tap Save & connect.
 
 Enable **Network Standby** on the AVR so it accepts commands while idle.
 
@@ -41,3 +43,12 @@ The plugin tries, in order, whichever protocol your AVR answers:
 
 The slider cap defaults to 100 (about -32 dB, eISCP) or 161 / 0 dB (text protocol). Change it in
 the plugin's settings, since the right value depends on the AVR model.
+
+## Discovery
+
+Receivers are found the same way the Pioneer/Onkyo apps do it: a UDP broadcast
+on port 60128 (the eISCP `ECNQSTN` probe, sent in both the Onkyo and Pioneer
+flavours). The receiver's unique ID is remembered, so if its IP address changes
+the plugin looks it up again automatically. Typing an IP by hand disables this.
+Broadcasts only work within one subnet, so a VLAN or guest network needs the IP
+entered manually.
