@@ -35,10 +35,17 @@ const toDb = (v: number, zero: number) => {
   return `${d > 0 ? "+" : ""}${d.toFixed(1)} dB`;
 };
 
+// The cap is entered in dB; the backend stores raw receiver units.
+const fmtDb = (raw: number, zero: number) => String((raw - zero) / 2);
+const dbToRaw = (text: string, zero: number): number | null => {
+  const d = parseFloat(text.replace(",", ".")); // accept 1,5 as well as 1.5
+  return Number.isNaN(d) ? null : Math.round(zero + d * 2);
+};
+
 function Content() {
   const [vol, setVol] = useState(0);
   const [max, setMaxState] = useState(100);
-  const [maxText, setMaxText] = useState("100");
+  const [maxText, setMaxText] = useState("-32");
   const [zero, setZero] = useState(164);
   const [muted, setMuted] = useState(false);
   const [host, setHostState] = useState("");
@@ -47,8 +54,6 @@ function Content() {
   const [found, setFound] = useState<Receiver[]>([]);
   const [searching, setSearching] = useState(false);
   const timer = useRef<number | undefined>(undefined);
-  const capRaw = parseInt(maxText, 10);
-  const capDb = Number.isNaN(capRaw) ? "" : ` (${toDb(capRaw, zero)})`;
 
   const refresh = async () => {
     const r = await getState();
@@ -56,7 +61,7 @@ function Content() {
       setVol(r.volume ?? 0);
       setMuted(!!r.muted);
       setMaxState(r.max ?? 100);
-      setMaxText(String(r.max ?? 100));
+      setMaxText(fmtDb(r.max ?? 100, r.zero ?? 164));
       setZero(r.zero ?? 164);
       setErr(null);
     } else {
@@ -167,7 +172,7 @@ function Content() {
         </PanelSectionRow>
         <PanelSectionRow>
           <TextField
-            label={`Max volume cap, raw units${capDb}`}
+            label="Max volume (dB)"
             value={maxText}
             onChange={(e) => setMaxText(e.target.value)}
           />
@@ -177,8 +182,8 @@ function Content() {
             layout="below"
             onClick={async () => {
               await setHost(host);
-              const n = parseInt(maxText, 10);
-              if (!Number.isNaN(n)) await setMax(n);
+              const n = dbToRaw(maxText, zero);
+              if (n !== null) await setMax(n);
               await refresh();
             }}
           >

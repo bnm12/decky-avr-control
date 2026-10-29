@@ -41,8 +41,8 @@ The plugin tries, in order, whichever protocol your AVR answers:
 2. **Pioneer text protocol on port 23 or 8102.** `###VL` sets volume
    (0-185, 161 = 0 dB, 0.5 dB steps), `MO`/`MF` mute/unmute. The slider shows dB.
 
-The slider cap defaults to 100 (about -32 dB, eISCP) or 161 / 0 dB (text protocol). Change it in
-the plugin's settings, since the right value depends on the AVR model.
+The slider cap is set in dB in the plugin's settings (default about -32 dB for
+eISCP, 0 dB for the text protocol), so the slider can never go above it.
 
 ## Discovery
 
