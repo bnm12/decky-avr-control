@@ -1,0 +1,52 @@
+name: Release
+
+# Actions tab -> Release -> Run workflow, and enter a version such as 0.2.1.
+# (or: gh workflow run release.yml -f version=0.2.1)
+# It sets that version in package.json, commits, tags v<version>, and starts the
+# Build workflow on the tag, which publishes the GitHub release.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. 0.2.1 (no leading v)"
+        required: true
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+
+      - name: Bump version, commit and tag
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="${INPUT_VERSION#v}"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::'$VERSION' is not of the form MAJOR.MINOR.PATCH"
+            exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
+            echo "::error::Tag v$VERSION already exists"
+            exit 1
+          fi
+          npm pkg set version="$VERSION"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json
+          git diff --cached --quiet || git commit -m "Release v$VERSION"
+          git tag "v$VERSION"
+          git push origin HEAD "v$VERSION"
+          # Pushes made with the built-in token don't start other workflows,
+          # but an explicit dispatch does.
+          gh workflow run build.yml --ref "v$VERSION"

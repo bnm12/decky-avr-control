@@ -17,11 +17,29 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: pnpm/action-setup@v4
+        with:
+          version: 10
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
+
+      # The tag is the source of truth for the version in the built zip.
+      - name: Take the version from the git tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Tag '$GITHUB_REF_NAME' is not of the form vMAJOR.MINOR.PATCH"
+            exit 1
+          fi
+          CURRENT=$(npm pkg get version | tr -d '"')
+          if [ "$CURRENT" != "$VERSION" ]; then
+            echo "::warning::package.json says $CURRENT but the tag is v$VERSION. This zip uses $VERSION, but the Decky store reads package.json. Use the Release workflow, which updates both."
+          fi
+          npm pkg set version="$VERSION"
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
@@ -29,7 +47,7 @@ jobs:
       - name: Package
         run: |
           mkdir -p out/pioneer-volume
-          cp -r dist main.py plugin.json package.json README.md out/pioneer-volume/
+          cp -r dist main.py plugin.json package.json LICENSE README.md out/pioneer-volume/
           cd out && zip -r ../pioneer-volume.zip pioneer-volume
 
       - uses: actions/upload-artifact@v4

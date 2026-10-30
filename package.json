@@ -1,7 +1,7 @@
 {
   "name": "pioneer-volume",
-  "version": "0.1.0",
-  "description": "Absolute volume slider for Pioneer AVRs",
+  "version": "0.2.1",
+  "description": "Volume slider, listening mode and per-game audio profiles for Pioneer and Onkyo AV receivers",
   "type": "module",
   "scripts": {
     "build": "rollup -c",
@@ -28,5 +28,10 @@
       ]
     }
   },
-  "packageManager": "pnpm@12.16.1"
+  "author": "bnm12",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bnm12/decky-pioneer-volume.git"
+  }
 }

@@ -399,10 +399,21 @@ function Content() {
 export default definePlugin(() => {
   // Runs for as long as the plugin is loaded, whether or not the panel is open,
   // so a game's saved profile is applied the moment it launches.
-  const reg = SteamClient.GameSessions.RegisterForAppLifetimeNotifications((n) => {
-    if (n.bRunning) gameStarted(n.unAppID, gameName(n.unAppID));
-    else gameStopped(n.unAppID);
-  });
+  // Steam's internal APIs can change between client updates: if game detection
+  // breaks, only the per-game feature stops, and the plugin itself still loads.
+  let reg: { unregister: () => void } | undefined;
+  try {
+    reg = SteamClient.GameSessions.RegisterForAppLifetimeNotifications((n) => {
+      try {
+        if (n.bRunning) gameStarted(n.unAppID, gameName(n.unAppID)).catch(() => {});
+        else gameStopped(n.unAppID).catch(() => {});
+      } catch {
+        /* ignore: never let a game event break the UI */
+      }
+    });
+  } catch (e) {
+    console.error("Pioneer Volume: game detection unavailable", e);
+  }
   syncRunningGame();
 
   return {
@@ -411,7 +422,11 @@ export default definePlugin(() => {
     content: <Content />,
     icon: <FaVolumeUp />,
     onDismount() {
-      reg?.unregister();
+      try {
+        reg?.unregister();
+      } catch {
+        /* ignore */
+      }
     },
   };
 });
