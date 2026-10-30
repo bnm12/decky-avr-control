@@ -138,6 +138,16 @@ async def _telnet(host: str, port: int, cmd: str, pattern: str):
         writer.close()
 
 
+async def _read_eiscp(reader) -> str:
+    hdr = await reader.readexactly(16)
+    if hdr[:4] != b"ISCP":
+        raise RuntimeError("Unexpected reply (not eISCP)")
+    hsize, dsize = struct.unpack(">II", hdr[4:12])
+    if hsize > 16:
+        await reader.readexactly(hsize - 16)
+    return (await reader.readexactly(dsize)).decode(errors="ignore")
+
+
 async def _eiscp(host: str, port: int, cmd: str, pattern: str):
     reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), 2)
     try:
@@ -146,18 +156,45 @@ async def _eiscp(host: str, port: int, cmd: str, pattern: str):
 
         async def wait():
             while True:
-                hdr = await reader.readexactly(16)
-                if hdr[:4] != b"ISCP":
-                    raise RuntimeError("Unexpected reply (not eISCP)")
-                hsize, dsize = struct.unpack(">II", hdr[4:12])
-                if hsize > 16:
-                    await reader.readexactly(hsize - 16)
-                payload = (await reader.readexactly(dsize)).decode(errors="ignore")
-                m = re.search(pattern, payload)
+                m = re.search(pattern, await _read_eiscp(reader))
                 if m:
                     return m
 
         return await asyncio.wait_for(wait(), 2)
+    finally:
+        writer.close()
+
+
+async def _eiscp_multi(host: str, port: int, queries: list):
+    """Several queries over ONE connection.
+
+    queries: [(cmd, pattern, required)]. Returns a list of matches (None for
+    optional queries the AVR didn't answer within a short grace period).
+    """
+    reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), 2)
+    try:
+        for cmd, _, _ in queries:
+            writer.write(_packet(f"!1{cmd}\r"))
+        await writer.drain()
+        rx = [re.compile(p) for _, p, _ in queries]
+        res = [None] * len(queries)
+
+        async def pump(want):
+            while any(res[i] is None for i in want):
+                payload = await _read_eiscp(reader)
+                for i, r in enumerate(rx):
+                    if res[i] is None:
+                        res[i] = r.search(payload)
+
+        required = [i for i, q in enumerate(queries) if q[2]]
+        optional = [i for i, q in enumerate(queries) if not q[2]]
+        await asyncio.wait_for(pump(required), 2)
+        if optional:
+            try:
+                await asyncio.wait_for(pump(optional), 0.6)
+            except Exception:
+                pass
+        return res
     finally:
         writer.close()
 
@@ -215,9 +252,29 @@ async def _request(tel: tuple, eis: tuple):
         raise
 
 
+MODE_NAMES = {"00": "Stereo", "01": "Direct", "0C": "All Channel Stereo", "40": "Straight Decode"}
+
+_current_game = None        # {"appid": int, "name": str} while a game is running
+_suppress_save_until = 0.0  # don't overwrite a game profile right after applying it
+
+
+def _base_cap(cfg: dict) -> int:
+    return int(cfg.get("max") or DEFAULT_MAX.get(cfg.get("proto", "eiscp"), 100))
+
+
+def _late_cap(cfg: dict) -> int:
+    # default: 50 dB below 0 dB
+    return int(cfg.get("late_max") or ZERO_DB[cfg.get("proto", "eiscp")] - 100)
+
+
+def _late_active(cfg: dict) -> bool:
+    return bool(cfg.get("late", {}).get("active"))
+
+
 def _cap() -> int:
     cfg = _load()
-    return int(cfg.get("max") or DEFAULT_MAX.get(cfg.get("proto", "eiscp"), 100))
+    base = _base_cap(cfg)
+    return min(base, _late_cap(cfg)) if _late_active(cfg) else base
 
 
 def _vol(proto: str, m) -> int:
@@ -226,6 +283,98 @@ def _vol(proto: str, m) -> int:
 
 def _muted(proto: str, m) -> bool:
     return m.group(1) == ("01" if proto == "eiscp" else "0")
+
+
+def _mode_label(mode):
+    if not mode:
+        return None
+    name = MODE_NAMES.get(mode.upper())
+    return f"{name} ({mode})" if name else f"Mode {mode}"
+
+
+async def _status() -> dict:
+    """Volume, mute and listening mode. One eISCP connection where possible."""
+    cfg = _load()
+    if not cfg.get("host"):
+        raise RuntimeError("Set the AVR IP address first, or tap Search network")
+    if cfg.get("proto") != "telnet":
+        try:
+            vol, mute, mode = await _eiscp_multi(
+                cfg["host"],
+                EISCP_PORT,
+                [
+                    ("MVLQSTN", r"MVL([0-9A-F]{2})", True),
+                    ("AMTQSTN", r"AMT([0-9A-F]{2})", True),
+                    ("LMDQSTN", r"LMD([0-9A-F]{2,4})", False),
+                ],
+            )
+            if cfg.get("port") != EISCP_PORT or cfg.get("proto") != "eiscp":
+                cfg["port"], cfg["proto"] = EISCP_PORT, "eiscp"
+                _save(cfg)
+            return {
+                "proto": "eiscp",
+                "volume": int(vol.group(1), 16),
+                "muted": mute.group(1) == "01",
+                "mode": mode.group(1).upper() if mode else None,
+            }
+        except Exception:
+            pass  # fall through to the generic path (telnet, rediscovery)
+    proto, v = await _request(("?V", r"VOL(\d+)"), ("MVLQSTN", r"MVL([0-9A-F]{2})"))
+    proto, m = await _request(("?M", r"MUT([01])"), ("AMTQSTN", r"AMT([0-9A-F]{2})"))
+    return {"proto": proto, "volume": _vol(proto, v), "muted": _muted(proto, m), "mode": None}
+
+
+async def _set_mode(code: str) -> None:
+    cfg = _load()
+    await _eiscp(cfg["host"], EISCP_PORT, f"LMD{code}", r"LMD([0-9A-F]{2,4})")
+
+
+def _remember(volume=None, mode=None) -> None:
+    """Keep the running game's profile in step, for the things it remembers."""
+    if not _current_game or time.monotonic() < _suppress_save_until:
+        return
+    cfg = _load()
+    p = cfg.get("games", {}).get(str(_current_game["appid"]))
+    if not p:
+        return
+    if _late_active(cfg):  # late-night volume must not leak into profiles
+        volume = None
+    changed = False
+    if volume is not None and p.get("volume") is not None and p["volume"] != volume:
+        p["volume"], changed = volume, True
+    if mode is not None and p.get("mode") is not None and p["mode"] != mode:
+        p["mode"], changed = mode, True
+    if changed:
+        _save(cfg)
+
+
+async def _apply_profile(p: dict) -> None:
+    vol = p.get("volume")
+    if vol is not None:
+        vol = max(0, min(_cap(), int(vol)))
+        await _request(
+            (f"{vol:03d}VL", r"VOL(\d+)"), (f"MVL{vol:02X}", r"MVL([0-9A-F]{2})")
+        )
+    if p.get("mode") and _load().get("proto") == "eiscp":
+        try:
+            await _set_mode(p["mode"])
+        except Exception as e:
+            decky.logger.error(f"Setting listening mode failed: {e}")
+
+
+async def _reapply_mode(appid: int, mode) -> None:
+    """AVRs sometimes switch mode once the game's audio starts; set it once more."""
+    if not mode:
+        return
+    await asyncio.sleep(4)
+    if not _current_game or _current_game["appid"] != appid:
+        return
+    try:
+        st = await _status()
+        if st.get("mode") and st["mode"] != mode:
+            await _set_mode(mode)
+    except Exception as e:
+        decky.logger.error(f"Re-applying listening mode failed: {e}")
 
 
 class Plugin:
@@ -261,18 +410,29 @@ class Plugin:
 
     async def get_state(self) -> dict:
         try:
-            proto, v = await _request(
-                ("?V", r"VOL(\d+)"), ("MVLQSTN", r"MVL([0-9A-F]{2})")
-            )
-            proto, m = await _request(
-                ("?M", r"MUT([01])"), ("AMTQSTN", r"AMT([0-9A-F]{2})")
-            )
+            st = await _status()
+            _remember(volume=st["volume"], mode=st["mode"])
+            cfg = _load()
+            game = None
+            if _current_game:
+                prof = cfg.get("games", {}).get(str(_current_game["appid"]))
+                prof = prof or {}
+                game = {
+                    **_current_game,
+                    "volume": prof.get("volume") is not None,
+                    "mode": prof.get("mode") is not None,
+                }
             return {
                 "ok": True,
-                "volume": _vol(proto, v),
-                "muted": _muted(proto, m),
+                "volume": st["volume"],
+                "muted": st["muted"],
                 "max": _cap(),
-                "zero": ZERO_DB[proto],
+                "cap": _base_cap(cfg),
+                "late": _late_active(cfg),
+                "late_cap": _late_cap(cfg),
+                "zero": ZERO_DB[st["proto"]],
+                "mode": _mode_label(st["mode"]),
+                "game": game,
             }
         except Exception as e:
             return {"ok": False, "error": str(e)}
@@ -284,7 +444,117 @@ class Plugin:
                 (f"{vol:03d}VL", r"VOL(\d+)"),
                 (f"MVL{vol:02X}", r"MVL([0-9A-F]{2})"),
             )
+            _remember(volume=_vol(proto, v))
             return {"ok": True, "volume": _vol(proto, v)}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    # ----------------------------------------------------- per-game profiles
+
+    async def set_current_game(self, appid: int, name: str) -> None:
+        """Tell the backend which game is running (does not touch the AVR)."""
+        global _current_game
+        _current_game = {"appid": int(appid), "name": name} if appid else None
+
+    async def game_started(self, appid: int, name: str) -> dict:
+        """A game launched: if it opted in, restore its volume and listening mode."""
+        global _current_game, _suppress_save_until
+        _current_game = {"appid": int(appid), "name": name}
+        p = _load().get("games", {}).get(str(int(appid)))
+        if not p:
+            return {"applied": False}
+        _suppress_save_until = time.monotonic() + 6
+        try:
+            await _apply_profile(p)
+        except Exception as e:
+            decky.logger.error(f"Applying game profile failed: {e}")
+            return {"applied": False, "error": str(e)}
+        asyncio.create_task(_reapply_mode(int(appid), p.get("mode")))
+        return {"applied": True}
+
+    async def game_stopped(self, appid: int) -> None:
+        global _current_game
+        if _current_game and _current_game["appid"] == int(appid):
+            _current_game = None
+
+    async def set_game_remember(self, what: str, enabled: bool) -> dict:
+        """Opt the running game in or out of remembering its volume or listening mode."""
+        if what not in ("volume", "mode"):
+            return {"ok": False, "error": f"Unknown setting: {what}"}
+        if not _current_game:
+            return {"ok": False, "error": "No game is running"}
+        key = str(_current_game["appid"])
+        if enabled:
+            try:
+                st = await _status()
+            except Exception as e:
+                return {"ok": False, "error": str(e)}
+            cfg = _load()
+            if what == "volume":
+                value = st["volume"]
+                if _late_active(cfg):  # save the normal level, not the late-night one
+                    value = cfg["late"].get("prev_volume", value)
+            else:
+                value = st["mode"]
+                if not value:
+                    return {"ok": False, "error": "Receiver doesn't report a listening mode"}
+            p = cfg.setdefault("games", {}).setdefault(key, {})
+            p["name"] = _current_game["name"]
+            p[what] = value
+        else:
+            cfg = _load()
+            games = cfg.setdefault("games", {})
+            p = games.get(key)
+            if p:
+                p.pop(what, None)
+                if p.get("volume") is None and p.get("mode") is None:
+                    games.pop(key)
+        _save(cfg)
+        return {"ok": True}
+
+    async def list_games(self) -> list:
+        return [
+            {
+                "appid": int(k),
+                "name": v.get("name", ""),
+                "volume": v.get("volume"),
+                "mode": v.get("mode"),
+            }
+            for k, v in _load().get("games", {}).items()
+        ]
+
+    async def forget_game(self, appid: int) -> None:
+        cfg = _load()
+        cfg.get("games", {}).pop(str(int(appid)), None)
+        _save(cfg)
+
+    # ------------------------------------------------------------ late night
+
+    async def set_late_max(self, value: int) -> None:
+        cfg = _load()
+        cfg["late_max"] = max(1, min(185, int(value)))
+        _save(cfg)
+
+    async def set_late_night(self, on: bool) -> dict:
+        """On: remember the volume, apply the lower cap. Off: restore both."""
+        try:
+            cfg = _load()
+            active = _late_active(cfg)
+            if on and not active:
+                st = await _status()
+                cfg = _load()
+                cfg["late"] = {"active": True, "prev_volume": st["volume"]}
+                _save(cfg)
+                cap = _cap()
+                if st["volume"] > cap:
+                    await self.set_volume(cap)
+            elif not on and active:
+                prev = cfg["late"].get("prev_volume")
+                cfg["late"] = {"active": False}
+                _save(cfg)
+                if prev is not None:
+                    await self.set_volume(prev)
+            return {"ok": True}
         except Exception as e:
             return {"ok": False, "error": str(e)}
 

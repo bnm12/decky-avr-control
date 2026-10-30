@@ -44,6 +44,26 @@ The plugin tries, in order, whichever protocol your AVR answers:
 The slider cap is set in dB in the plugin's settings (default about -32 dB for
 eISCP, 0 dB for the text protocol), so the slider can never go above it.
 
+## Features
+
+- **Volume slider and mute**, in dB, following changes made with the remote or the
+  Pioneer app (the open panel refreshes every 2 seconds).
+- **Per-game volume and listening mode, opt-in.** While a game is running, switch on
+  *Remember volume* and/or *Remember listening mode* for it in the plugin. Each one is
+  independent, so a game can remember just its mode, just its volume, or both. What a
+  game remembers is restored every time it launches, and updated whenever you change it
+  (with the slider, the remote or the app) while it runs. Games you haven't opted
+  in are never touched. Saved profiles are listed in the plugin, where you can forget them.
+- **Late night mode.** One toggle lowers the volume to the *Late night max volume* and
+  caps the slider there. Switching it off restores the previous volume and cap. Per-game
+  profiles are not changed while it is on.
+
+Listening modes are not hardcoded: the plugin reads whatever mode code your receiver
+reports and sends the same code back, so it works regardless of model. Change the mode
+with the remote or the Pioneer app; the plugin picks it up. Listening-mode support
+needs the eISCP protocol and a receiver that answers `LMDQSTN`; otherwise only volume
+is remembered.
+
 ## Discovery
 
 Receivers are found the same way the Pioneer/Onkyo apps do it: a UDP broadcast
