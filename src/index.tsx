@@ -1,5 +1,6 @@
 import {
   ButtonItem,
+  DropdownItem,
   PanelSection,
   PanelSectionRow,
   SliderField,
@@ -11,7 +12,14 @@ import { useEffect, useRef, useState } from "react";
 import { FaVolumeUp } from "react-icons/fa";
 
 type Game = { appid: number; name: string; volume: boolean; mode: boolean };
-type GameProfile = { appid: number; name: string; volume: number | null; mode: string | null };
+type GameProfile = {
+  appid: number;
+  name: string;
+  volume: number | null;
+  mode: string | null;
+  mode_name?: string | null;
+};
+type ModeOption = { code: string; name: string };
 type State = {
   ok: boolean;
   volume?: number;
@@ -21,7 +29,9 @@ type State = {
   late?: boolean;
   late_cap?: number;
   zero?: number;
-  mode?: string | null;
+  mode?: string | null; // display name
+  mode_code?: string | null;
+  modes?: ModeOption[];
   game?: Game | null;
   error?: string;
 };
@@ -35,6 +45,7 @@ const getHost = callable<[], string>("get_host");
 const setHost = callable<[string], void>("set_host");
 const setMax = callable<[number], void>("set_max");
 const setLateMax = callable<[number], void>("set_late_max");
+const setMode = callable<[string], Result>("set_mode");
 const setLateNight = callable<[boolean], Result>("set_late_night");
 const discover = callable<[], Receiver[]>("discover");
 const selectReceiver = callable<[string, string], void>("select_receiver");
@@ -85,7 +96,9 @@ function Content() {
   const [zero, setZero] = useState(164);
   const [muted, setMuted] = useState(false);
   const [lateOn, setLateOn] = useState(false);
-  const [mode, setMode] = useState<string | null>(null);
+  const [mode, setModeLabel] = useState<string | null>(null);
+  const [modeCode, setModeCode] = useState<string | null>(null);
+  const [modes, setModes] = useState<ModeOption[]>([]);
   const [game, setGame] = useState<Game | null>(null);
   const [profiles, setProfiles] = useState<GameProfile[]>([]);
   const [host, setHostState] = useState("");
@@ -110,7 +123,9 @@ function Content() {
     setMuted(!!r.muted);
     setMaxState(r.max ?? 100);
     setZero(z);
-    setMode(r.mode ?? null);
+    setModeLabel(r.mode ?? null);
+    setModeCode(r.mode_code ?? null);
+    setModes(r.modes ?? []);
     setGame(r.game ?? null);
     setLateOn(!!r.late);
     if (full) {
@@ -237,9 +252,28 @@ function Content() {
             }}
           />
         </PanelSectionRow>
-        {mode && (
+        {modeCode && (
           <PanelSectionRow>
-            <div>Listening mode: {mode}</div>
+            <DropdownItem
+              label="Listening mode"
+              rgOptions={[
+                ...modes.map((m) => ({ data: m.code, label: m.name })),
+                // a mode we have no name for: still show it as the current one
+                ...(modes.some((m) => m.code === modeCode)
+                  ? []
+                  : [{ data: modeCode, label: mode ?? `Mode ${modeCode}` }]),
+              ]}
+              selectedOption={modeCode}
+              onChange={async (opt: { data: string }) => {
+                lastLocal.current = Date.now();
+                setModeCode(opt.data);
+                const r = await setMode(opt.data);
+                if (!r.ok) setErr(r.error ?? "Unknown error");
+                else setErr(null);
+                lastLocal.current = Date.now();
+                if (!r.ok) await refresh(false); // snap back to the real mode
+              }}
+            />
           </PanelSectionRow>
         )}
         {err && (
@@ -279,7 +313,7 @@ function Content() {
                 layout="below"
                 description={[
                   p.volume !== null ? toDb(p.volume, zero) : null,
-                  p.mode ? `mode ${p.mode}` : null,
+                  p.mode ? (p.mode_name ?? `Mode ${p.mode}`) : null,
                 ]
                   .filter(Boolean)
                   .join(", ")}

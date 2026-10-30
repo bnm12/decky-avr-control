@@ -252,7 +252,31 @@ async def _request(tel: tuple, eis: tuple):
         raise
 
 
-MODE_NAMES = {"00": "Stereo", "01": "Direct", "0C": "All Channel Stereo", "40": "Straight Decode"}
+# Listening modes (eISCP LMD codes) as reported by a VSX-935, in picker order.
+# Collected with tools/collect_modes.py. Codes not listed still work: they are
+# shown as "Mode XX" and can be remembered per game.
+MODES = [
+    ("FF", "Auto Surround"),
+    ("00", "Stereo"),
+    ("01", "Direct"),
+    ("11", "Pure Direct"),
+    ("0F", "Mono"),
+    ("13", "Mono Music"),
+    ("0C", "Extended Stereo"),
+    ("0D", "Front Stage Surround"),
+    ("80", "Dolby Audio - Surround"),
+    ("82", "DTS Neural:X"),
+    ("17", "DTS Virtual:X"),
+    ("03", "Advanced Game"),
+    ("05", "Action"),
+    ("06", "Rock/Pop"),
+    ("08", "Classical"),
+    ("09", "Unplugged"),
+    ("0A", "Entertainment Show"),
+    ("0B", "Drama"),
+    ("0E", "Sports"),
+]
+MODE_NAMES = dict(MODES)
 
 _current_game = None        # {"appid": int, "name": str} while a game is running
 _suppress_save_until = 0.0  # don't overwrite a game profile right after applying it
@@ -288,8 +312,7 @@ def _muted(proto: str, m) -> bool:
 def _mode_label(mode):
     if not mode:
         return None
-    name = MODE_NAMES.get(mode.upper())
-    return f"{name} ({mode})" if name else f"Mode {mode}"
+    return MODE_NAMES.get(mode.upper()) or f"Mode {mode}"
 
 
 async def _status() -> dict:
@@ -324,9 +347,11 @@ async def _status() -> dict:
     return {"proto": proto, "volume": _vol(proto, v), "muted": _muted(proto, m), "mode": None}
 
 
-async def _set_mode(code: str) -> None:
+async def _set_mode(code: str) -> str:
+    """Select a listening mode; returns the code the receiver confirmed."""
     cfg = _load()
-    await _eiscp(cfg["host"], EISCP_PORT, f"LMD{code}", r"LMD([0-9A-F]{2,4})")
+    m = await _eiscp(cfg["host"], EISCP_PORT, f"LMD{code}", r"LMD([0-9A-F]{2,4})")
+    return m.group(1).upper()
 
 
 def _remember(volume=None, mode=None) -> None:
@@ -432,6 +457,8 @@ class Plugin:
                 "late_cap": _late_cap(cfg),
                 "zero": ZERO_DB[st["proto"]],
                 "mode": _mode_label(st["mode"]),
+                "mode_code": st["mode"],
+                "modes": [{"code": c, "name": n} for c, n in MODES],
                 "game": game,
             }
         except Exception as e:
@@ -446,6 +473,27 @@ class Plugin:
             )
             _remember(volume=_vol(proto, v))
             return {"ok": True, "volume": _vol(proto, v)}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    async def set_mode(self, code: str) -> dict:
+        """Pick a listening mode from the panel."""
+        try:
+            code = str(code).upper()
+            if not re.fullmatch(r"[0-9A-F]{2,4}", code):
+                return {"ok": False, "error": f"Invalid mode code: {code}"}
+            if _load().get("proto") != "eiscp":
+                return {"ok": False, "error": "Listening modes need the eISCP protocol"}
+            try:
+                confirmed = await _set_mode(code)
+            except (asyncio.TimeoutError, asyncio.IncompleteReadError):
+                return {
+                    "ok": False,
+                    "error": "The receiver didn't accept that mode (it may not be "
+                    "available for the current input or signal)",
+                }
+            _remember(mode=confirmed)
+            return {"ok": True, "mode": _mode_label(confirmed), "code": confirmed}
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
@@ -519,6 +567,7 @@ class Plugin:
                 "name": v.get("name", ""),
                 "volume": v.get("volume"),
                 "mode": v.get("mode"),
+                "mode_name": _mode_label(v.get("mode")),
             }
             for k, v in _load().get("games", {}).items()
         ]

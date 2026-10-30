@@ -1,0 +1,24 @@
+{
+  "host": "192.168.1.229",
+  "modes": {
+    "00": "Stereo",
+    "01": "Direct",
+    "03": "Advanced Game",
+    "05": "Action",
+    "06": "Rock/Pop",
+    "08": "Classical",
+    "09": "Unplugged",
+    "0A": "Entertainment Show",
+    "0B": "Drama",
+    "0C": "Extended Stereo",
+    "0D": "Front Stage Surround",
+    "0E": "Sports",
+    "0F": "Mono",
+    "11": "Pure Direct",
+    "13": "Mono Music",
+    "17": "DTS Virtual:X",
+    "80": "Dolby Audio - Surround",
+    "82": "DTS Neural:X",
+    "FF": "Auto Surround"
+  }
+}

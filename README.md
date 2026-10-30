@@ -58,11 +58,12 @@ eISCP, 0 dB for the text protocol), so the slider can never go above it.
   caps the slider there. Switching it off restores the previous volume and cap. Per-game
   profiles are not changed while it is on.
 
-Listening modes are not hardcoded: the plugin reads whatever mode code your receiver
-reports and sends the same code back, so it works regardless of model. Change the mode
-with the remote or the Pioneer app; the plugin picks it up. Listening-mode support
-needs the eISCP protocol and a receiver that answers `LMDQSTN`; otherwise only volume
-is remembered.
+- **Listening mode picker.** Choose a listening mode from the panel (eISCP receivers that
+  report one). The list was collected from a VSX-935 with `tools/collect_modes.py` and
+  may be incomplete. Codes that aren't in the list still work: they show as `Mode XX`, and
+  per-game profiles remember the raw code, so nothing depends on the list being complete.
+  Some modes are only available for certain inputs or signals; if the receiver refuses one
+  the plugin says so.
 
 ## Discovery
 
@@ -72,3 +73,15 @@ flavours). The receiver's unique ID is remembered, so if its IP address changes
 the plugin looks it up again automatically. Typing an IP by hand disables this.
 Broadcasts only work within one subnet, so a VLAN or guest network needs the IP
 entered manually.
+
+## Collecting listening-mode codes
+
+`tools/collect_modes.py` helps build a table of your receiver's listening-mode codes.
+It only reads the mode, it never changes it:
+
+```
+python3 tools/collect_modes.py 192.168.1.229
+```
+
+Change the mode with the remote or the Pioneer app; each new code asks for the name
+the receiver displays. Results are saved to `listening_modes.json`.
