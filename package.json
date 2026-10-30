@@ -1,6 +1,6 @@
 {
   "name": "pioneer-volume",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Volume slider, listening mode and per-game audio profiles for Pioneer and Onkyo AV receivers",
   "type": "module",
   "scripts": {
