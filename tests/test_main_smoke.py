@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import importlib.util
+import json
 import os
 import sys
 import tempfile
@@ -145,15 +146,23 @@ class MainSmokeTests(unittest.TestCase):
                 else:
                     sys.modules["decky"] = old_decky
 
-    def test_main_keeps_migrated_settings_in_memory_when_save_fails(self):
+    def test_main_keeps_schema_migration_in_memory_when_save_fails(self):
         with tempfile.TemporaryDirectory() as directory:
             settings_dir = os.path.join(directory, "avr-control")
-            legacy_dir = os.path.join(directory, "pioneer-volume")
-            os.makedirs(legacy_dir)
+            os.makedirs(settings_dir)
             with open(
-                os.path.join(legacy_dir, "settings.json"), "w", encoding="utf-8"
+                os.path.join(settings_dir, "settings.json"), "w", encoding="utf-8"
             ) as file:
-                file.write('{"host": "192.0.2.7", "proto": "eiscp"}')
+                json.dump(
+                    {
+                        "version": 3,
+                        "receiver": {
+                            "driver": "eiscp",
+                            "config": {"host": "192.0.2.7"},
+                        },
+                    },
+                    file,
+                )
 
             decky_stub = types.ModuleType("decky")
             decky_stub.DECKY_PLUGIN_SETTINGS_DIR = settings_dir
