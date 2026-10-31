@@ -1,6 +1,6 @@
 {
   "name": "avr-control",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Volume slider, listening mode and per-game audio profiles for Pioneer and Onkyo AV receivers",
   "type": "module",
   "scripts": {
