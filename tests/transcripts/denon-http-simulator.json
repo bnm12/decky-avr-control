@@ -1,0 +1,203 @@
+{
+  "schema_version": 1,
+  "source": "simulator",
+  "tool": {
+    "name": "avr_probe",
+    "version": "1.0"
+  },
+  "timestamp": "2026-10-31T17:23:25.603300+00:00",
+  "runtime": {
+    "python": "3.15.2",
+    "os": "Windows-11-10.0.22631-SP0"
+  },
+  "driver": {
+    "key": "denon",
+    "label": "Denon / Marantz"
+  },
+  "found": {
+    "model": "AVR-X3800H HTTP simulator",
+    "id": "RECEIVER_ID_1",
+    "host": "RECEIVER_IP"
+  },
+  "status": {
+    "volume": 91,
+    "muted": false,
+    "power": true,
+    "mode": "STEREO"
+  },
+  "capabilities": [
+    "mode",
+    "mute",
+    "power",
+    "volume"
+  ],
+  "scale": {
+    "min": 0,
+    "max": 196,
+    "unit": "dB",
+    "zero": 160,
+    "steps_per_unit": 2,
+    "default_cap": 100
+  },
+  "modes": [
+    {
+      "code": "MOVIE",
+      "name": "Movie"
+    },
+    {
+      "code": "MUSIC",
+      "name": "Music"
+    },
+    {
+      "code": "GAME",
+      "name": "Game"
+    },
+    {
+      "code": "DIRECT",
+      "name": "Direct"
+    },
+    {
+      "code": "PURE DIRECT",
+      "name": "Pure Direct"
+    },
+    {
+      "code": "STEREO",
+      "name": "Stereo"
+    },
+    {
+      "code": "AUTO",
+      "name": "Auto"
+    },
+    {
+      "code": "DOLBY DIGITAL",
+      "name": "Dolby Digital"
+    },
+    {
+      "code": "DOLBY SURROUND",
+      "name": "Dolby Surround"
+    },
+    {
+      "code": "DTS SURROUND",
+      "name": "DTS Surround"
+    },
+    {
+      "code": "DTS NEURAL:X",
+      "name": "DTS Neural:X"
+    },
+    {
+      "code": "MCH STEREO",
+      "name": "Multi-Channel Stereo"
+    },
+    {
+      "code": "VIRTUAL",
+      "name": "Virtual"
+    }
+  ],
+  "modes_error": null,
+  "getters": {
+    "volume": 91,
+    "mute": false,
+    "power": true,
+    "mode": "STEREO"
+  },
+  "write_restore_errors": [],
+  "proxy_errors": [],
+  "connections": [
+    {
+      "port": 64159,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.00094,
+          "data_b64": "R0VUIC9nb2Zvcm0vZm9ybU1haW5ab25lX01haW5ab25lWG1sU3RhdHVzLnhtbCBIVFRQLzEuMQ0KQWNjZXB0LUVuY29kaW5nOiBpZGVudGl0eQ0KSG9zdDogSVBYWFhYWFhYOjY0MTYwDQpVc2VyLUFnZW50OiBBVlItQ29udHJvbA0KQ29ubmVjdGlvbjogY2xvc2UNCg0K",
+          "text": "GET /goform/formMainZone_MainZoneXmlStatus.xml HTTP/1.1\r\nAccept-Encoding: identity\r\nHost: IPXXXXXXX:64160\r\nUser-Agent: AVR-Control\r\nConnection: close\r\n\r\n"
+        },
+        {
+          "dir": "rx",
+          "t": 0.001193,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjUgR01UDQpDb250ZW50LVR5cGU6IHRleHQveG1sDQpDb250ZW50LUxlbmd0aDogMjIxDQoNCjxpdGVtPjxQb3dlcj48dmFsdWU+T048L3ZhbHVlPjwvUG93ZXI+PFZvbHVtZURpc3BsYXk+PHZhbHVlPlJlbGF0aXZlPC92YWx1ZT48L1ZvbHVtZURpc3BsYXk+PE1hc3RlclZvbHVtZT48dmFsdWU+LTM0LjU8L3ZhbHVlPjwvTWFzdGVyVm9sdW1lPjxNdXRlPjx2YWx1ZT5vZmY8L3ZhbHVlPjwvTXV0ZT48U3Vyck1vZGU+PHZhbHVlPlNURVJFTzwvdmFsdWU+PC9TdXJyTW9kZT48L2l0ZW0+",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:25 GMT\r\nContent-Type: text/xml\r\nContent-Length: 221\r\n\r\n<item><Power><value>ON</value></Power><VolumeDisplay><value>Relative</value></VolumeDisplay><MasterVolume><value>-34.5</value></MasterVolume><Mute><value>off</value></Mute><SurrMode><value>STEREO</value></SurrMode></item>"
+        }
+      ]
+    },
+    {
+      "port": 64159,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.002465,
+          "data_b64": "R0VUIC9nb2Zvcm0vZm9ybU1haW5ab25lX01haW5ab25lWG1sU3RhdHVzLnhtbCBIVFRQLzEuMQ0KQWNjZXB0LUVuY29kaW5nOiBpZGVudGl0eQ0KSG9zdDogSVBYWFhYWFhYOjY0MTYwDQpVc2VyLUFnZW50OiBBVlItQ29udHJvbA0KQ29ubmVjdGlvbjogY2xvc2UNCg0K",
+          "text": "GET /goform/formMainZone_MainZoneXmlStatus.xml HTTP/1.1\r\nAccept-Encoding: identity\r\nHost: IPXXXXXXX:64160\r\nUser-Agent: AVR-Control\r\nConnection: close\r\n\r\n"
+        },
+        {
+          "dir": "rx",
+          "t": 0.002705,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjUgR01UDQpDb250ZW50LVR5cGU6IHRleHQveG1sDQpDb250ZW50LUxlbmd0aDogMjIxDQoNCjxpdGVtPjxQb3dlcj48dmFsdWU+T048L3ZhbHVlPjwvUG93ZXI+PFZvbHVtZURpc3BsYXk+PHZhbHVlPlJlbGF0aXZlPC92YWx1ZT48L1ZvbHVtZURpc3BsYXk+PE1hc3RlclZvbHVtZT48dmFsdWU+LTM0LjU8L3ZhbHVlPjwvTWFzdGVyVm9sdW1lPjxNdXRlPjx2YWx1ZT5vZmY8L3ZhbHVlPjwvTXV0ZT48U3Vyck1vZGU+PHZhbHVlPlNURVJFTzwvdmFsdWU+PC9TdXJyTW9kZT48L2l0ZW0+",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:25 GMT\r\nContent-Type: text/xml\r\nContent-Length: 221\r\n\r\n<item><Power><value>ON</value></Power><VolumeDisplay><value>Relative</value></VolumeDisplay><MasterVolume><value>-34.5</value></MasterVolume><Mute><value>off</value></Mute><SurrMode><value>STEREO</value></SurrMode></item>"
+        }
+      ]
+    },
+    {
+      "port": 64159,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.024912,
+          "data_b64": "R0VUIC9nb2Zvcm0vZm9ybU1haW5ab25lX01haW5ab25lWG1sU3RhdHVzLnhtbCBIVFRQLzEuMQ0KQWNjZXB0LUVuY29kaW5nOiBpZGVudGl0eQ0KSG9zdDogSVBYWFhYWFhYOjY0MTYwDQpVc2VyLUFnZW50OiBBVlItQ29udHJvbA0KQ29ubmVjdGlvbjogY2xvc2UNCg0K",
+          "text": "GET /goform/formMainZone_MainZoneXmlStatus.xml HTTP/1.1\r\nAccept-Encoding: identity\r\nHost: IPXXXXXXX:64160\r\nUser-Agent: AVR-Control\r\nConnection: close\r\n\r\n"
+        },
+        {
+          "dir": "rx",
+          "t": 0.025186,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjUgR01UDQpDb250ZW50LVR5cGU6IHRleHQveG1sDQpDb250ZW50LUxlbmd0aDogMjIxDQoNCjxpdGVtPjxQb3dlcj48dmFsdWU+T048L3ZhbHVlPjwvUG93ZXI+PFZvbHVtZURpc3BsYXk+PHZhbHVlPlJlbGF0aXZlPC92YWx1ZT48L1ZvbHVtZURpc3BsYXk+PE1hc3RlclZvbHVtZT48dmFsdWU+LTM0LjU8L3ZhbHVlPjwvTWFzdGVyVm9sdW1lPjxNdXRlPjx2YWx1ZT5vZmY8L3ZhbHVlPjwvTXV0ZT48U3Vyck1vZGU+PHZhbHVlPlNURVJFTzwvdmFsdWU+PC9TdXJyTW9kZT48L2l0ZW0+",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:25 GMT\r\nContent-Type: text/xml\r\nContent-Length: 221\r\n\r\n<item><Power><value>ON</value></Power><VolumeDisplay><value>Relative</value></VolumeDisplay><MasterVolume><value>-34.5</value></MasterVolume><Mute><value>off</value></Mute><SurrMode><value>STEREO</value></SurrMode></item>"
+        }
+      ]
+    },
+    {
+      "port": 64159,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.026676,
+          "data_b64": "R0VUIC9nb2Zvcm0vZm9ybU1haW5ab25lX01haW5ab25lWG1sU3RhdHVzLnhtbCBIVFRQLzEuMQ0KQWNjZXB0LUVuY29kaW5nOiBpZGVudGl0eQ0KSG9zdDogSVBYWFhYWFhYOjY0MTYwDQpVc2VyLUFnZW50OiBBVlItQ29udHJvbA0KQ29ubmVjdGlvbjogY2xvc2UNCg0K",
+          "text": "GET /goform/formMainZone_MainZoneXmlStatus.xml HTTP/1.1\r\nAccept-Encoding: identity\r\nHost: IPXXXXXXX:64160\r\nUser-Agent: AVR-Control\r\nConnection: close\r\n\r\n"
+        },
+        {
+          "dir": "rx",
+          "t": 0.026958,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjUgR01UDQpDb250ZW50LVR5cGU6IHRleHQveG1sDQpDb250ZW50LUxlbmd0aDogMjIxDQoNCg==",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:25 GMT\r\nContent-Type: text/xml\r\nContent-Length: 221\r\n\r\n"
+        },
+        {
+          "dir": "rx",
+          "t": 0.02713,
+          "data_b64": "PGl0ZW0+PFBvd2VyPjx2YWx1ZT5PTjwvdmFsdWU+PC9Qb3dlcj48Vm9sdW1lRGlzcGxheT48dmFsdWU+UmVsYXRpdmU8L3ZhbHVlPjwvVm9sdW1lRGlzcGxheT48TWFzdGVyVm9sdW1lPjx2YWx1ZT4tMzQuNTwvdmFsdWU+PC9NYXN0ZXJWb2x1bWU+PE11dGU+PHZhbHVlPm9mZjwvdmFsdWU+PC9NdXRlPjxTdXJyTW9kZT48dmFsdWU+U1RFUkVPPC92YWx1ZT48L1N1cnJNb2RlPjwvaXRlbT4=",
+          "text": "<item><Power><value>ON</value></Power><VolumeDisplay><value>Relative</value></VolumeDisplay><MasterVolume><value>-34.5</value></MasterVolume><Mute><value>off</value></Mute><SurrMode><value>STEREO</value></SurrMode></item>"
+        }
+      ]
+    },
+    {
+      "port": 64159,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.040084,
+          "data_b64": "R0VUIC9nb2Zvcm0vZm9ybU1haW5ab25lX01haW5ab25lWG1sU3RhdHVzLnhtbCBIVFRQLzEuMQ0KQWNjZXB0LUVuY29kaW5nOiBpZGVudGl0eQ0KSG9zdDogSVBYWFhYWFhYOjY0MTYwDQpVc2VyLUFnZW50OiBBVlItQ29udHJvbA0KQ29ubmVjdGlvbjogY2xvc2UNCg0K",
+          "text": "GET /goform/formMainZone_MainZoneXmlStatus.xml HTTP/1.1\r\nAccept-Encoding: identity\r\nHost: IPXXXXXXX:64160\r\nUser-Agent: AVR-Control\r\nConnection: close\r\n\r\n"
+        },
+        {
+          "dir": "rx",
+          "t": 0.040362,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjUgR01UDQpDb250ZW50LVR5cGU6IHRleHQveG1sDQpDb250ZW50LUxlbmd0aDogMjIxDQoNCjxpdGVtPjxQb3dlcj48dmFsdWU+T048L3ZhbHVlPjwvUG93ZXI+PFZvbHVtZURpc3BsYXk+PHZhbHVlPlJlbGF0aXZlPC92YWx1ZT48L1ZvbHVtZURpc3BsYXk+PE1hc3RlclZvbHVtZT48dmFsdWU+LTM0LjU8L3ZhbHVlPjwvTWFzdGVyVm9sdW1lPjxNdXRlPjx2YWx1ZT5vZmY8L3ZhbHVlPjwvTXV0ZT48U3Vyck1vZGU+PHZhbHVlPlNURVJFTzwvdmFsdWU+PC9TdXJyTW9kZT48L2l0ZW0+",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:25 GMT\r\nContent-Type: text/xml\r\nContent-Length: 221\r\n\r\n<item><Power><value>ON</value></Power><VolumeDisplay><value>Relative</value></VolumeDisplay><MasterVolume><value>-34.5</value></MasterVolume><Mute><value>off</value></Mute><SurrMode><value>STEREO</value></SurrMode></item>"
+        }
+      ]
+    }
+  ],
+  "notes": [
+    "The local recording proxy uses the receiver's selected TCP port.",
+    "The driver connects to RECEIVER_IP through the proxy; an HTTP driver would therefore send that address in its Host header."
+  ],
+  "raw_discovery": {}
+}

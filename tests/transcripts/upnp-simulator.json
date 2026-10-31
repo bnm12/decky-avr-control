@@ -1,0 +1,202 @@
+{
+  "schema_version": 1,
+  "source": "simulator",
+  "tool": {
+    "name": "avr_probe",
+    "version": "1.0"
+  },
+  "timestamp": "2026-10-31T17:23:25.047340+00:00",
+  "runtime": {
+    "python": "3.15.2",
+    "os": "Windows-11-10.0.22631-SP0"
+  },
+  "driver": {
+    "key": "upnp",
+    "label": "UPnP / DLNA renderer (Sonos and others; volume and mute only)"
+  },
+  "found": {
+    "model": "Sonos Play:1 simulator",
+    "id": "RECEIVER_ID_1",
+    "host": "RECEIVER_IP"
+  },
+  "status": {
+    "volume": 35,
+    "muted": false,
+    "power": null,
+    "mode": null
+  },
+  "capabilities": [
+    "mute",
+    "volume"
+  ],
+  "scale": {
+    "min": 0,
+    "max": 100,
+    "unit": "%",
+    "zero": 0,
+    "steps_per_unit": 1,
+    "default_cap": 40
+  },
+  "modes": [],
+  "modes_error": null,
+  "getters": {
+    "volume": 35,
+    "mute": false
+  },
+  "write_restore_errors": [],
+  "proxy_errors": [],
+  "connections": [
+    {
+      "port": 64128,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.001391,
+          "data_b64": "R0VUIC94bWwvZGV2aWNlX2Rlc2NyaXB0aW9uLnhtbCBIVFRQLzEuMQ0KQWNjZXB0LUVuY29kaW5nOiBpZGVudGl0eQ0KSG9zdDogSVBYWFhYWFhYOjY0MTI5DQpVc2VyLUFnZW50OiBBVlIgQ29udHJvbA0KQWNjZXB0OiB0ZXh0L3htbA0KQ29ubmVjdGlvbjogY2xvc2UNCg0K",
+          "text": "GET /xml/device_description.xml HTTP/1.1\r\nAccept-Encoding: identity\r\nHost: IPXXXXXXX:64129\r\nUser-Agent: AVR Control\r\nAccept: text/xml\r\nConnection: close\r\n\r\n"
+        },
+        {
+          "dir": "rx",
+          "t": 0.001575,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjUgR01UDQpDb250ZW50LVR5cGU6IHRleHQveG1sOyBjaGFyc2V0PXV0Zi04DQpDb250ZW50LUxlbmd0aDogNTM4DQoNCjw/eG1sIHZlcnNpb249IjEuMCI/Pjxyb290IHhtbG5zPSJ1cm46c2NoZW1hcy11cG5wLW9yZzpkZXZpY2UtMS0wIj48VVJMQmFzZT5odHRwOi8vMTI3LjAuMC4xOjAvPC9VUkxCYXNlPjxkZXZpY2U+PGZyaWVuZGx5TmFtZT5MaXZpbmcgUm9vbTwvZnJpZW5kbHlOYW1lPjxtYW51ZmFjdHVyZXI+U29ub3M8L21hbnVmYWN0dXJlcj48bW9kZWxOYW1lPlBsYXk6MTwvbW9kZWxOYW1lPjxVRE4+UkVDRUlWRVJfSURYWFhYWFhYWFhYPC9VRE4+PHNlcnZpY2VMaXN0PjxzZXJ2aWNlPjxzZXJ2aWNlVHlwZT51cm46c2NoZW1hcy11cG5wLW9yZzpzZXJ2aWNlOlJlbmRlcmluZ0NvbnRyb2w6MTwvc2VydmljZVR5cGU+PHNlcnZpY2VJZD51cm46dXBucC1vcmc6c2VydmljZUlkOlJlbmRlcmluZ0NvbnRyb2w8L3NlcnZpY2VJZD48Y29udHJvbFVSTD4vTWVkaWFSZW5kZXJlci9SZW5kZXJpbmdDb250cm9sL0NvbnRyb2w8L2NvbnRyb2xVUkw+PFNDUERVUkw+L3NjcGQueG1sPC9TQ1BEVVJMPjwvc2VydmljZT48L3NlcnZpY2VMaXN0PjwvZGV2aWNlPjwvcm9vdD4=",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:25 GMT\r\nContent-Type: text/xml; charset=utf-8\r\nContent-Length: 538\r\n\r\n<?xml version=\"1.0\"?><root xmlns=\"urn:schemas-upnp-org:device-1-0\"><URLBase>http://127.0.0.1:0/</URLBase><device><friendlyName>Living Room</friendlyName><manufacturer>Sonos</manufacturer><modelName>Play:1</modelName><UDN>RECEIVER_IDXXXXXXXXXX</UDN><serviceList><service><serviceType>urn:schemas-upnp-org:service:RenderingControl:1</serviceType><serviceId>urn:upnp-org:serviceId:RenderingControl</serviceId><controlURL>/MediaRenderer/RenderingControl/Control</controlURL><SCPDURL>/scpd.xml</SCPDURL></service></serviceList></device></root>"
+        }
+      ]
+    },
+    {
+      "port": 64128,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.002923,
+          "data_b64": "R0VUIC9zY3BkLnhtbCBIVFRQLzEuMQ0KQWNjZXB0LUVuY29kaW5nOiBpZGVudGl0eQ0KSG9zdDogSVBYWFhYWFhYOjY0MTI5DQpVc2VyLUFnZW50OiBBVlIgQ29udHJvbA0KQWNjZXB0OiB0ZXh0L3htbA0KQ29ubmVjdGlvbjogY2xvc2UNCg0K",
+          "text": "GET /scpd.xml HTTP/1.1\r\nAccept-Encoding: identity\r\nHost: IPXXXXXXX:64129\r\nUser-Agent: AVR Control\r\nAccept: text/xml\r\nConnection: close\r\n\r\n"
+        },
+        {
+          "dir": "rx",
+          "t": 0.003136,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjUgR01UDQpDb250ZW50LVR5cGU6IHRleHQveG1sOyBjaGFyc2V0PXV0Zi04DQpDb250ZW50LUxlbmd0aDogMjk5DQoNCjw/eG1sIHZlcnNpb249IjEuMCI/PjxzY3BkIHhtbG5zPSJ1cm46c2NoZW1hcy11cG5wLW9yZzpzZXJ2aWNlLTEtMCI+PHNlcnZpY2VTdGF0ZVRhYmxlPjxzdGF0ZVZhcmlhYmxlIHNlbmRFdmVudHM9Im5vIj48bmFtZT5Wb2x1bWU8L25hbWU+PGRhdGFUeXBlPnVpMjwvZGF0YVR5cGU+PGFsbG93ZWRWYWx1ZVJhbmdlPjxtaW5pbXVtPjA8L21pbmltdW0+PG1heGltdW0+MTAwPC9tYXhpbXVtPjxzdGVwPjE8L3N0ZXA+PC9hbGxvd2VkVmFsdWVSYW5nZT48L3N0YXRlVmFyaWFibGU+PC9zZXJ2aWNlU3RhdGVUYWJsZT48L3NjcGQ+",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:25 GMT\r\nContent-Type: text/xml; charset=utf-8\r\nContent-Length: 299\r\n\r\n<?xml version=\"1.0\"?><scpd xmlns=\"urn:schemas-upnp-org:service-1-0\"><serviceStateTable><stateVariable sendEvents=\"no\"><name>Volume</name><dataType>ui2</dataType><allowedValueRange><minimum>0</minimum><maximum>100</maximum><step>1</step></allowedValueRange></stateVariable></serviceStateTable></scpd>"
+        }
+      ]
+    },
+    {
+      "port": 64128,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.00419,
+          "data_b64": "UE9TVCAvTWVkaWFSZW5kZXJlci9SZW5kZXJpbmdDb250cm9sL0NvbnRyb2wgSFRUUC8xLjENCkFjY2VwdC1FbmNvZGluZzogaWRlbnRpdHkNCkNvbnRlbnQtTGVuZ3RoOiAzNDcNCkhvc3Q6IElQWFhYWFhYWDo2NDEyOQ0KQ29udGVudC1UeXBlOiB0ZXh0L3htbDsgY2hhcnNldD0idXRmLTgiDQpTb2FwYWN0aW9uOiAidXJuOnNjaGVtYXMtdXBucC1vcmc6c2VydmljZTpSZW5kZXJpbmdDb250cm9sOjEjR2V0Vm9sdW1lIg0KVXNlci1BZ2VudDogQVZSIENvbnRyb2wNCkNvbm5lY3Rpb246IGNsb3NlDQoNCjw/eG1sIHZlcnNpb249JzEuMCcgZW5jb2Rpbmc9J3V0Zi04Jz8+CjxuczA6RW52ZWxvcGUgeG1sbnM6bnMwPSJodHRwOi8vc2NoZW1hcy54bWxzb2FwLm9yZy9zb2FwL2VudmVsb3BlLyIgeG1sbnM6bnMxPSJ1cm46c2NoZW1hcy11cG5wLW9yZzpzZXJ2aWNlOlJlbmRlcmluZ0NvbnRyb2w6MSIgbnMwOmVuY29kaW5nU3R5bGU9Imh0dHA6Ly9zY2hlbWFzLnhtbHNvYXAub3JnL3NvYXAvZW5jb2RpbmcvIj48bnMwOkJvZHk+PG5zMTpHZXRWb2x1bWU+PEluc3RhbmNlSUQ+MDwvSW5zdGFuY2VJRD48Q2hhbm5lbD5NYXN0ZXI8L0NoYW5uZWw+PC9uczE6R2V0Vm9sdW1lPjwvbnMwOkJvZHk+PC9uczA6RW52ZWxvcGU+",
+          "text": "POST /MediaRenderer/RenderingControl/Control HTTP/1.1\r\nAccept-Encoding: identity\r\nContent-Length: 347\r\nHost: IPXXXXXXX:64129\r\nContent-Type: text/xml; charset=\"utf-8\"\r\nSoapaction: \"urn:schemas-upnp-org:service:RenderingControl:1#GetVolume\"\r\nUser-Agent: AVR Control\r\nConnection: close\r\n\r\n<?xml version='1.0' encoding='utf-8'?>\n<ns0:Envelope xmlns:ns0=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:ns1=\"urn:schemas-upnp-org:service:RenderingControl:1\" ns0:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\"><ns0:Body><ns1:GetVolume><InstanceID>0</InstanceID><Channel>Master</Channel></ns1:GetVolume></ns0:Body></ns0:Envelope>"
+        },
+        {
+          "dir": "rx",
+          "t": 0.004433,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjUgR01UDQpDb250ZW50LVR5cGU6IHRleHQveG1sOyBjaGFyc2V0PXV0Zi04DQpDb250ZW50LUxlbmd0aDogMjI4DQoNCjxzOkVudmVsb3BlIHhtbG5zOnM9Imh0dHA6Ly9zY2hlbWFzLnhtbHNvYXAub3JnL3NvYXAvZW52ZWxvcGUvIiB4bWxuczp1PSJ1cm46c2NoZW1hcy11cG5wLW9yZzpzZXJ2aWNlOlJlbmRlcmluZ0NvbnRyb2w6MSI+PHM6Qm9keT48dTpHZXRWb2x1bWVSZXNwb25zZT48Q3VycmVudFZvbHVtZT4zNTwvQ3VycmVudFZvbHVtZT48L3U6R2V0Vm9sdW1lUmVzcG9uc2U+PC9zOkJvZHk+PC9zOkVudmVsb3BlPg==",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:25 GMT\r\nContent-Type: text/xml; charset=utf-8\r\nContent-Length: 228\r\n\r\n<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:u=\"urn:schemas-upnp-org:service:RenderingControl:1\"><s:Body><u:GetVolumeResponse><CurrentVolume>35</CurrentVolume></u:GetVolumeResponse></s:Body></s:Envelope>"
+        }
+      ]
+    },
+    {
+      "port": 64128,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.005419,
+          "data_b64": "UE9TVCAvTWVkaWFSZW5kZXJlci9SZW5kZXJpbmdDb250cm9sL0NvbnRyb2wgSFRUUC8xLjENCkFjY2VwdC1FbmNvZGluZzogaWRlbnRpdHkNCkNvbnRlbnQtTGVuZ3RoOiAzNDMNCkhvc3Q6IElQWFhYWFhYWDo2NDEyOQ0KQ29udGVudC1UeXBlOiB0ZXh0L3htbDsgY2hhcnNldD0idXRmLTgiDQpTb2FwYWN0aW9uOiAidXJuOnNjaGVtYXMtdXBucC1vcmc6c2VydmljZTpSZW5kZXJpbmdDb250cm9sOjEjR2V0TXV0ZSINClVzZXItQWdlbnQ6IEFWUiBDb250cm9sDQpDb25uZWN0aW9uOiBjbG9zZQ0KDQo8P3htbCB2ZXJzaW9uPScxLjAnIGVuY29kaW5nPSd1dGYtOCc/Pgo8bnMwOkVudmVsb3BlIHhtbG5zOm5zMD0iaHR0cDovL3NjaGVtYXMueG1sc29hcC5vcmcvc29hcC9lbnZlbG9wZS8iIHhtbG5zOm5zMT0idXJuOnNjaGVtYXMtdXBucC1vcmc6c2VydmljZTpSZW5kZXJpbmdDb250cm9sOjEiIG5zMDplbmNvZGluZ1N0eWxlPSJodHRwOi8vc2NoZW1hcy54bWxzb2FwLm9yZy9zb2FwL2VuY29kaW5nLyI+PG5zMDpCb2R5PjxuczE6R2V0TXV0ZT48SW5zdGFuY2VJRD4wPC9JbnN0YW5jZUlEPjxDaGFubmVsPk1hc3RlcjwvQ2hhbm5lbD48L25zMTpHZXRNdXRlPjwvbnMwOkJvZHk+PC9uczA6RW52ZWxvcGU+",
+          "text": "POST /MediaRenderer/RenderingControl/Control HTTP/1.1\r\nAccept-Encoding: identity\r\nContent-Length: 343\r\nHost: IPXXXXXXX:64129\r\nContent-Type: text/xml; charset=\"utf-8\"\r\nSoapaction: \"urn:schemas-upnp-org:service:RenderingControl:1#GetMute\"\r\nUser-Agent: AVR Control\r\nConnection: close\r\n\r\n<?xml version='1.0' encoding='utf-8'?>\n<ns0:Envelope xmlns:ns0=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:ns1=\"urn:schemas-upnp-org:service:RenderingControl:1\" ns0:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\"><ns0:Body><ns1:GetMute><InstanceID>0</InstanceID><Channel>Master</Channel></ns1:GetMute></ns0:Body></ns0:Envelope>"
+        },
+        {
+          "dir": "rx",
+          "t": 0.005662,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjUgR01UDQpDb250ZW50LVR5cGU6IHRleHQveG1sOyBjaGFyc2V0PXV0Zi04DQpDb250ZW50LUxlbmd0aDogMjE5DQoNCjxzOkVudmVsb3BlIHhtbG5zOnM9Imh0dHA6Ly9zY2hlbWFzLnhtbHNvYXAub3JnL3NvYXAvZW52ZWxvcGUvIiB4bWxuczp1PSJ1cm46c2NoZW1hcy11cG5wLW9yZzpzZXJ2aWNlOlJlbmRlcmluZ0NvbnRyb2w6MSI+PHM6Qm9keT48dTpHZXRNdXRlUmVzcG9uc2U+PEN1cnJlbnRNdXRlPjA8L0N1cnJlbnRNdXRlPjwvdTpHZXRNdXRlUmVzcG9uc2U+PC9zOkJvZHk+PC9zOkVudmVsb3BlPg==",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:25 GMT\r\nContent-Type: text/xml; charset=utf-8\r\nContent-Length: 219\r\n\r\n<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:u=\"urn:schemas-upnp-org:service:RenderingControl:1\"><s:Body><u:GetMuteResponse><CurrentMute>0</CurrentMute></u:GetMuteResponse></s:Body></s:Envelope>"
+        }
+      ]
+    },
+    {
+      "port": 64128,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.028674,
+          "data_b64": "UE9TVCAvTWVkaWFSZW5kZXJlci9SZW5kZXJpbmdDb250cm9sL0NvbnRyb2wgSFRUUC8xLjENCkFjY2VwdC1FbmNvZGluZzogaWRlbnRpdHkNCkNvbnRlbnQtTGVuZ3RoOiAzNDcNCkhvc3Q6IElQWFhYWFhYWDo2NDEyOQ0KQ29udGVudC1UeXBlOiB0ZXh0L3htbDsgY2hhcnNldD0idXRmLTgiDQpTb2FwYWN0aW9uOiAidXJuOnNjaGVtYXMtdXBucC1vcmc6c2VydmljZTpSZW5kZXJpbmdDb250cm9sOjEjR2V0Vm9sdW1lIg0KVXNlci1BZ2VudDogQVZSIENvbnRyb2wNCkNvbm5lY3Rpb246IGNsb3NlDQoNCg==",
+          "text": "POST /MediaRenderer/RenderingControl/Control HTTP/1.1\r\nAccept-Encoding: identity\r\nContent-Length: 347\r\nHost: IPXXXXXXX:64129\r\nContent-Type: text/xml; charset=\"utf-8\"\r\nSoapaction: \"urn:schemas-upnp-org:service:RenderingControl:1#GetVolume\"\r\nUser-Agent: AVR Control\r\nConnection: close\r\n\r\n"
+        },
+        {
+          "dir": "tx",
+          "t": 0.028913,
+          "data_b64": "PD94bWwgdmVyc2lvbj0nMS4wJyBlbmNvZGluZz0ndXRmLTgnPz4KPG5zMDpFbnZlbG9wZSB4bWxuczpuczA9Imh0dHA6Ly9zY2hlbWFzLnhtbHNvYXAub3JnL3NvYXAvZW52ZWxvcGUvIiB4bWxuczpuczE9InVybjpzY2hlbWFzLXVwbnAtb3JnOnNlcnZpY2U6UmVuZGVyaW5nQ29udHJvbDoxIiBuczA6ZW5jb2RpbmdTdHlsZT0iaHR0cDovL3NjaGVtYXMueG1sc29hcC5vcmcvc29hcC9lbmNvZGluZy8iPjxuczA6Qm9keT48bnMxOkdldFZvbHVtZT48SW5zdGFuY2VJRD4wPC9JbnN0YW5jZUlEPjxDaGFubmVsPk1hc3RlcjwvQ2hhbm5lbD48L25zMTpHZXRWb2x1bWU+PC9uczA6Qm9keT48L25zMDpFbnZlbG9wZT4=",
+          "text": "<?xml version='1.0' encoding='utf-8'?>\n<ns0:Envelope xmlns:ns0=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:ns1=\"urn:schemas-upnp-org:service:RenderingControl:1\" ns0:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\"><ns0:Body><ns1:GetVolume><InstanceID>0</InstanceID><Channel>Master</Channel></ns1:GetVolume></ns0:Body></ns0:Envelope>"
+        },
+        {
+          "dir": "rx",
+          "t": 0.029135,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjUgR01UDQpDb250ZW50LVR5cGU6IHRleHQveG1sOyBjaGFyc2V0PXV0Zi04DQpDb250ZW50LUxlbmd0aDogMjI4DQoNCjxzOkVudmVsb3BlIHhtbG5zOnM9Imh0dHA6Ly9zY2hlbWFzLnhtbHNvYXAub3JnL3NvYXAvZW52ZWxvcGUvIiB4bWxuczp1PSJ1cm46c2NoZW1hcy11cG5wLW9yZzpzZXJ2aWNlOlJlbmRlcmluZ0NvbnRyb2w6MSI+PHM6Qm9keT48dTpHZXRWb2x1bWVSZXNwb25zZT48Q3VycmVudFZvbHVtZT4zNTwvQ3VycmVudFZvbHVtZT48L3U6R2V0Vm9sdW1lUmVzcG9uc2U+PC9zOkJvZHk+PC9zOkVudmVsb3BlPg==",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:25 GMT\r\nContent-Type: text/xml; charset=utf-8\r\nContent-Length: 228\r\n\r\n<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:u=\"urn:schemas-upnp-org:service:RenderingControl:1\"><s:Body><u:GetVolumeResponse><CurrentVolume>35</CurrentVolume></u:GetVolumeResponse></s:Body></s:Envelope>"
+        }
+      ]
+    },
+    {
+      "port": 64128,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.030888,
+          "data_b64": "UE9TVCAvTWVkaWFSZW5kZXJlci9SZW5kZXJpbmdDb250cm9sL0NvbnRyb2wgSFRUUC8xLjENCkFjY2VwdC1FbmNvZGluZzogaWRlbnRpdHkNCkNvbnRlbnQtTGVuZ3RoOiAzNDMNCkhvc3Q6IElQWFhYWFhYWDo2NDEyOQ0KQ29udGVudC1UeXBlOiB0ZXh0L3htbDsgY2hhcnNldD0idXRmLTgiDQpTb2FwYWN0aW9uOiAidXJuOnNjaGVtYXMtdXBucC1vcmc6c2VydmljZTpSZW5kZXJpbmdDb250cm9sOjEjR2V0TXV0ZSINClVzZXItQWdlbnQ6IEFWUiBDb250cm9sDQpDb25uZWN0aW9uOiBjbG9zZQ0KDQo8P3htbCB2ZXJzaW9uPScxLjAnIGVuY29kaW5nPSd1dGYtOCc/Pgo8bnMwOkVudmVsb3BlIHhtbG5zOm5zMD0iaHR0cDovL3NjaGVtYXMueG1sc29hcC5vcmcvc29hcC9lbnZlbG9wZS8iIHhtbG5zOm5zMT0idXJuOnNjaGVtYXMtdXBucC1vcmc6c2VydmljZTpSZW5kZXJpbmdDb250cm9sOjEiIG5zMDplbmNvZGluZ1N0eWxlPSJodHRwOi8vc2NoZW1hcy54bWxzb2FwLm9yZy9zb2FwL2VuY29kaW5nLyI+PG5zMDpCb2R5PjxuczE6R2V0TXV0ZT48SW5zdGFuY2VJRD4wPC9JbnN0YW5jZUlEPjxDaGFubmVsPk1hc3RlcjwvQ2hhbm5lbD48L25zMTpHZXRNdXRlPjwvbnMwOkJvZHk+PC9uczA6RW52ZWxvcGU+",
+          "text": "POST /MediaRenderer/RenderingControl/Control HTTP/1.1\r\nAccept-Encoding: identity\r\nContent-Length: 343\r\nHost: IPXXXXXXX:64129\r\nContent-Type: text/xml; charset=\"utf-8\"\r\nSoapaction: \"urn:schemas-upnp-org:service:RenderingControl:1#GetMute\"\r\nUser-Agent: AVR Control\r\nConnection: close\r\n\r\n<?xml version='1.0' encoding='utf-8'?>\n<ns0:Envelope xmlns:ns0=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:ns1=\"urn:schemas-upnp-org:service:RenderingControl:1\" ns0:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\"><ns0:Body><ns1:GetMute><InstanceID>0</InstanceID><Channel>Master</Channel></ns1:GetMute></ns0:Body></ns0:Envelope>"
+        },
+        {
+          "dir": "rx",
+          "t": 0.03116,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjUgR01UDQpDb250ZW50LVR5cGU6IHRleHQveG1sOyBjaGFyc2V0PXV0Zi04DQpDb250ZW50LUxlbmd0aDogMjE5DQoNCjxzOkVudmVsb3BlIHhtbG5zOnM9Imh0dHA6Ly9zY2hlbWFzLnhtbHNvYXAub3JnL3NvYXAvZW52ZWxvcGUvIiB4bWxuczp1PSJ1cm46c2NoZW1hcy11cG5wLW9yZzpzZXJ2aWNlOlJlbmRlcmluZ0NvbnRyb2w6MSI+PHM6Qm9keT48dTpHZXRNdXRlUmVzcG9uc2U+PEN1cnJlbnRNdXRlPjA8L0N1cnJlbnRNdXRlPjwvdTpHZXRNdXRlUmVzcG9uc2U+PC9zOkJvZHk+PC9zOkVudmVsb3BlPg==",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:25 GMT\r\nContent-Type: text/xml; charset=utf-8\r\nContent-Length: 219\r\n\r\n<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:u=\"urn:schemas-upnp-org:service:RenderingControl:1\"><s:Body><u:GetMuteResponse><CurrentMute>0</CurrentMute></u:GetMuteResponse></s:Body></s:Envelope>"
+        }
+      ]
+    },
+    {
+      "port": 64128,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.044709,
+          "data_b64": "UE9TVCAvTWVkaWFSZW5kZXJlci9SZW5kZXJpbmdDb250cm9sL0NvbnRyb2wgSFRUUC8xLjENCkFjY2VwdC1FbmNvZGluZzogaWRlbnRpdHkNCkNvbnRlbnQtTGVuZ3RoOiAzNDcNCkhvc3Q6IElQWFhYWFhYWDo2NDEyOQ0KQ29udGVudC1UeXBlOiB0ZXh0L3htbDsgY2hhcnNldD0idXRmLTgiDQpTb2FwYWN0aW9uOiAidXJuOnNjaGVtYXMtdXBucC1vcmc6c2VydmljZTpSZW5kZXJpbmdDb250cm9sOjEjR2V0Vm9sdW1lIg0KVXNlci1BZ2VudDogQVZSIENvbnRyb2wNCkNvbm5lY3Rpb246IGNsb3NlDQoNCg==",
+          "text": "POST /MediaRenderer/RenderingControl/Control HTTP/1.1\r\nAccept-Encoding: identity\r\nContent-Length: 347\r\nHost: IPXXXXXXX:64129\r\nContent-Type: text/xml; charset=\"utf-8\"\r\nSoapaction: \"urn:schemas-upnp-org:service:RenderingControl:1#GetVolume\"\r\nUser-Agent: AVR Control\r\nConnection: close\r\n\r\n"
+        },
+        {
+          "dir": "tx",
+          "t": 0.044894,
+          "data_b64": "PD94bWwgdmVyc2lvbj0nMS4wJyBlbmNvZGluZz0ndXRmLTgnPz4KPG5zMDpFbnZlbG9wZSB4bWxuczpuczA9Imh0dHA6Ly9zY2hlbWFzLnhtbHNvYXAub3JnL3NvYXAvZW52ZWxvcGUvIiB4bWxuczpuczE9InVybjpzY2hlbWFzLXVwbnAtb3JnOnNlcnZpY2U6UmVuZGVyaW5nQ29udHJvbDoxIiBuczA6ZW5jb2RpbmdTdHlsZT0iaHR0cDovL3NjaGVtYXMueG1sc29hcC5vcmcvc29hcC9lbmNvZGluZy8iPjxuczA6Qm9keT48bnMxOkdldFZvbHVtZT48SW5zdGFuY2VJRD4wPC9JbnN0YW5jZUlEPjxDaGFubmVsPk1hc3RlcjwvQ2hhbm5lbD48L25zMTpHZXRWb2x1bWU+PC9uczA6Qm9keT48L25zMDpFbnZlbG9wZT4=",
+          "text": "<?xml version='1.0' encoding='utf-8'?>\n<ns0:Envelope xmlns:ns0=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:ns1=\"urn:schemas-upnp-org:service:RenderingControl:1\" ns0:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\"><ns0:Body><ns1:GetVolume><InstanceID>0</InstanceID><Channel>Master</Channel></ns1:GetVolume></ns0:Body></ns0:Envelope>"
+        },
+        {
+          "dir": "rx",
+          "t": 0.045127,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjUgR01UDQpDb250ZW50LVR5cGU6IHRleHQveG1sOyBjaGFyc2V0PXV0Zi04DQpDb250ZW50LUxlbmd0aDogMjI4DQoNCjxzOkVudmVsb3BlIHhtbG5zOnM9Imh0dHA6Ly9zY2hlbWFzLnhtbHNvYXAub3JnL3NvYXAvZW52ZWxvcGUvIiB4bWxuczp1PSJ1cm46c2NoZW1hcy11cG5wLW9yZzpzZXJ2aWNlOlJlbmRlcmluZ0NvbnRyb2w6MSI+PHM6Qm9keT48dTpHZXRWb2x1bWVSZXNwb25zZT48Q3VycmVudFZvbHVtZT4zNTwvQ3VycmVudFZvbHVtZT48L3U6R2V0Vm9sdW1lUmVzcG9uc2U+PC9zOkJvZHk+PC9zOkVudmVsb3BlPg==",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:25 GMT\r\nContent-Type: text/xml; charset=utf-8\r\nContent-Length: 228\r\n\r\n<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:u=\"urn:schemas-upnp-org:service:RenderingControl:1\"><s:Body><u:GetVolumeResponse><CurrentVolume>35</CurrentVolume></u:GetVolumeResponse></s:Body></s:Envelope>"
+        }
+      ]
+    },
+    {
+      "port": 64128,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.046367,
+          "data_b64": "UE9TVCAvTWVkaWFSZW5kZXJlci9SZW5kZXJpbmdDb250cm9sL0NvbnRyb2wgSFRUUC8xLjENCkFjY2VwdC1FbmNvZGluZzogaWRlbnRpdHkNCkNvbnRlbnQtTGVuZ3RoOiAzNDMNCkhvc3Q6IElQWFhYWFhYWDo2NDEyOQ0KQ29udGVudC1UeXBlOiB0ZXh0L3htbDsgY2hhcnNldD0idXRmLTgiDQpTb2FwYWN0aW9uOiAidXJuOnNjaGVtYXMtdXBucC1vcmc6c2VydmljZTpSZW5kZXJpbmdDb250cm9sOjEjR2V0TXV0ZSINClVzZXItQWdlbnQ6IEFWUiBDb250cm9sDQpDb25uZWN0aW9uOiBjbG9zZQ0KDQo8P3htbCB2ZXJzaW9uPScxLjAnIGVuY29kaW5nPSd1dGYtOCc/Pgo8bnMwOkVudmVsb3BlIHhtbG5zOm5zMD0iaHR0cDovL3NjaGVtYXMueG1sc29hcC5vcmcvc29hcC9lbnZlbG9wZS8iIHhtbG5zOm5zMT0idXJuOnNjaGVtYXMtdXBucC1vcmc6c2VydmljZTpSZW5kZXJpbmdDb250cm9sOjEiIG5zMDplbmNvZGluZ1N0eWxlPSJodHRwOi8vc2NoZW1hcy54bWxzb2FwLm9yZy9zb2FwL2VuY29kaW5nLyI+PG5zMDpCb2R5PjxuczE6R2V0TXV0ZT48SW5zdGFuY2VJRD4wPC9JbnN0YW5jZUlEPjxDaGFubmVsPk1hc3RlcjwvQ2hhbm5lbD48L25zMTpHZXRNdXRlPjwvbnMwOkJvZHk+PC9uczA6RW52ZWxvcGU+",
+          "text": "POST /MediaRenderer/RenderingControl/Control HTTP/1.1\r\nAccept-Encoding: identity\r\nContent-Length: 343\r\nHost: IPXXXXXXX:64129\r\nContent-Type: text/xml; charset=\"utf-8\"\r\nSoapaction: \"urn:schemas-upnp-org:service:RenderingControl:1#GetMute\"\r\nUser-Agent: AVR Control\r\nConnection: close\r\n\r\n<?xml version='1.0' encoding='utf-8'?>\n<ns0:Envelope xmlns:ns0=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:ns1=\"urn:schemas-upnp-org:service:RenderingControl:1\" ns0:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\"><ns0:Body><ns1:GetMute><InstanceID>0</InstanceID><Channel>Master</Channel></ns1:GetMute></ns0:Body></ns0:Envelope>"
+        },
+        {
+          "dir": "rx",
+          "t": 0.046617,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjUgR01UDQpDb250ZW50LVR5cGU6IHRleHQveG1sOyBjaGFyc2V0PXV0Zi04DQpDb250ZW50LUxlbmd0aDogMjE5DQoNCjxzOkVudmVsb3BlIHhtbG5zOnM9Imh0dHA6Ly9zY2hlbWFzLnhtbHNvYXAub3JnL3NvYXAvZW52ZWxvcGUvIiB4bWxuczp1PSJ1cm46c2NoZW1hcy11cG5wLW9yZzpzZXJ2aWNlOlJlbmRlcmluZ0NvbnRyb2w6MSI+PHM6Qm9keT48dTpHZXRNdXRlUmVzcG9uc2U+PEN1cnJlbnRNdXRlPjA8L0N1cnJlbnRNdXRlPjwvdTpHZXRNdXRlUmVzcG9uc2U+PC9zOkJvZHk+PC9zOkVudmVsb3BlPg==",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:25 GMT\r\nContent-Type: text/xml; charset=utf-8\r\nContent-Length: 219\r\n\r\n<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:u=\"urn:schemas-upnp-org:service:RenderingControl:1\"><s:Body><u:GetMuteResponse><CurrentMute>0</CurrentMute></u:GetMuteResponse></s:Body></s:Envelope>"
+        }
+      ]
+    }
+  ],
+  "notes": [
+    "The driver connects to RECEIVER_IP through the proxy; an HTTP driver would therefore send that address in its Host header."
+  ],
+  "raw_discovery": {}
+}

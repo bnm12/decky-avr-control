@@ -1,0 +1,195 @@
+{
+  "schema_version": 1,
+  "source": "simulator",
+  "tool": {
+    "name": "avr_probe",
+    "version": "1.0"
+  },
+  "timestamp": "2026-10-31T17:23:23.360610+00:00",
+  "runtime": {
+    "python": "3.15.2",
+    "os": "Windows-11-10.0.22631-SP0"
+  },
+  "driver": {
+    "key": "yamaha",
+    "label": "Yamaha (MusicCast)"
+  },
+  "found": {
+    "model": "RX-V6A simulator",
+    "id": "RECEIVER_ID_1",
+    "host": "RECEIVER_IP"
+  },
+  "status": {
+    "volume": 101,
+    "muted": false,
+    "power": true,
+    "mode": "straight"
+  },
+  "capabilities": [
+    "mode",
+    "mute",
+    "power",
+    "volume"
+  ],
+  "scale": {
+    "min": 0,
+    "max": 194,
+    "unit": "dB",
+    "zero": 161,
+    "steps_per_unit": 2,
+    "default_cap": 101
+  },
+  "modes": [
+    {
+      "code": "munich",
+      "name": "Munich"
+    },
+    {
+      "code": "vienna",
+      "name": "Vienna"
+    },
+    {
+      "code": "straight",
+      "name": "Straight"
+    },
+    {
+      "code": "7ch_stereo",
+      "name": "7ch Stereo"
+    },
+    {
+      "code": "surr_decoder",
+      "name": "Surround Decoder"
+    },
+    {
+      "code": "sci-fi",
+      "name": "Sci-Fi"
+    },
+    {
+      "code": "hall_in_munich",
+      "name": "Hall in Munich"
+    }
+  ],
+  "modes_error": null,
+  "getters": {
+    "volume": 101,
+    "mute": false,
+    "power": true,
+    "mode": "straight"
+  },
+  "write_restore_errors": [],
+  "proxy_errors": [],
+  "connections": [
+    {
+      "port": 64052,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.013746,
+          "data_b64": "R0VUIC9ZYW1haGFFeHRlbmRlZENvbnRyb2wvdjEvc3lzdGVtL2dldEZlYXR1cmVzIEhUVFAvMS4xDQpBY2NlcHQtRW5jb2Rpbmc6IGlkZW50aXR5DQpIb3N0OiBJUFhYWFhYWFg6NjQwNTMNCkFjY2VwdDogYXBwbGljYXRpb24vanNvbg0KVXNlci1BZ2VudDogQVZSIENvbnRyb2wNCkNvbm5lY3Rpb246IGNsb3NlDQoNCg==",
+          "text": "GET /YamahaExtendedControl/v1/system/getFeatures HTTP/1.1\r\nAccept-Encoding: identity\r\nHost: IPXXXXXXX:64053\r\nAccept: application/json\r\nUser-Agent: AVR Control\r\nConnection: close\r\n\r\n"
+        },
+        {
+          "dir": "rx",
+          "t": 0.014127,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjMgR01UDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL2pzb24NCkNvbnRlbnQtTGVuZ3RoOiA2NzcNCg0KeyJyZXNwb25zZV9jb2RlIjogMCwgInN5c3RlbSI6IHsiZnVuY19saXN0IjogWyJ3aXJlZF9sYW4iLCAibmV0d29ya19zdGFuZGJ5Il0sICJ6b25lX251bSI6IDJ9LCAiem9uZSI6IFt7ImlkIjogIm1haW4iLCAiZnVuY19saXN0IjogWyJwb3dlciIsICJzbGVlcCIsICJ2b2x1bWUiLCAibXV0ZSIsICJzb3VuZF9wcm9ncmFtIiwgImFjdHVhbF92b2x1bWUiXSwgInNvdW5kX3Byb2dyYW1fbGlzdCI6IFsibXVuaWNoIiwgInZpZW5uYSIsICJzdHJhaWdodCIsICI3Y2hfc3RlcmVvIiwgInN1cnJfZGVjb2RlciIsICJzY2ktZmkiLCAiaGFsbF9pbl9tdW5pY2giXSwgInJhbmdlX3N0ZXAiOiBbeyJpZCI6ICJ2b2x1bWUiLCAibWluIjogMCwgIm1heCI6IDE5NCwgInN0ZXAiOiAxfSwgeyJpZCI6ICJhY3R1YWxfdm9sdW1lX2RiIiwgIm1pbiI6IC04MC41LCAibWF4IjogMTYuNSwgInN0ZXAiOiAwLjV9LCB7ImlkIjogImFjdHVhbF92b2x1bWVfbnVtZXJpYyIsICJtaW4iOiAwLjAsICJtYXgiOiA5Ny4wLCAic3RlcCI6IDAuNX1dfSwgeyJpZCI6ICJ6b25lMiIsICJ6b25lX2IiOiBmYWxzZSwgImZ1bmNfbGlzdCI6IFsicG93ZXIiLCAic2xlZXAiLCAidm9sdW1lIiwgIm11dGUiXSwgInJhbmdlX3N0ZXAiOiBbeyJpZCI6ICJ2b2x1bWUiLCAibWluIjogMCwgIm1heCI6IDE5NCwgInN0ZXAiOiAxfV19XX0=",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:23 GMT\r\nContent-Type: application/json\r\nContent-Length: 677\r\n\r\n{\"response_code\": 0, \"system\": {\"func_list\": [\"wired_lan\", \"network_standby\"], \"zone_num\": 2}, \"zone\": [{\"id\": \"main\", \"func_list\": [\"power\", \"sleep\", \"volume\", \"mute\", \"sound_program\", \"actual_volume\"], \"sound_program_list\": [\"munich\", \"vienna\", \"straight\", \"7ch_stereo\", \"surr_decoder\", \"sci-fi\", \"hall_in_munich\"], \"range_step\": [{\"id\": \"volume\", \"min\": 0, \"max\": 194, \"step\": 1}, {\"id\": \"actual_volume_db\", \"min\": -80.5, \"max\": 16.5, \"step\": 0.5}, {\"id\": \"actual_volume_numeric\", \"min\": 0.0, \"max\": 97.0, \"step\": 0.5}]}, {\"id\": \"zone2\", \"zone_b\": false, \"func_list\": [\"power\", \"sleep\", \"volume\", \"mute\"], \"range_step\": [{\"id\": \"volume\", \"min\": 0, \"max\": 194, \"step\": 1}]}]}"
+        }
+      ]
+    },
+    {
+      "port": 64052,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.015302,
+          "data_b64": "R0VUIC9ZYW1haGFFeHRlbmRlZENvbnRyb2wvdjEvbWFpbi9nZXRTdGF0dXMgSFRUUC8xLjENCkFjY2VwdC1FbmNvZGluZzogaWRlbnRpdHkNCkhvc3Q6IElQWFhYWFhYWDo2NDA1Mw0KQWNjZXB0OiBhcHBsaWNhdGlvbi9qc29uDQpVc2VyLUFnZW50OiBBVlIgQ29udHJvbA0KQ29ubmVjdGlvbjogY2xvc2UNCg0K",
+          "text": "GET /YamahaExtendedControl/v1/main/getStatus HTTP/1.1\r\nAccept-Encoding: identity\r\nHost: IPXXXXXXX:64053\r\nAccept: application/json\r\nUser-Agent: AVR Control\r\nConnection: close\r\n\r\n"
+        },
+        {
+          "dir": "rx",
+          "t": 0.01554,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjMgR01UDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL2pzb24NCkNvbnRlbnQtTGVuZ3RoOiAxNTcNCg0KeyJyZXNwb25zZV9jb2RlIjogMCwgInBvd2VyIjogIm9uIiwgInZvbHVtZSI6IDEwMSwgIm11dGUiOiBmYWxzZSwgInNvdW5kX3Byb2dyYW0iOiAic3RyYWlnaHQiLCAiYWN0dWFsX3ZvbHVtZSI6IHsibW9kZSI6ICJkYiIsICJ2YWx1ZSI6IC0zMC4wLCAidW5pdCI6ICJkQiJ9fQ==",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:23 GMT\r\nContent-Type: application/json\r\nContent-Length: 157\r\n\r\n{\"response_code\": 0, \"power\": \"on\", \"volume\": 101, \"mute\": false, \"sound_program\": \"straight\", \"actual_volume\": {\"mode\": \"db\", \"value\": -30.0, \"unit\": \"dB\"}}"
+        }
+      ]
+    },
+    {
+      "port": 64052,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.039516,
+          "data_b64": "R0VUIC9ZYW1haGFFeHRlbmRlZENvbnRyb2wvdjEvbWFpbi9nZXRTdGF0dXMgSFRUUC8xLjENCkFjY2VwdC1FbmNvZGluZzogaWRlbnRpdHkNCkhvc3Q6IElQWFhYWFhYWDo2NDA1Mw0KQWNjZXB0OiBhcHBsaWNhdGlvbi9qc29uDQpVc2VyLUFnZW50OiBBVlIgQ29udHJvbA0KQ29ubmVjdGlvbjogY2xvc2UNCg0K",
+          "text": "GET /YamahaExtendedControl/v1/main/getStatus HTTP/1.1\r\nAccept-Encoding: identity\r\nHost: IPXXXXXXX:64053\r\nAccept: application/json\r\nUser-Agent: AVR Control\r\nConnection: close\r\n\r\n"
+        },
+        {
+          "dir": "rx",
+          "t": 0.039841,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjMgR01UDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL2pzb24NCkNvbnRlbnQtTGVuZ3RoOiAxNTcNCg0K",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:23 GMT\r\nContent-Type: application/json\r\nContent-Length: 157\r\n\r\n"
+        },
+        {
+          "dir": "rx",
+          "t": 0.039896,
+          "data_b64": "eyJyZXNwb25zZV9jb2RlIjogMCwgInBvd2VyIjogIm9uIiwgInZvbHVtZSI6IDEwMSwgIm11dGUiOiBmYWxzZSwgInNvdW5kX3Byb2dyYW0iOiAic3RyYWlnaHQiLCAiYWN0dWFsX3ZvbHVtZSI6IHsibW9kZSI6ICJkYiIsICJ2YWx1ZSI6IC0zMC4wLCAidW5pdCI6ICJkQiJ9fQ==",
+          "text": "{\"response_code\": 0, \"power\": \"on\", \"volume\": 101, \"mute\": false, \"sound_program\": \"straight\", \"actual_volume\": {\"mode\": \"db\", \"value\": -30.0, \"unit\": \"dB\"}}"
+        }
+      ]
+    },
+    {
+      "port": 64052,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.041585,
+          "data_b64": "R0VUIC9ZYW1haGFFeHRlbmRlZENvbnRyb2wvdjEvbWFpbi9nZXRTdGF0dXMgSFRUUC8xLjENCkFjY2VwdC1FbmNvZGluZzogaWRlbnRpdHkNCkhvc3Q6IElQWFhYWFhYWDo2NDA1Mw0KQWNjZXB0OiBhcHBsaWNhdGlvbi9qc29uDQpVc2VyLUFnZW50OiBBVlIgQ29udHJvbA0KQ29ubmVjdGlvbjogY2xvc2UNCg0K",
+          "text": "GET /YamahaExtendedControl/v1/main/getStatus HTTP/1.1\r\nAccept-Encoding: identity\r\nHost: IPXXXXXXX:64053\r\nAccept: application/json\r\nUser-Agent: AVR Control\r\nConnection: close\r\n\r\n"
+        },
+        {
+          "dir": "rx",
+          "t": 0.041829,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjMgR01UDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL2pzb24NCkNvbnRlbnQtTGVuZ3RoOiAxNTcNCg0KeyJyZXNwb25zZV9jb2RlIjogMCwgInBvd2VyIjogIm9uIiwgInZvbHVtZSI6IDEwMSwgIm11dGUiOiBmYWxzZSwgInNvdW5kX3Byb2dyYW0iOiAic3RyYWlnaHQiLCAiYWN0dWFsX3ZvbHVtZSI6IHsibW9kZSI6ICJkYiIsICJ2YWx1ZSI6IC0zMC4wLCAidW5pdCI6ICJkQiJ9fQ==",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:23 GMT\r\nContent-Type: application/json\r\nContent-Length: 157\r\n\r\n{\"response_code\": 0, \"power\": \"on\", \"volume\": 101, \"mute\": false, \"sound_program\": \"straight\", \"actual_volume\": {\"mode\": \"db\", \"value\": -30.0, \"unit\": \"dB\"}}"
+        }
+      ]
+    },
+    {
+      "port": 64052,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.042955,
+          "data_b64": "R0VUIC9ZYW1haGFFeHRlbmRlZENvbnRyb2wvdjEvbWFpbi9nZXRTdGF0dXMgSFRUUC8xLjENCkFjY2VwdC1FbmNvZGluZzogaWRlbnRpdHkNCkhvc3Q6IElQWFhYWFhYWDo2NDA1Mw0KQWNjZXB0OiBhcHBsaWNhdGlvbi9qc29uDQpVc2VyLUFnZW50OiBBVlIgQ29udHJvbA0KQ29ubmVjdGlvbjogY2xvc2UNCg0K",
+          "text": "GET /YamahaExtendedControl/v1/main/getStatus HTTP/1.1\r\nAccept-Encoding: identity\r\nHost: IPXXXXXXX:64053\r\nAccept: application/json\r\nUser-Agent: AVR Control\r\nConnection: close\r\n\r\n"
+        },
+        {
+          "dir": "rx",
+          "t": 0.043176,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjMgR01UDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL2pzb24NCkNvbnRlbnQtTGVuZ3RoOiAxNTcNCg0KeyJyZXNwb25zZV9jb2RlIjogMCwgInBvd2VyIjogIm9uIiwgInZvbHVtZSI6IDEwMSwgIm11dGUiOiBmYWxzZSwgInNvdW5kX3Byb2dyYW0iOiAic3RyYWlnaHQiLCAiYWN0dWFsX3ZvbHVtZSI6IHsibW9kZSI6ICJkYiIsICJ2YWx1ZSI6IC0zMC4wLCAidW5pdCI6ICJkQiJ9fQ==",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:23 GMT\r\nContent-Type: application/json\r\nContent-Length: 157\r\n\r\n{\"response_code\": 0, \"power\": \"on\", \"volume\": 101, \"mute\": false, \"sound_program\": \"straight\", \"actual_volume\": {\"mode\": \"db\", \"value\": -30.0, \"unit\": \"dB\"}}"
+        }
+      ]
+    },
+    {
+      "port": 64052,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.044239,
+          "data_b64": "R0VUIC9ZYW1haGFFeHRlbmRlZENvbnRyb2wvdjEvbWFpbi9nZXRTdGF0dXMgSFRUUC8xLjENCkFjY2VwdC1FbmNvZGluZzogaWRlbnRpdHkNCkhvc3Q6IElQWFhYWFhYWDo2NDA1Mw0KQWNjZXB0OiBhcHBsaWNhdGlvbi9qc29uDQpVc2VyLUFnZW50OiBBVlIgQ29udHJvbA0KQ29ubmVjdGlvbjogY2xvc2UNCg0K",
+          "text": "GET /YamahaExtendedControl/v1/main/getStatus HTTP/1.1\r\nAccept-Encoding: identity\r\nHost: IPXXXXXXX:64053\r\nAccept: application/json\r\nUser-Agent: AVR Control\r\nConnection: close\r\n\r\n"
+        },
+        {
+          "dir": "rx",
+          "t": 0.044426,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjMgR01UDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL2pzb24NCkNvbnRlbnQtTGVuZ3RoOiAxNTcNCg0KeyJyZXNwb25zZV9jb2RlIjogMCwgInBvd2VyIjogIm9uIiwgInZvbHVtZSI6IDEwMSwgIm11dGUiOiBmYWxzZSwgInNvdW5kX3Byb2dyYW0iOiAic3RyYWlnaHQiLCAiYWN0dWFsX3ZvbHVtZSI6IHsibW9kZSI6ICJkYiIsICJ2YWx1ZSI6IC0zMC4wLCAidW5pdCI6ICJkQiJ9fQ==",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:23 GMT\r\nContent-Type: application/json\r\nContent-Length: 157\r\n\r\n{\"response_code\": 0, \"power\": \"on\", \"volume\": 101, \"mute\": false, \"sound_program\": \"straight\", \"actual_volume\": {\"mode\": \"db\", \"value\": -30.0, \"unit\": \"dB\"}}"
+        }
+      ]
+    }
+  ],
+  "notes": [
+    "The driver connects to RECEIVER_IP through the proxy; an HTTP driver would therefore send that address in its Host header."
+  ],
+  "raw_discovery": {}
+}

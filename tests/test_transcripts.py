@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import re
 import struct
 import sys
 import unittest
@@ -13,7 +14,12 @@ from avr_control.drivers import get_driver_class
 from avr_control.drivers.base import Found
 from tests.fakes import FakeEiscp
 from tests.replay import HttpHostMatcher, ReplayServer
-from tests.test_denon import FakeDenon
+from tests.test_denon import FakeDenon, FakeHttpDenon
+from tests.test_heos import FakeHeos
+from tests.test_sony import FakeSonyScalarWebAPI
+from tests.test_upnp import FakeUpnpRenderer
+from tests.test_yamaha import FakeYamahaYXC
+from tests.test_yamaha_ync import FakeYamahaYNC
 from tools.avr_probe import (
     RecordingTcpProxy,
     capture_found,
@@ -33,46 +39,139 @@ ALLOWED_TRANSCRIPT_SOURCES = {
 
 
 def _matcher_for(transcript: dict):
+    rewrite_loopback_port = transcript.get("driver", {}).get("key") == "upnp"
     for connection in transcript.get("connections", []):
         for exchange in connection.get("exchanges", []):
             if exchange.get("dir") != "tx":
                 continue
             data = base64.b64decode(exchange.get("data_b64", ""))
             if data.startswith((b"GET ", b"POST ", b"PUT ", b"DELETE ", b"PATCH ")):
-                return HttpHostMatcher()
+                return HttpHostMatcher(rewrite_loopback_port=rewrite_loopback_port)
     return None
+
+
+def _normalize_upnp_loopback_port(transcript: dict, proxy_port: int) -> None:
+    """Replace the recording proxy's advertised URLBase port with a replay marker."""
+    old_urls = (
+        f"http://127.0.0.1:{proxy_port}/".encode("ascii"),
+        f"http://IP{'X' * (len('127.0.0.1') - 2)}:{proxy_port}/".encode("ascii"),
+    )
+    marker_url = b"http://127.0.0.1:0/"
+    for connection in transcript.get("connections", []):
+        exchanges = connection.get("exchanges", [])
+        index = 0
+        while index < len(exchanges):
+            if exchanges[index].get("dir") != "rx":
+                index += 1
+                continue
+            end = index + 1
+            while end < len(exchanges) and exchanges[end].get("dir") == "rx":
+                end += 1
+            raw = b"".join(
+                base64.b64decode(item.get("data_b64", ""))
+                for item in exchanges[index:end]
+            )
+            headers, separator, body = raw.partition(b"\r\n\r\n")
+            rewritten = body
+            for old_url in old_urls:
+                rewritten = rewritten.replace(old_url, marker_url)
+            if separator and rewritten != body:
+                headers = re.sub(
+                    rb"(?im)^content-length:\s*\d+\s*$",
+                    f"Content-Length: {len(rewritten)}".encode("ascii"),
+                    headers,
+                )
+                raw = headers + separator + rewritten
+                exchanges[index]["data_b64"] = base64.b64encode(raw).decode("ascii")
+                exchanges[index]["text"] = raw.decode("utf-8", errors="replace")
+                del exchanges[index + 1 : end]
+                exchanges[index]["t"] = round(float(exchanges[index]["t"]), 6)
+                index += 1
+            else:
+                index = end
 
 
 async def generate_simulator_transcripts() -> None:
     TRANSCRIPTS.mkdir(parents=True, exist_ok=True)
-    receivers = (
-        ("eiscp", FakeEiscp(), "VSX-935 simulator"),
-        ("denon", FakeDenon(), "AVR-X3800H simulator"),
-    )
-    for key, fake, model in receivers:
+    heos = FakeHeos()
+    heos.players = heos.players[:1]
+    receivers = [
+        ("eiscp", FakeEiscp(), "VSX-935 simulator", {}),
+        ("denon", FakeDenon(), "AVR-X3800H simulator", {}),
+        ("yamaha", FakeYamahaYXC(), "RX-V6A simulator", {}),
+        ("yamaha_ync", FakeYamahaYNC(), "RX-V671 simulator", {}),
+        ("sony", FakeSonyScalarWebAPI(), "STR-DN1080 simulator", {}),
+        ("upnp", FakeUpnpRenderer(sonos=True), "Sonos Play:1 simulator", {}),
+        ("heos", heos, "HEOS AVR simulator", {}),
+    ]
+
+    async def capture_and_write(key: str, fake, model: str, config: dict) -> None:
         port = await fake.start()
         found = Found(
             driver=key,
             model=model,
             id=f"simulator-{key}-receiver",
             host="127.0.0.1",
-            config={"host": "127.0.0.1", "port": port},
+            config={"host": "127.0.0.1", "port": port, **config},
         )
+        proxy_ports: list[int] = []
+
+        def advertise_recording_proxy(proxy_port: int) -> None:
+            proxy_ports.append(proxy_port)
+            fake.server.server_port = proxy_port
+
         try:
             transcript = await capture_found(
                 found,
                 redact=True,
                 include_discovery=False,
                 source="simulator",
+                proxy_started=(
+                    advertise_recording_proxy if key == "upnp" else None
+                ),
             )
         finally:
             await fake.close()
         filename = TRANSCRIPTS / f"{key}-simulator.json"
+        if key == "upnp":
+            _normalize_upnp_loopback_port(transcript, proxy_ports[0])
         filename.write_text(
             json.dumps(transcript, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
         )
         print(f"Wrote {filename}")
+
+    for key, fake, model, config in receivers:
+        await capture_and_write(key, fake, model, config)
+
+    http_denon = FakeHttpDenon()
+    http_denon_found = Found(
+        driver="denon",
+        model="AVR-X3800H HTTP simulator",
+        id="simulator-denon-http-receiver",
+        host="127.0.0.1",
+        config={
+            "host": "127.0.0.1",
+            "port": http_denon.port,
+            "http_port": http_denon.port,
+            "transport": "http",
+        },
+    )
+    try:
+        http_transcript = await capture_found(
+            http_denon_found,
+            redact=True,
+            include_discovery=False,
+            source="simulator",
+        )
+    finally:
+        http_denon.close()
+    http_filename = TRANSCRIPTS / "denon-http-simulator.json"
+    http_filename.write_text(
+        json.dumps(http_transcript, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    print(f"Wrote {http_filename}")
 
 
 class TranscriptReplayTests(unittest.IsolatedAsyncioTestCase):
@@ -81,11 +180,15 @@ class TranscriptReplayTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(transcript.get("source"), ALLOWED_TRANSCRIPT_SOURCES)
         driver_class = get_driver_class(transcript["driver"]["key"])
         self.assertIsNotNone(driver_class)
-        replay = ReplayServer(
-            transcript["connections"], matcher=_matcher_for(transcript)
-        )
+        matcher = _matcher_for(transcript)
+        replay = ReplayServer(transcript["connections"], matcher=matcher)
         port = await replay.start()
-        driver = driver_class({"host": "127.0.0.1", "port": port})
+        config = {"host": "127.0.0.1", "port": port}
+        if transcript["driver"]["key"] == "denon" and isinstance(
+            matcher, HttpHostMatcher
+        ):
+            config.update({"transport": "http", "http_port": port})
+        driver = driver_class(config)
         driver_error = None
         try:
             actual = await asyncio.wait_for(read_snapshot(driver), timeout=15)

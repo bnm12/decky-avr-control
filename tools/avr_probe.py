@@ -24,6 +24,7 @@ import socket
 import struct
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -593,6 +594,15 @@ async def _exercise_writes(driver, status: dict, power: bool) -> list[str]:
 
 
 def _default_port(driver_class, found: Found) -> int | None:
+    if (
+        found.driver == "denon"
+        and str(found.config.get("transport", "")).lower() == "http"
+        and found.config.get("http_port") is not None
+    ):
+        try:
+            return int(found.config["http_port"])
+        except (TypeError, ValueError):
+            return None
     configured = found.config.get("port")
     if configured is not None:
         try:
@@ -615,6 +625,7 @@ async def capture_found(
     power: bool = False,
     include_discovery: bool = False,
     source: str = "contributor-hardware",
+    proxy_started: Callable[[int], None] | None = None,
 ) -> dict:
     """Capture a receiver already resolved to a driver, primarily for tests too."""
     driver_class = get_driver_class(found.driver)
@@ -631,8 +642,15 @@ async def capture_found(
     discovery = await raw_discovery(0.75) if include_discovery else {}
     recorder = RecordingTcpProxy(found.host, target_port)
     proxy_port = await recorder.start()
+    if proxy_started is not None:
+        proxy_started(proxy_port)
     config = dict(found.config)
     config.update({"host": "127.0.0.1", "port": proxy_port})
+    if (
+        found.driver == "denon"
+        and str(config.get("transport", "")).lower() == "http"
+    ):
+        config["http_port"] = proxy_port
     driver = driver_class(config)
     readout: dict = {}
     write_errors: list[str] = []

@@ -28,6 +28,9 @@ class HttpHostMatcher:
 
     _CONTENT_LENGTH = re.compile(rb"(?im)^content-length:\s*(\d+)\s*$")
 
+    def __init__(self, *, rewrite_loopback_port: bool = False):
+        self.rewrite_loopback_port = rewrite_loopback_port
+
     async def read(self, reader: asyncio.StreamReader, _expected: bytes) -> bytes:
         headers = await reader.readuntil(b"\r\n\r\n")
         match = self._CONTENT_LENGTH.search(headers)
@@ -43,6 +46,23 @@ class HttpHostMatcher:
             )
 
         return normalize(expected) == normalize(actual)
+
+    def rewrite_response(self, response: bytes, port: int) -> bytes:
+        if not self.rewrite_loopback_port:
+            return response
+        headers, separator, body = response.partition(b"\r\n\r\n")
+        if not separator:
+            return response
+        rewritten = body.replace(
+            b"http://127.0.0.1:0/",
+            f"http://127.0.0.1:{port}/".encode("ascii"),
+        )
+        if rewritten == body:
+            return response
+        headers = self._CONTENT_LENGTH.sub(
+            f"Content-Length: {len(rewritten)}".encode("ascii"), headers
+        )
+        return headers + separator + rewritten
 
 
 class ReplayServer:
@@ -101,9 +121,35 @@ class ReplayServer:
                     expected_bytes = base64.b64decode(expected)
                 direction = exchange.get("dir")
                 if direction == "rx":
-                    writer.write(expected_bytes)
+                    response_rewriter = getattr(
+                        self.matcher, "rewrite_response", None
+                    )
+                    if response_rewriter is not None and getattr(
+                        self.matcher, "rewrite_loopback_port", False
+                    ):
+                        rx_chunks = [expected_bytes]
+                        next_index = exchange_index + 1
+                        while (
+                            next_index < len(exchanges)
+                            and exchanges[next_index].get("dir") == "rx"
+                        ):
+                            next_exchange = exchanges[next_index]
+                            encoded = next_exchange.get("data_b64")
+                            rx_chunks.append(
+                                base64.b64decode(encoded)
+                                if encoded is not None
+                                else bytes(next_exchange.get("_raw", b""))
+                            )
+                            next_index += 1
+                        response = response_rewriter(
+                            b"".join(rx_chunks), int(self.port or 0)
+                        )
+                        writer.write(response)
+                        exchange_index = next_index
+                    else:
+                        writer.write(expected_bytes)
+                        exchange_index += 1
                     await writer.drain()
-                    exchange_index += 1
                     continue
                 if direction != "tx":
                     raise AssertionError(
