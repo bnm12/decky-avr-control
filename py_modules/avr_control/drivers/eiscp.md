@@ -100,6 +100,9 @@ configured receiver, with unknown codes shown as `Mode {code}` [measured].
 - [measured] NJA album-art pushes can arrive before a query response.
 - [measured] One control client works most reliably on the tested VSX-935.
 - [measured] Standby may answer PWR while omitting volume, mute and mode. Status tolerates missing volume and mute only when PWR reports standby; while power is on or unknown, both are awaited up to the normal two-second timeout. Listening mode remains optional with a short grace period.
+
+- [assumed] Set-command replies are confirmed against the requested volume, mute, power or mode. A different state report is routed to subscribers rather than claimed as the confirmation; the driver waits to its bounded deadline and returns the last observed value when one is available.
+
 - [measured] WSL2 NAT can prevent discovery replies from reaching the client.
 - [assumed] Power command flag meanings follow the common Onkyo ISCP convention.
 

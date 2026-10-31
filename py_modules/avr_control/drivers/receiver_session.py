@@ -122,7 +122,8 @@ class ReceiverSession(Generic[Frame]):
                 remaining = deadline - asyncio.get_running_loop().time()
                 if remaining <= 0:
                     raise ReceiverSessionError(
-                        "TCP receiver did not reply in time", kind="timeout"
+                        "TCP receiver did not confirm the transaction in time",
+                        kind="confirmation",
                     )
                 await self._wait_for_change(transaction, remaining)
 
@@ -132,7 +133,7 @@ class ReceiverSession(Generic[Frame]):
                 )
                 while not optional.issubset(transaction.frames):
                     if transaction.error is not None:
-                        raise transaction.error
+                        break
                     remaining = optional_deadline - asyncio.get_running_loop().time()
                     if remaining <= 0:
                         break
@@ -304,6 +305,8 @@ class ReceiverSession(Generic[Frame]):
                 elif key not in transaction.frames:
                     transaction.frames[key] = frame
                     transaction.changed.set()
+                else:
+                    self._notify(frame)
         except asyncio.CancelledError:
             return
         except Exception as exc:

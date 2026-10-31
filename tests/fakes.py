@@ -142,6 +142,8 @@ class FakeEiscp:
         self.refused_mode: str | None = None
         self.status_delay = 0.0
         self.report_power = True
+        self.stale_volume_before_ack: int | None = None
+        self.suppress_volume_ack = False
         self.server = None
         self.connections = 0
 
@@ -197,8 +199,14 @@ class FakeEiscp:
                     if self.report_power:
                         await self.send(writer, f"PWR{'01' if self.power else '00'}")
                 elif command.startswith("MVL"):
+                    stale_volume = self.stale_volume_before_ack
+                    self.stale_volume_before_ack = None
                     self.volume = int(command[3:], 16)
-                    await self.send(writer, f"MVL{self.volume:02X}")
+                    if stale_volume is not None:
+                        await self.send(writer, f"!1MVL{stale_volume:02X}")
+                    if not self.suppress_volume_ack:
+                        await self.send(writer, f"MVL{self.volume:02X}")
+                    self.suppress_volume_ack = False
                 elif command.startswith("AMT"):
                     self.muted = command[3:] == "01"
                     await self.send(writer, f"AMT{'01' if self.muted else '00'}")
@@ -226,6 +234,9 @@ class FakePioneerTelnet:
         self.muted = False
         self.power = True
         self.off_power_reply = "2"
+        self.report_volume = True
+        self.report_mute = True
+        self.stale_volume_before_ack: int | None = None
         self.server = None
 
     async def start(self, host: str = "127.0.0.1", port: int = 0):
@@ -245,8 +256,12 @@ class FakePioneerTelnet:
                     break
                 command = line.decode("ascii").strip()
                 if command == "?V":
+                    if not self.report_volume:
+                        continue
                     response = f"VOL{self.volume:03d}"
                 elif command == "?M":
+                    if not self.report_mute:
+                        continue
                     response = f"MUT{'0' if self.muted else '1'}"
                 elif command == "?P":
                     response = f"PWR{'0' if self.power else self.off_power_reply}"
@@ -263,7 +278,13 @@ class FakePioneerTelnet:
                     self.power = False
                     response = f"PWR{self.off_power_reply}"
                 elif command.endswith("VL"):
-                    self.volume = int(command[:-2])
+                    requested = int(command[:-2])
+                    stale_volume = self.stale_volume_before_ack
+                    self.stale_volume_before_ack = None
+                    if stale_volume is not None:
+                        writer.write(f"VOL{stale_volume:03d}\r\n".encode("ascii"))
+                        await writer.drain()
+                    self.volume = requested
                     response = f"VOL{self.volume:03d}"
                 else:
                     continue

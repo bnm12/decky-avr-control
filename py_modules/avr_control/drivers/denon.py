@@ -31,6 +31,7 @@ DENON_PORT = 23
 COMMAND_INTERVAL = 0.05
 _REPLY_TIMEOUT = 1.2
 _STATUS_TIMEOUT = 0.65
+_STATUS_MODE_GRACE = 0.12
 _HTTP_TIMEOUT = 0.8
 _HTTP_STATUS_PATHS = (
     "/goform/formMainZone_MainZoneXmlStatus.xml",
@@ -154,13 +155,18 @@ class TelnetTransport:
             if not line:
                 return None
             lines.append(line)
+            mode = _MODE_LINE.fullmatch(line)
+            if mode:
+                return "mode"
             if self._query_complete(commands, lines):
                 return "complete"
-            if any(
-                matcher.fullmatch(line)
-                for matcher in (_POWER_LINE, _VOLUME_TOKEN, _MUTE_LINE, _MODE_LINE)
+            for key, matcher in (
+                ("power", _POWER_LINE),
+                ("volume", _VOLUME_TOKEN),
+                ("mute", _MUTE_LINE),
             ):
-                return "progress"
+                if matcher.fullmatch(line):
+                    return key
             return None
 
         await self.session.transact(
@@ -169,31 +175,52 @@ class TelnetTransport:
             frozenset({"complete"}),
             timeout=_STATUS_TIMEOUT,
             min_interval=COMMAND_INTERVAL,
+            optional=frozenset({"mode"}),
+            optional_grace=_STATUS_MODE_GRACE,
         )
         return lines
 
-    async def send(self, command: str) -> list[str]:
+    async def send(
+        self, command: str, expected: Callable[[str], bool] | None = None
+    ) -> list[str]:
         lines: list[str] = []
         matcher = self._reply_matcher(command)
         optional = frozenset({"max"}) if command.startswith("MV") else frozenset()
+        observed_reply = False
+        last_reply: str | None = None
+        confirmed_reply: str | None = None
 
         def classify(line: str) -> str | None:
+            nonlocal observed_reply, last_reply, confirmed_reply
             if matcher(line):
                 lines.append(line)
+                observed_reply = True
+                last_reply = line
+                if expected is not None and not expected(line):
+                    return None
+                confirmed_reply = line
                 return "reply"
             if _MAX_VOLUME_LINE.fullmatch(line):
                 lines.append(line)
                 return "max"
             return None
 
-        await self.session.transact(
-            [command.encode("ascii") + b"\r"],
-            classify,
-            frozenset({"reply"}),
-            timeout=_REPLY_TIMEOUT,
-            optional=optional,
-            optional_grace=0.07 if optional else 0,
-        )
+        try:
+            await self.session.transact(
+                [command.encode("ascii") + b"\r"],
+                classify,
+                frozenset({"reply"}),
+                timeout=_REPLY_TIMEOUT,
+                optional=optional,
+                optional_grace=0.07 if optional else 0,
+            )
+        except ReceiverSessionError as exc:
+            if exc.kind != "confirmation" or not observed_reply:
+                raise
+        selected_reply = confirmed_reply or last_reply
+        if expected is not None and selected_reply is not None:
+            lines.remove(selected_reply)
+            lines.insert(0, selected_reply)
         return lines
 
     @staticmethod
@@ -220,7 +247,6 @@ class TelnetTransport:
         return (
             any(_VOLUME_TOKEN.fullmatch(line) for line in lines)
             and any(_MUTE_LINE.fullmatch(line) for line in lines)
-            and any(_MODE_LINE.fullmatch(line) for line in lines)
         )
 
 
@@ -378,10 +404,12 @@ class DenonDriver(Driver):
         )
 
     async def _send_command(
-        self, command: str
+        self, command: str, expected: Callable[[str], bool] | None = None
     ) -> tuple[TelnetTransport | HttpTransport, list[str]]:
         transport = await self._get_transport()
         try:
+            if isinstance(transport, TelnetTransport):
+                return transport, await transport.send(command, expected=expected)
             return transport, await transport.send(command)
         except Exception as first_error:
             if not isinstance(transport, TelnetTransport):
@@ -577,7 +605,12 @@ class DenonDriver(Driver):
         except (TypeError, ValueError) as exc:
             raise DriverError("Invalid Denon volume value") from exc
         try:
-            transport, lines = await self._send_command(f"MV{_encode_volume(value)}")
+            transport, lines = await self._send_command(
+                f"MV{_encode_volume(value)}",
+                expected=lambda line: (
+                    _decode_volume(_VOLUME_TOKEN.fullmatch(line).group(1)) == value
+                ),
+            )
         except ReceiverSessionError as exc:
             raise DriverError("Denon/Marantz didn't confirm the volume") from exc
         for line in lines:
@@ -610,7 +643,8 @@ class DenonDriver(Driver):
     async def set_mute(self, muted: bool) -> bool:
         try:
             transport, lines = await self._send_command(
-                "MUON" if muted else "MUOFF"
+                "MUON" if muted else "MUOFF",
+                expected=lambda line: line == ("MUON" if muted else "MUOFF"),
             )
         except ReceiverSessionError as exc:
             raise DriverError("Denon/Marantz didn't confirm mute") from exc
@@ -625,7 +659,9 @@ class DenonDriver(Driver):
     async def set_power(self, on: bool) -> bool:
         command = "PWON" if on else "PWSTANDBY"
         try:
-            transport, lines = await self._send_command(command)
+            transport, lines = await self._send_command(
+                command, expected=lambda line: line == command
+            )
         except ReceiverSessionError as exc:
             raise DriverError("Denon/Marantz didn't confirm power") from exc
         if isinstance(transport, HttpTransport):
@@ -639,12 +675,17 @@ class DenonDriver(Driver):
     async def set_mode(self, code: str) -> str:
         normalized = _canonical_mode(str(code))
         try:
-            transport, lines = await self._send_command(f"MS{normalized}")
+            transport, lines = await self._send_command(
+                f"MS{normalized}",
+                expected=lambda line: _canonical_mode(line[2:]) == normalized,
+            )
         except ReceiverSessionError as exc:
-            raise Refused(
-                "The receiver didn't accept that listening mode (it may be unavailable "
-                "for the current input or signal)"
-            ) from exc
+            if exc.kind == "confirmation":
+                raise Refused(
+                    "The receiver didn't accept that listening mode (it may be unavailable "
+                    "for the current input or signal)"
+                ) from exc
+            raise DriverError("Denon/Marantz couldn't confirm the listening mode") from exc
         if isinstance(transport, HttpTransport):
             actual = (await self.status()).mode
             if actual is None or actual != normalized:

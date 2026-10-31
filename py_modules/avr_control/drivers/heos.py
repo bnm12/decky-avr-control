@@ -46,11 +46,15 @@ async def _request(
     args: dict[str, str | int] | None = None,
     *,
     timeout: float = _REPLY_TIMEOUT,
+    expected: Callable[[dict], bool] | None = None,
 ) -> dict:
     request = f"heos://{command}"
     if args:
         request += "?" + urlencode(args)
+    last_observed: dict | None = None
+
     def classify(response: dict) -> str | None:
+        nonlocal last_observed
         metadata = response["heos"]
         message = str(metadata.get("message", ""))
         if message.strip().casefold() == "command under process":
@@ -61,14 +65,22 @@ async def _request(
         if str(metadata.get("result", "")).casefold() != "success":
             detail = message or str(metadata.get("result", "unknown error"))
             raise DriverError(f"HEOS command {command} failed: {detail}")
+        last_observed = response
+        if expected is not None and not expected(response):
+            return None
         return "response"
 
-    frames = await session.transact(
-        [(request + "\r\n").encode("ascii")],
-        classify,
-        frozenset({"response"}),
-        timeout=timeout,
-    )
+    try:
+        frames = await session.transact(
+            [(request + "\r\n").encode("ascii")],
+            classify,
+            frozenset({"response"}),
+            timeout=timeout,
+        )
+    except ReceiverSessionError as exc:
+        if expected is not None and exc.kind == "confirmation" and last_observed:
+            return last_observed
+        raise
     return frames["response"]
 
 
@@ -151,7 +163,7 @@ class HeosDriver(Driver):
             async with self._receiver_session()._transaction_group():
                 return await action()
         except ReceiverSessionError as exc:
-            if exc.kind == "timeout":
+            if exc.kind in {"confirmation", "timeout"}:
                 raise DriverError("HEOS did not reply in time") from exc
             if exc.kind == "connect":
                 raise DriverError(
@@ -171,8 +183,15 @@ class HeosDriver(Driver):
         args: dict[str, str | int] | None = None,
         *,
         timeout: float = _REPLY_TIMEOUT,
+        expected: Callable[[dict], bool] | None = None,
     ) -> dict:
-        return await _request(self._receiver_session(), command, args, timeout=timeout)
+        return await _request(
+            self._receiver_session(),
+            command,
+            args,
+            timeout=timeout,
+            expected=expected,
+        )
 
     async def _players(self) -> list[dict]:
         response = await self._request("player/get_players")
@@ -259,9 +278,19 @@ class HeosDriver(Driver):
             self.config.pop("serial_for", None)
 
     async def _get_volume(
-        self, pid: str
+        self, pid: str, expected: int | None = None
     ) -> int:
-        response = await self._request("player/get_volume", {"pid": pid})
+        def has_expected_volume(response: dict) -> bool:
+            try:
+                return int(_response_values(response)["level"]) == expected
+            except (KeyError, TypeError, ValueError):
+                return False
+
+        response = await self._request(
+            "player/get_volume",
+            {"pid": pid},
+            expected=has_expected_volume if expected is not None else None,
+        )
         try:
             value = int(_response_values(response)["level"])
         except (KeyError, TypeError, ValueError) as exc:
@@ -271,9 +300,21 @@ class HeosDriver(Driver):
         return value
 
     async def _get_mute(
-        self, pid: str
+        self, pid: str, expected: bool | None = None
     ) -> bool:
-        response = await self._request("player/get_mute", {"pid": pid})
+        def has_expected_mute(response: dict) -> bool:
+            values = _response_values(response)
+            state = values.get("state", values.get("mute"))
+            if isinstance(state, bool):
+                return state is expected
+            normalized = str(state).strip().casefold()
+            return normalized == ("on" if expected else "off")
+
+        response = await self._request(
+            "player/get_mute",
+            {"pid": pid},
+            expected=has_expected_mute if expected is not None else None,
+        )
         values = _response_values(response)
         state = values.get("state", values.get("mute"))
         if isinstance(state, bool):
@@ -288,8 +329,20 @@ class HeosDriver(Driver):
     async def status(self) -> Status:
         async def read():
             pid = await self._target_pid()
-            volume = await self._get_volume(pid)
-            muted = await self._get_mute(pid)
+            try:
+                volume = await self._get_volume(pid)
+            except ReceiverSessionError as exc:
+                if exc.kind != "confirmation":
+                    raise
+                volume = None
+            try:
+                muted = await self._get_mute(pid)
+            except ReceiverSessionError as exc:
+                if exc.kind != "confirmation":
+                    raise
+                muted = None
+            if volume is None and muted is None:
+                raise DriverError("HEOS didn't report volume or mute state")
             return Status(volume=volume, muted=muted)
 
         return await self._transaction(read)
@@ -407,7 +460,7 @@ class HeosDriver(Driver):
             await self._request(
                 "player/set_volume", {"pid": pid, "level": value}
             )
-            return await self._get_volume(pid)
+            return await self._get_volume(pid, expected=value)
 
         return await self._transaction(write)
 
@@ -418,7 +471,7 @@ class HeosDriver(Driver):
                 "player/set_mute",
                 {"pid": pid, "state": "on" if muted else "off"},
             )
-            return await self._get_mute(pid)
+            return await self._get_mute(pid, expected=muted)
 
         return await self._transaction(write)
 

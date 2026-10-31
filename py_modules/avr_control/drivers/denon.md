@@ -28,6 +28,8 @@
 
 [spec] Leave at least 50 ms between successive commands sent on the same connection. `status()` sends its four queries with this spacing. [community] The port-23 interface is Telnet-compatible raw TCP and does not require a login handshake.
 
+[assumed] Telnet status requires power and, while powered on, volume and mute; listening mode is collected during a short optional grace period and remains `None` when absent. Standby reports power alone. Setters only accept a state line matching the requested value as confirmation; other state lines are routed to subscribers while the command waits to its bounded deadline. If a value setter times out after observing a different value, it returns that last observed value. Connection and transport failures remain driver errors, not mode refusals.
+
 ## Discovery
 
 [assumed] Send SSDP M-SEARCH requests for `urn:schemas-upnp-org:device:MediaRenderer:1` and `upnp:rootdevice`, then fetch each response's device description using the shared SSDP helper. Probe identified devices and retain only those answering through Telnet or HTTP.

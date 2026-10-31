@@ -81,20 +81,38 @@ async def _read_packet(reader: asyncio.StreamReader) -> str:
     return (await reader.readexactly(data_size)).decode("ascii", errors="ignore")
 
 
-async def _query(host: str, port: int, command: str, pattern: str, timeout: float = 2.0):
+async def _query(
+    host: str,
+    port: int,
+    command: str,
+    pattern: str,
+    timeout: float = 2.0,
+    expected: Callable[[re.Match[str]], bool] | None = None,
+):
     matcher = re.compile(pattern)
+    last_observed: re.Match[str] | None = None
 
     def classify(payload: str) -> str | None:
+        nonlocal last_observed
         if _NJAPUSH.search(payload):
             return None
-        return "reply" if matcher.search(payload) else None
+        match = matcher.search(payload)
+        if match is None:
+            return None
+        last_observed = match
+        return "reply" if expected is None or expected(match) else None
 
-    frames = await shared_session(host, port, _read_packet).transact(
-        [packet(f"!1{command}\r")],
-        classify,
-        frozenset({"reply"}),
-        timeout=timeout,
-    )
+    try:
+        frames = await shared_session(host, port, _read_packet).transact(
+            [packet(f"!1{command}\r")],
+            classify,
+            frozenset({"reply"}),
+            timeout=timeout,
+        )
+    except ReceiverSessionError as exc:
+        if expected is not None and exc.kind == "confirmation" and last_observed:
+            return last_observed
+        raise
     return matcher.search(frames["reply"])
 
 
@@ -411,25 +429,41 @@ class EiscpDriver(Driver):
 
         return unsubscribe
 
-    async def _set(self, command: str, pattern: str) -> re.Match[str]:
-        try:
-            return await _query(self.host, self.port, command, pattern)
-        except ReceiverSessionError as exc:
-            raise DriverError("AVR didn't confirm the command") from exc
-
     async def set_volume(self, raw: int) -> int:
         value = max(self.scale.min, min(self.scale.max, int(raw)))
-        match = await self._set(f"MVL{value:02X}", r"MVL([0-9A-F]{2})")
+        match = await _query(
+            self.host,
+            self.port,
+            f"MVL{value:02X}",
+            r"MVL([0-9A-F]{2})",
+            expected=lambda response: int(response.group(1), 16) == value,
+        )
+        if match is None:
+            raise DriverError("AVR didn't confirm the volume")
         return int(match.group(1), 16)
 
     async def set_mute(self, muted: bool) -> bool:
-        match = await self._set(
-            "AMT01" if muted else "AMT00", r"AMT([0-9A-F]{2})"
+        match = await _query(
+            self.host,
+            self.port,
+            "AMT01" if muted else "AMT00",
+            r"AMT([0-9A-F]{2})",
+            expected=lambda response: (response.group(1) == "01") is muted,
         )
+        if match is None:
+            raise DriverError("AVR didn't confirm mute")
         return match.group(1) == "01"
 
     async def set_power(self, on: bool) -> bool:
-        match = await self._set("PWR01" if on else "PWR00", r"PWR(00|01)")
+        match = await _query(
+            self.host,
+            self.port,
+            "PWR01" if on else "PWR00",
+            r"PWR(00|01)",
+            expected=lambda response: (response.group(1) == "01") is on,
+        )
+        if match is None:
+            raise DriverError("AVR didn't confirm power")
         return match.group(1) == "01"
 
     async def set_mode(self, code: str) -> str:
@@ -438,10 +472,16 @@ class EiscpDriver(Driver):
             raise Refused(f"Invalid mode code: {code}")
         try:
             match = await _query(
-                self.host, self.port, f"LMD{code}", r"LMD([0-9A-F]{2,4})"
+                self.host,
+                self.port,
+                f"LMD{code}",
+                r"LMD([0-9A-F]{2,4})",
+                expected=lambda response: response.group(1).upper() == code,
             )
         except ReceiverSessionError as exc:
-            raise Refused(REFUSED_MODE_MESSAGE) from exc
+            if exc.kind == "confirmation":
+                raise Refused(REFUSED_MODE_MESSAGE) from exc
+            raise DriverError("AVR couldn't confirm the mode") from exc
         return match.group(1).upper()
 
     async def list_modes(self) -> list[Mode]:

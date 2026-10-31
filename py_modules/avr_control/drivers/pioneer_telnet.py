@@ -17,7 +17,7 @@ from .base import (
     Status,
     VolumeScale,
 )
-from .receiver_session import shared_session
+from .receiver_session import ReceiverSessionError, shared_session
 
 TELNET_PORTS = (23, 8102)
 
@@ -29,18 +29,35 @@ async def _read_line(reader: asyncio.StreamReader) -> str:
     return line.decode("ascii", errors="ignore")
 
 
-async def _request(host: str, port: int, command: str, pattern: str):
+async def _request(
+    host: str,
+    port: int,
+    command: str,
+    pattern: str,
+    expected: Callable[[re.Match[str]], bool] | None = None,
+):
     matcher = re.compile(pattern)
+    last_observed: re.Match[str] | None = None
 
     def classify(line: str) -> str | None:
-        return "reply" if matcher.search(line) else None
+        nonlocal last_observed
+        match = matcher.search(line)
+        if match is None:
+            return None
+        last_observed = match
+        return "reply" if expected is None or expected(match) else None
 
-    frames = await shared_session(host, port, _read_line).transact(
-        [(command + "\r\n").encode("ascii")],
-        classify,
-        frozenset({"reply"}),
-        timeout=2.0,
-    )
+    try:
+        frames = await shared_session(host, port, _read_line).transact(
+            [(command + "\r\n").encode("ascii")],
+            classify,
+            frozenset({"reply"}),
+            timeout=2.0,
+        )
+    except ReceiverSessionError as exc:
+        if expected is not None and exc.kind == "confirmation" and last_observed:
+            return last_observed
+        raise
     return matcher.search(frames["reply"])
 
 
@@ -59,7 +76,12 @@ class PioneerTelnetDriver(Driver):
     def host(self) -> str:
         return str(self.config.get("host", ""))
 
-    async def _call(self, command: str, pattern: str):
+    async def _call(
+        self,
+        command: str,
+        pattern: str,
+        expected: Callable[[re.Match[str]], bool] | None = None,
+    ):
         ports = list(TELNET_PORTS)
         configured = int(self.config.get("port", TELNET_PORTS[0]))
         if configured in ports:
@@ -70,9 +92,15 @@ class PioneerTelnetDriver(Driver):
         last_error: Exception | None = None
         for port in ports:
             try:
-                match = await _request(self.host, port, command, pattern)
+                match = await _request(
+                    self.host, port, command, pattern, expected=expected
+                )
                 self.config["port"] = port
                 return match
+            except ReceiverSessionError as exc:
+                if exc.kind == "confirmation":
+                    raise DriverError("AVR didn't confirm the command") from exc
+                last_error = exc
             except Exception as exc:
                 last_error = exc
         raise DriverError(
@@ -80,14 +108,17 @@ class PioneerTelnetDriver(Driver):
         ) from last_error
 
     async def status(self) -> Status:
+        power = await self._call(r"?P", r"PWR([012])")
+        powered_on = power.group(1) == "0"
+        if not powered_on:
+            return Status(power=False)
         volume = await self._call(r"?V", r"VOL(\d+)")
         mute = await self._call(r"?M", r"MUT([01])")
-        power = await self._call(r"?P", r"PWR([012])")
         return Status(
             volume=max(0, min(185, int(volume.group(1)))),
-            muted=volume is not None and mute.group(1) == "0",
+            muted=mute.group(1) == "0",
             # The legacy reply flag is inverted: PWR0 means ON, PWR1 means OFF.
-            power=power.group(1) == "0",
+            power=powered_on,
         )
 
     async def watch(
@@ -124,15 +155,27 @@ class PioneerTelnetDriver(Driver):
 
     async def set_volume(self, raw: int) -> int:
         value = max(self.scale.min, min(self.scale.max, int(raw)))
-        match = await self._call(f"{value:03d}VL", r"VOL(\d+)")
+        match = await self._call(
+            f"{value:03d}VL",
+            r"VOL(\d+)",
+            expected=lambda response: int(response.group(1)) == value,
+        )
         return max(0, min(185, int(match.group(1))))
 
     async def set_mute(self, muted: bool) -> bool:
-        match = await self._call("MO" if muted else "MF", r"MUT([01])")
+        match = await self._call(
+            "MO" if muted else "MF",
+            r"MUT([01])",
+            expected=lambda response: (response.group(1) == "0") is muted,
+        )
         return match.group(1) == "0"
 
     async def set_power(self, on: bool) -> bool:
-        match = await self._call("PO" if on else "PF", r"PWR([012])")
+        match = await self._call(
+            "PO" if on else "PF",
+            r"PWR([012])",
+            expected=lambda response: (response.group(1) == "0") is on,
+        )
         return match.group(1) == "0"
 
     @classmethod

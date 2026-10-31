@@ -33,6 +33,8 @@
 | Power | [community] `?P` | [community] `PO` / `PF` | [community] `PWR0` means on and `PWR2` means standby; [assumed] `PWR1` is also treated as off |
 | Listening mode | Unknown | Unsupported | Unknown | [assumed] Not exposed by this driver |
 
+[assumed] Status requires power first; standby reports power alone, while an on receiver is queried for volume and mute. Setters only accept state lines matching the requested value; mismatched reports go to subscribers and the last observed value is returned if confirmation times out.
+
 ## Volume scale
 
 [community] The implementation uses raw 0–185, 0.5 dB per step, with raw 161 equal to 0 dB and a default cap of 161. Published ranges vary: the VSX-529 example reports 000–131.

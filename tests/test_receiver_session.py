@@ -90,6 +90,34 @@ class ReceiverSessionTests(unittest.IsolatedAsyncioTestCase):
         await session.close()
         await duplex.close()
 
+    async def test_duplicate_matching_frames_after_reply_reach_subscribers(self):
+        async def handle(reader, writer):
+            while line := await reader.readline():
+                if line.strip() == b"QUERY":
+                    writer.write(b"reply:first\nreply:later\n")
+                    await writer.drain()
+
+        duplex = InMemoryDuplex(handle)
+        session = ReceiverSession(duplex.connect, _read_line)
+        pushed: list[bytes] = []
+        received_later = asyncio.Event()
+
+        def on_frame(frame: bytes) -> None:
+            pushed.append(frame)
+            received_later.set()
+
+        unsubscribe = session.subscribe(on_frame)
+        result = await session.transact(
+            [b"QUERY\n"], _reply, frozenset({"reply"}), timeout=1
+        )
+
+        self.assertEqual(result["reply"], b"reply:first")
+        await asyncio.wait_for(received_later.wait(), 1)
+        self.assertEqual(pushed, [b"reply:later"])
+        unsubscribe()
+        await session.close()
+        await duplex.close()
+
     async def test_timeout_and_cancellation_discard_streams(self):
         release_slow = asyncio.Event()
 
@@ -228,6 +256,35 @@ class ReceiverSessionTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result["reply"], b"reply:required")
         self.assertEqual(result["optional"], b"optional:extra")
+        await session.close()
+        await duplex.close()
+
+    async def test_optional_reply_disconnect_does_not_discard_required_reply(self):
+        async def handle(reader, writer):
+            if await reader.readline():
+                writer.write(b"reply:required\n")
+                await writer.drain()
+                writer.close()
+
+        duplex = InMemoryDuplex(handle)
+        session = ReceiverSession(duplex.connect, _read_line)
+
+        result = await session.transact(
+            [b"QUERY\n"],
+            lambda frame: (
+                "reply"
+                if frame.startswith(b"reply:")
+                else "optional"
+                if frame.startswith(b"optional:")
+                else None
+            ),
+            frozenset({"reply"}),
+            timeout=1,
+            optional=frozenset({"optional"}),
+            optional_grace=0.1,
+        )
+
+        self.assertEqual(result["reply"], b"reply:required")
         await session.close()
         await duplex.close()
 
