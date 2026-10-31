@@ -177,17 +177,14 @@ class HeosDriverTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(self.fake.commands.count("player/get_mute"), 2)
         self.assertNotIn("system/register_for_change_events", self.fake.commands)
 
-    async def test_player_matching_prefers_host_ip_then_uses_configured_name(self):
-        by_ip = HeosDriver(
-            {"host": "127.0.0.1", "port": self.port, "player": "Kitchen"}
-        )
-        self.assertEqual((await by_ip.status()).volume, 34)
-
+    async def test_configured_player_name_beats_the_player_at_the_host_ip(self):
         by_name = HeosDriver(
             {"host": "127.0.0.1", "port": self.port, "player": "Kitchen"}
         )
-        self.fake.players[0]["ip"] = "127.0.0.3"
         self.assertEqual((await by_name.status()).volume, 58)
+
+        by_ip = HeosDriver({"host": "127.0.0.1", "port": self.port})
+        self.assertEqual((await by_ip.status()).volume, 34)
 
     async def test_discovered_config_selects_its_player_when_players_have_no_ip(self):
         for player in self.fake.players:
@@ -207,8 +204,41 @@ class HeosDriverTests(unittest.IsolatedAsyncioTestCase):
                 "port": self.port,
                 "player": "Kitchen",
                 "serial": "HEOS-202",
+                "serial_for": "kitchen",
             }
         )
+        self.assertEqual((await driver.status()).volume, 58)
+
+    async def test_serial_learned_for_another_player_is_ignored_and_relearned(self):
+        for player in self.fake.players:
+            player.pop("ip")
+        driver = HeosDriver(
+            {
+                "host": "127.0.0.1",
+                "port": self.port,
+                "player": "Kitchen",
+                "serial": "HEOS-101",
+                "serial_for": "living room",
+            }
+        )
+
+        self.assertEqual((await driver.status()).volume, 58)
+        self.assertEqual(driver.config["serial"], "HEOS-202")
+        self.assertEqual(driver.config["serial_for"], "kitchen")
+
+    async def test_serial_learned_for_a_host_is_ignored_once_a_player_is_named(self):
+        for player in self.fake.players:
+            player.pop("ip")
+        driver = HeosDriver(
+            {
+                "host": "127.0.0.1",
+                "port": self.port,
+                "player": "Kitchen",
+                "serial": "HEOS-101",
+                "serial_for": "127.0.0.1",
+            }
+        )
+
         self.assertEqual((await driver.status()).volume, 58)
 
     async def test_only_player_is_selected_and_ambiguous_selection_lists_names(self):
@@ -238,6 +268,7 @@ class HeosDriverTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(found.config["model"], "HEOS AVR")
         self.assertEqual(found.config["player"], "Living Room")
         self.assertEqual(found.config["serial"], "HEOS-101")
+        self.assertEqual(found.config["serial_for"], "living room")
         self.assertEqual(found.config["ip"], "127.0.0.1")
         self.assertNotIn("name", found.config)
 
@@ -291,6 +322,7 @@ class HeosDriverTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(found[0].host, "127.0.0.1")
         self.assertEqual(found[0].config["player"], "Denon Living Room")
         self.assertEqual(found[0].config["serial"], "DENON-2800")
+        self.assertEqual(found[0].config["serial_for"], "denon living room")
         self.assertNotIn("name", found[0].config)
 
 

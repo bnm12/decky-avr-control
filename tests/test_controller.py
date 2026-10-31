@@ -23,10 +23,12 @@ from avr_control.drivers.base import (
 )
 from avr_control.drivers.denon import DenonDriver
 from avr_control.drivers.eiscp import EiscpDriver
+from avr_control.drivers.heos import HeosDriver
 from avr_control.drivers.homeassistant import HomeAssistantDriver
 from avr_control.drivers.pioneer_telnet import PioneerTelnetDriver
 from avr_control.drivers.yamaha import YamahaDriver
 from avr_control.settings import SettingsStore
+from tests.test_heos import FakeHeos
 from tests.test_homeassistant import ENTITY_ID, TOKEN, FakeHomeAssistant
 
 
@@ -1668,6 +1670,53 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
                 },
             },
         )
+    async def test_heos_player_change_drops_late_night_and_caps_of_previous_player(self):
+        fake = FakeHeos()
+        port = await fake.start()
+        self.addAsyncCleanup(fake.close)
+        for player in fake.players:
+            player.pop("ip")
+        self.controller.registry = [HeosDriver]
+        heos = {"host": "127.0.0.1", "port": port}
+
+        await self.controller.configure("heos", {**heos, "player": "Living Room"})
+        await self.controller.set_max(100)
+        await self.controller.set_volume(85)
+        await self.controller.set_late_max(40)
+        self.assertTrue((await self.controller.set_late_night(True))["ok"])
+        self.assertEqual(fake.players[0]["level"], 40)
+
+        result = await self.controller.configure("heos", {**heos, "player": "Kitchen"})
+        state = await self.controller.get_state()
+        self.assertTrue(result["ok"])
+        self.assertFalse(state["late"])
+        self.assertEqual(state["cap"], 60)
+
+        self.assertTrue((await self.controller.set_late_night(False))["ok"])
+        self.assertEqual(fake.players[1]["level"], 58)
+        self.assertEqual(fake.players[0]["level"], 40)
+
+    async def test_heos_player_edit_controls_new_player_not_serial_learned_earlier(self):
+        fake = FakeHeos()
+        port = await fake.start()
+        self.addAsyncCleanup(fake.close)
+        for player in fake.players:
+            player.pop("ip")
+        self.controller.registry = [HeosDriver]
+        heos = {"host": "127.0.0.1", "port": port}
+        await self.controller.configure("heos", {**heos, "player": "Living Room"})
+        settings = self.store.load()
+        settings["receiver"]["config"].update(
+            {"serial": "HEOS-101", "serial_for": "living room"}
+        )
+        self.store.save(settings)
+
+        await self.controller.configure("heos", {**heos, "player": "Kitchen"})
+        result = await self.controller.set_volume(50)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(fake.players[1]["level"], 50)
+        self.assertEqual(fake.players[0]["level"], 34)
 
 
 if __name__ == "__main__":

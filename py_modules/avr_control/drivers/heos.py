@@ -103,6 +103,12 @@ def _player_text(player: dict, key: str) -> str:
     return str(player.get(key) or "").strip()
 
 
+def _serial_selector(config: dict) -> str:
+    """The selector a learned serial belongs to: the player name, else the host."""
+    name = str(config.get("player") or "").strip().casefold()
+    return name or str(config.get("host") or "").strip()
+
+
 def _player_names(players: list[dict]) -> str:
     names = [str(player.get("name") or "(unnamed)") for player in players]
     return ", ".join(names) if names else "none"
@@ -111,6 +117,7 @@ def _player_names(players: list[dict]) -> str:
 class HeosDriver(Driver):
     key: ClassVar[str] = "heos"
     label: ClassVar[str] = "Denon HEOS (speakers, soundbars, HEOS-built-in)"
+    identity_keys: ClassVar[tuple[str, ...]] = ("host", "player")
     config_fields: ClassVar[tuple[ConfigField, ...]] = (
         ConfigField("host", "HEOS device IP address"),
         ConfigField("player", "HEOS player name (blank = the device at this IP)", required=False),
@@ -190,7 +197,9 @@ class HeosDriver(Driver):
             raise DriverError("No HEOS players were found")
 
         serial = str(self.config.get("serial", "")).strip()
-        if serial:
+        if serial and str(self.config.get("serial_for", "")) == _serial_selector(
+            self.config
+        ):
             by_serial = [
                 player for player in players if _player_text(player, "serial") == serial
             ]
@@ -198,11 +207,8 @@ class HeosDriver(Driver):
             if player is not None:
                 return player
 
-        by_ip = [player for player in players if _player_text(player, "ip") == self.host]
-        player = self._unique_player(by_ip, self.host)
-        if player is not None:
-            return player
-
+        # An explicitly chosen player name beats "the player at this IP": one
+        # HEOS device controls the whole system, so the host may be another player.
         requested_name = str(self.config.get("player", "")).strip()
         if requested_name:
             by_name = [
@@ -222,6 +228,11 @@ class HeosDriver(Driver):
                 f"Available players: {_player_names(players)}"
             )
 
+        by_ip = [player for player in players if _player_text(player, "ip") == self.host]
+        player = self._unique_player(by_ip, self.host)
+        if player is not None:
+            return player
+
         if len(players) == 1:
             return players[0]
         raise DriverError(
@@ -233,10 +244,20 @@ class HeosDriver(Driver):
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> str:
         player = self._resolve_player(await self._players(reader, writer))
+        self._learn_serial(player)
         pid = player.get("pid")
         if pid is None or str(pid).strip() == "":
             raise DriverError(f"HEOS player {player.get('name', '')!r} has no player ID")
         return str(pid)
+
+    def _learn_serial(self, player: dict) -> None:
+        serial = _player_text(player, "serial")
+        if serial:
+            self.config["serial"] = serial
+            self.config["serial_for"] = _serial_selector(self.config)
+        else:
+            self.config.pop("serial", None)
+            self.config.pop("serial_for", None)
 
     async def _get_volume(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, pid: str
@@ -339,6 +360,7 @@ class HeosDriver(Driver):
             config = {"host": host, "model": model, "player": name, "ip": host}
             if serial:
                 config["serial"] = serial
+                config["serial_for"] = _serial_selector(config)
             return Found(
                 driver=cls.key,
                 model=model,
@@ -393,8 +415,10 @@ class HeosDriver(Driver):
         }
         found_config.pop("name", None)
         found_config.pop("serial", None)
+        found_config.pop("serial_for", None)
         if player_serial:
             found_config["serial"] = player_serial
+            found_config["serial_for"] = _serial_selector(found_config)
         return Found(
             driver=cls.key,
             model=model,

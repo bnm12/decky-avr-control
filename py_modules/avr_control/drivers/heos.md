@@ -27,7 +27,7 @@ Skip replies whose message is `command under process`; the final response may ar
 
 ## Discovery
 
-Search with the HEOS SSDP target, then use the response sender IP as the device host and fetch its UPnP description [spec, 1, p. 4]. The description's serial number is preferred for the receiver ID, with UDN as fallback; an IP fallback is used if neither is present [assumed]. The found receiver's config carries `host`, `ip` (the same host), `model`, `player` (the UPnP `friendlyName`) and, when the description has one, `serial` (the UPnP `serialNumber`) [assumed: the UPnP serial equals the HEOS player serial; if it doesn't, selection falls back to the player name]. A manual probe sends `heos://system/heart_beat`, checks for a successful JSON response, then calls `player/get_players` and resolves the target [spec, 1, p. 8]. A successful probe rewrites `player` to the resolved player's name and `serial` to its `serial` field when the player reports one.
+Search with the HEOS SSDP target, then use the response sender IP as the device host and fetch its UPnP description [spec, 1, p. 4]. The description's serial number is preferred for the receiver ID, with UDN as fallback; an IP fallback is used if neither is present [assumed]. The found receiver's config carries `host`, `ip` (the same host), `model`, `player` (the UPnP `friendlyName`) and, when the description has one, `serial` (the UPnP `serialNumber`) [assumed: the UPnP serial equals the HEOS player serial; if it doesn't, selection falls back to the player name]. A manual probe sends `heos://system/heart_beat`, checks for a successful JSON response, then calls `player/get_players` and resolves the target [spec, 1, p. 8]. A successful probe rewrites `player` to the resolved player's name and sets `serial` to its `serial` field, with `serial_for` recording the selector it was learned for, when the player reports one. Every operation re-learns `serial`/`serial_for` from the player it resolves, and clears both when that player has no serial. The `identity_keys` are `host` and `player`, so changing the selected player is a different receiver and resets its caps and late-night state (ADR 0014).
 
 The CLI must initialize its player list after a connection is opened; the spec says player IDs become available only after player discovery [spec, 1, p. 5]. PIDs are resolved again for each operation and are never saved as identity because the spec does not promise they remain stable after reconfiguration [assumed].
 
@@ -42,10 +42,10 @@ The CLI must initialize its player list after a connection is opened; the spec s
 
 `player/get_players` supplies the player names, models, PIDs and, in later spec versions, serials and IPs [spec, 1, p. 10; spec, 2, fields as cited in review, page not checked]. Any field may be absent: the spec allows a player without an `ip`. The driver picks one player in this order [assumed implementation policy]:
 
-1. the player whose `serial` equals the configured `serial`;
-2. the player whose `ip` equals `host`;
-3. the player whose `name` equals the configured `player` (case-insensitive; a renamed player is not found by name);
-4. the only player, when no `player` is configured.
+1. the player whose `serial` equals the configured `serial`, but only when `serial_for` equals the current selector (the casefolded `player`, or `host` when no player is set). A serial learned for another selector, or a legacy serial with no `serial_for`, is ignored, so changing the selected player always re-resolves;
+2. the player whose `name` equals the configured `player` (case-insensitive; a renamed player is not found by name). A configured name wins over the IP because any one HEOS device controls the whole system, so `host` may be a different player;
+3. the player whose `ip` equals `host`, when no `player` is configured;
+4. the only player, when neither matches.
 
 Each step needs exactly one match; two matches at a step are an error that lists the names. A missing name is an error that lists the available players. PIDs are used only as command targets; model, name, serial and IP are retained in the found receiver's config.
 
@@ -63,6 +63,7 @@ Not supported. HEOS playback/group functions are not AVR surround listening mode
 - The HEOS CLI controls the whole system through a connection to one HEOS device; do not open a separate connection to each player [spec, 1, p. 5].
 - Duplicate names or multiple candidates are errors rather than an arbitrary selection [assumed implementation policy].
 - Configs saved before the `player`/`serial` keys existed carry `name` instead, which is no longer read. Run the search again to rewrite them; until then, a system with several players that have no `ip` field reports "Multiple HEOS players found".
+- Configs with a `serial` but no `serial_for` (saved before this rule) ignore that serial. Name resolution then applies, so a renamed player needs a new search or probe to be found by serial again.
 
 ## Unknowns and open questions
 
