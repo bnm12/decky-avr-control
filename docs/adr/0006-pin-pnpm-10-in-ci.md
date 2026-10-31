@@ -1,3 +1,7 @@
+---
+status: superseded by ADR-0017
+---
+
 # Pin pnpm 10 in CI and drop the packageManager field
 
 With the `packageManager` field in `package.json`, pnpm 12 wrote a `packageManagerDependencies` section into `pnpm-lock.yaml`. On the GitHub runner, `pnpm install --frozen-lockfile` then failed with `ERR_PNPM_FROZEN_LOCKFILE_WITH_OUTDATED_LOCKFILE` ("Cannot update packageManagerDependencies with frozen-lockfile because the lockfile is not up to date"). Regenerating the lockfile did not fix it.

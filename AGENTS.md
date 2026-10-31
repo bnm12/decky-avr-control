@@ -24,7 +24,7 @@ corepack pnpm install --frozen-lockfile         # pnpm 12 from the lockfile
 corepack pnpm build                             # type-checks and bundles the UI
 ```
 
-CI (`.github/workflows/build.yml`) runs the tests on Python 3.10 and builds with pnpm 10. Keep `pnpm-lock.yaml` unchanged unless dependencies change (ADR-0006).
+CI (`.github/workflows/build.yml`) runs the tests on Python 3.10 and builds with pnpm 12.16.1, the same pnpm the Decky store uses (ADR-0017). Keep `pnpm-lock.yaml` unchanged unless dependencies change.
 
 ## Constraints that aren't visible in the code
 
