@@ -16,6 +16,8 @@ class FakeEiscp:
         self.mode = "00"
         self.standby = False
         self.refused_mode: str | None = None
+        self.status_delay = 0.0
+        self.report_power = True
         self.server = None
         self.connections = 0
 
@@ -32,6 +34,13 @@ class FakeEiscp:
         writer.write(packet(message))
         await writer.drain()
 
+    async def send_later(self, writer, message: str):
+        await asyncio.sleep(self.status_delay)
+        try:
+            await self.send(writer, message)
+        except (ConnectionError, OSError):
+            pass
+
     async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         self.connections += 1
         await self.send(writer, "!1NJA2-http://127.0.0.1/album_art.cgi")
@@ -45,15 +54,24 @@ class FakeEiscp:
                 command = re.sub(r"^![0-9]", "", command)
                 if command == "MVLQSTN":
                     if not self.standby:
-                        await self.send(writer, f"MVL{self.volume:02X}")
+                        response = f"MVL{self.volume:02X}"
+                        if self.status_delay:
+                            asyncio.create_task(self.send_later(writer, response))
+                        else:
+                            await self.send(writer, response)
                 elif command == "AMTQSTN":
                     if not self.standby:
-                        await self.send(writer, f"AMT{'01' if self.muted else '00'}")
+                        response = f"AMT{'01' if self.muted else '00'}"
+                        if self.status_delay:
+                            asyncio.create_task(self.send_later(writer, response))
+                        else:
+                            await self.send(writer, response)
                 elif command == "LMDQSTN":
                     if not self.standby:
                         await self.send(writer, f"LMD{self.mode}")
                 elif command == "PWRQSTN":
-                    await self.send(writer, f"PWR{'01' if self.power else '00'}")
+                    if self.report_power:
+                        await self.send(writer, f"PWR{'01' if self.power else '00'}")
                 elif command.startswith("MVL"):
                     self.volume = int(command[3:], 16)
                     await self.send(writer, f"MVL{self.volume:02X}")
@@ -83,6 +101,7 @@ class FakePioneerTelnet:
         self.volume = 48
         self.muted = False
         self.power = True
+        self.off_power_reply = "2"
         self.server = None
 
     async def start(self, host: str = "127.0.0.1", port: int = 0):
@@ -106,7 +125,7 @@ class FakePioneerTelnet:
                 elif command == "?M":
                     response = f"MUT{'0' if self.muted else '1'}"
                 elif command == "?P":
-                    response = f"PWR{'0' if self.power else '1'}"
+                    response = f"PWR{'0' if self.power else self.off_power_reply}"
                 elif command == "MO":
                     self.muted = True
                     response = "MUT0"
@@ -118,7 +137,7 @@ class FakePioneerTelnet:
                     response = "PWR0"
                 elif command == "PF":
                     self.power = False
-                    response = "PWR1"
+                    response = f"PWR{self.off_power_reply}"
                 elif command.endswith("VL"):
                     self.volume = int(command[:-2])
                     response = f"VOL{self.volume:03d}"

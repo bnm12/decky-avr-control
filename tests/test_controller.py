@@ -7,8 +7,23 @@ import unittest
 
 from tests import PY_MODULES  # noqa: F401
 from avr_control.controller import Controller
-from avr_control.drivers.base import MODE, MUTE, POWER, VOLUME, Driver, DriverError, Found, Mode, Status, VolumeScale
+from avr_control.drivers.base import (
+    MODE,
+    MUTE,
+    POWER,
+    VOLUME,
+    Driver,
+    DriverError,
+    Found,
+    Mode,
+    Refused,
+    Status,
+    Unsupported,
+    VolumeScale,
+)
+from avr_control.drivers.homeassistant import HomeAssistantDriver
 from avr_control.settings import SettingsStore
+from tests.test_homeassistant import ENTITY_ID, TOKEN, FakeHomeAssistant
 
 
 class FakeClock:
@@ -153,6 +168,15 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(MemoryDriver.state.volume, 100)
         self.assertEqual(self.store.load()["late"], {"active": False})
 
+    async def test_late_night_requires_a_known_volume(self):
+        self.save_settings()
+        MemoryDriver.state = Status(volume=None, muted=None, power=False, mode=None)
+
+        result = await self.controller.set_late_night(True)
+
+        self.assertEqual(result, {"ok": False, "error": "Turn the receiver on first"})
+        self.assertEqual(self.store.load()["late"], {"active": False})
+
     async def test_per_game_volume_mode_and_combined_opt_in(self):
         self.save_settings()
         await self.controller.set_current_game(11, "Volume only")
@@ -173,6 +197,26 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         profile = self.store.load()["games"]["13"]
         self.assertEqual((profile["volume"], profile["mode"]), (100, "00"))
         self.assertEqual(profile["driver"], "memory")
+
+    async def test_game_start_adopts_an_unbound_profile_for_the_resolved_driver(self):
+        self.save_settings(
+            {
+                "version": 2,
+                "receiver": {"driver": "memory", "config": {"host": "receiver"}},
+                "cap": 150,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "14": {"name": "Legacy profile", "driver": None, "volume": 70}
+                },
+            }
+        )
+
+        result = await self.controller.game_started(14, "Legacy profile")
+
+        self.assertTrue(result["applied"])
+        self.assertEqual(MemoryDriver.state.volume, 70)
+        self.assertEqual(self.store.load()["games"]["14"]["driver"], "memory")
 
     async def test_running_profile_tracks_changes_and_late_night_does_not_leak(self):
         self.save_settings(
@@ -282,6 +326,65 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(state["ok"])
         self.assertEqual(MemoryDriver.discovery_calls, 2)
 
+    async def test_unresolved_driver_rediscovery_runs_on_initial_state_lookup(self):
+        class UnresolvedMemoryDriver(MemoryDriver):
+            @classmethod
+            async def probe(cls, config):
+                return None
+
+            @classmethod
+            async def discover(cls, timeout):
+                cls.discovery_calls += 1
+                return list(cls.discovered)
+
+        self.controller.registry = [UnresolvedMemoryDriver]
+        self.save_settings(
+            {
+                "version": 2,
+                "receiver": {
+                    "driver": None,
+                    "config": {"host": "old"},
+                    "id": "stable-id",
+                },
+                "cap": None,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {},
+            }
+        )
+        UnresolvedMemoryDriver.fail_hosts = {"old"}
+        UnresolvedMemoryDriver.discovered = [
+            Found(
+                driver="memory",
+                model="Memory Receiver",
+                id="stable-id",
+                host="new",
+                config={"host": "new"},
+            )
+        ]
+
+        state = await self.controller.get_state()
+
+        self.assertTrue(state["ok"])
+        self.assertEqual(self.store.load()["receiver"]["config"]["host"], "new")
+        self.assertEqual(UnresolvedMemoryDriver.discovery_calls, 1)
+
+    async def test_refused_and_unsupported_commands_do_not_trigger_rediscovery(self):
+        class NonConnectivityMemoryDriver(MemoryDriver):
+            error_to_raise = None
+
+            async def set_mode(self, code):
+                raise self.error_to_raise
+
+        self.controller.registry = [NonConnectivityMemoryDriver]
+        self.save_settings()
+        for error in (Refused("mode unavailable"), Unsupported("not supported")):
+            with self.subTest(error=type(error).__name__):
+                NonConnectivityMemoryDriver.error_to_raise = error
+                result = await self.controller.set_mode("80")
+                self.assertFalse(result["ok"])
+                self.assertEqual(NonConnectivityMemoryDriver.discovery_calls, 0)
+
     async def test_auto_probe_on_manual_host_replaces_old_id(self):
         self.save_settings()
         data = self.store.load()
@@ -325,6 +428,107 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["ok"])
         config = self.store.load()["receiver"]["config"]
         self.assertEqual(config, {"host": "new-host", "token": "saved-secret", "port": 1234})
+
+    async def test_homeassistant_config_uses_driver_fields_and_refreshes_full_config(self):
+        first = FakeHomeAssistant()
+        first_port = first.start()
+        second = FakeHomeAssistant()
+        second.attributes["volume_level"] = 0.73
+        second_port = second.start()
+        controller = Controller(self.store, registry=[HomeAssistantDriver])
+        config = {
+            "url": f"http://127.0.0.1:{first_port}",
+            "token": TOKEN,
+            "entity_id": ENTITY_ID,
+        }
+        try:
+            missing = await controller.configure(
+                "homeassistant",
+                {"url": config["url"], "entity_id": ENTITY_ID},
+            )
+            self.assertFalse(missing["ok"])
+            self.assertIn("Long-lived access token", missing["error"])
+            missing_auto_host = await controller.configure("auto", {})
+            self.assertEqual(
+                missing_auto_host,
+                {"ok": False, "error": "Enter the receiver IP address"},
+            )
+
+            result = await controller.configure("homeassistant", config)
+            self.assertTrue(result["ok"])
+            state = await controller.get_state()
+            self.assertTrue(state["ok"])
+            self.assertEqual(state["volume"], 42)
+
+            result = await controller.configure(
+                "homeassistant",
+                {**config, "token": ""},
+            )
+            self.assertTrue(result["ok"])
+            state = await controller.get_state()
+            self.assertTrue(state["ok"])
+            self.assertEqual(self.store.load()["receiver"]["config"]["token"], TOKEN)
+
+            data = self.store.load()
+            data["receiver"]["config"]["url"] = f"http://127.0.0.1:{second_port}"
+            self.store.save(data)
+            state = await controller.get_state()
+            self.assertTrue(state["ok"])
+            self.assertEqual(state["volume"], 73)
+        finally:
+            await asyncio.to_thread(first.close)
+            await asyncio.to_thread(second.close)
+
+    async def test_in_flight_command_does_not_overwrite_new_receiver_selection(self):
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        class BlockingMemoryDriver(MemoryDriver):
+            @classmethod
+            async def discover(cls, timeout):
+                return list(cls.discovered)
+
+            async def set_mute(self, muted):
+                started.set()
+                await release.wait()
+                return await super().set_mute(muted)
+
+        self.controller.registry = [BlockingMemoryDriver]
+        self.save_settings()
+        command = asyncio.create_task(self.controller.set_mute(True))
+        await started.wait()
+
+        BlockingMemoryDriver.discovered = [
+            Found(
+                driver="memory",
+                model="Memory Receiver",
+                id="new-id",
+                host="receiver-b",
+                config={"host": "receiver-b"},
+            )
+        ]
+        await self.controller.discover()
+        await self.controller.select_receiver("receiver-b", "new-id")
+        release.set()
+
+        self.assertTrue((await command)["ok"])
+        receiver = self.store.load()["receiver"]
+        self.assertEqual(receiver["config"]["host"], "receiver-b")
+        self.assertEqual(receiver["id"], "NEW-ID")
+
+    async def test_command_does_not_save_unchanged_driver_config(self):
+        self.save_settings()
+        original_save = self.store.save
+        writes = []
+
+        def track_save(data):
+            writes.append(data)
+            original_save(data)
+
+        self.store.save = track_save
+        await self.controller.set_mute(True)
+
+        self.assertEqual(writes, [])
 
     async def test_list_games_includes_profile_driver(self):
         self.save_settings()

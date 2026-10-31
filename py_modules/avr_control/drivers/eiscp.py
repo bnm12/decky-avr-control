@@ -7,7 +7,7 @@ import re
 import socket
 import struct
 import time
-from typing import ClassVar
+from typing import Callable, ClassVar
 
 from .base import (
     MODE,
@@ -117,6 +117,8 @@ async def _multi(
     queries: list[tuple[str, str, bool]],
     required_timeout: float = 2.0,
     grace: float = 0.6,
+    complete_when: Callable[[list[re.Match[str] | None]], bool] | None = None,
+    grace_indices: set[int] | None = None,
 ) -> list[re.Match[str] | None]:
     reader, writer = await _open(host, port)
     try:
@@ -129,7 +131,11 @@ async def _multi(
         optional = {i for i, query in enumerate(queries) if not query[2]}
         deadline = asyncio.get_running_loop().time() + required_timeout
 
-        while any(result[i] is None for i in required):
+        while (
+            not complete_when(result)
+            if complete_when is not None
+            else any(result[i] is None for i in required)
+        ):
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
                 raise asyncio.TimeoutError()
@@ -140,6 +146,8 @@ async def _multi(
                 if result[i] is None:
                     result[i] = pattern.search(payload)
 
+        if grace_indices is not None:
+            optional = grace_indices
         if optional and any(result[i] is None for i in optional):
             deadline = asyncio.get_running_loop().time() + grace
             while any(result[i] is None for i in optional):
@@ -265,15 +273,21 @@ class EiscpDriver(Driver):
                     ("MVLQSTN", r"MVL([0-9A-F]{2})", False),
                     ("AMTQSTN", r"AMT([0-9A-F]{2})", False),
                     ("LMDQSTN", r"LMD([0-9A-F]{2,4})", False),
-                    ("PWRQSTN", r"PWR(00|01)", True),
+                    ("PWRQSTN", r"PWR(00|01)", False),
                 ],
+                complete_when=lambda result: (
+                    result[3] is not None
+                    and result[3].group(1) == "00"
+                )
+                or (result[0] is not None and result[1] is not None),
+                grace_indices={2, 3},
             )
         except (asyncio.TimeoutError, asyncio.IncompleteReadError) as exc:
             raise DriverError("AVR didn't report its power state") from exc
         return Status(
             volume=int(volume.group(1), 16) if volume else None,
             muted=(mute.group(1) == "01") if mute else None,
-            power=(power.group(1) == "01"),
+            power=(power.group(1) == "01") if power else None,
             mode=mode.group(1).upper() if mode else None,
         )
 

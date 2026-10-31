@@ -29,7 +29,7 @@
 |---|---|---|---|---|
 | Volume | [community] `?V` | [community] `###VL` | [community] `VOL###` | Decimal raw value, 0–185 |
 | Mute | [community] `?M` | [community] `MO` / `MF` | [community] `MUT0` / `MUT1` | [community] `MUT0` muted, `MUT1` unmuted |
-| Power | [community] `?P` | [community] `PO` / `PF` | [community] `PWR0` / [assumed] `PWR1` | [community] `PWR0` means on; this driver assumes `PWR1` means off, but published examples use `PWR2` for standby |
+| Power | [community] `?P` | [community] `PO` / `PF` | [community] `PWR0` means on and `PWR2` means standby; [assumed] `PWR1` is also treated as off |
 | Listening mode | Unknown | Unsupported | Unknown | [assumed] Not exposed by this driver |
 
 ## Volume scale
@@ -44,7 +44,7 @@
 
 ## Quirks and gotchas
 
-- [community] Power flags are inverted relative to their apparent boolean values: `PWR0` means on and `PWR1` means off.
+- [community] Power flags are inverted relative to their apparent boolean values: `PWR0` means on and `PWR2` means standby; [assumed] `PWR1` is also accepted as off.
 - [community] Port 23 is tried before 8102; the port that responds is saved in configuration.
 - [measured] A Pioneer VSX-935 refused connections on both ports 23 and 8102; it uses eISCP instead.
 
@@ -56,7 +56,7 @@
 
 ## Sources
 
-1. [community] [Arno Welzel: Control AV receivers by Pioneer over the network](https://arnowelzel.de/en/control-av-receivers-by-pioneer-over-the-network)
+1. [community] [Arno Welzel: Control AV receivers by Pioneer over the network](https://arnowelzel.de/en/control-av-receivers-by-pioneer-over-the-network) (documents `PWR0` as on and `PWR2` as standby for the VSX-529)
 2. [community] [Raymond Julin: Remote control your Pioneer VSX receiver over telnet](https://www.raymondjulin.com/blog/remote-control-your-pioneer-vsx-receiver-over-telnet)
 3. [spec] [Pioneer VSX-1120-K RS-232 guide](http://www.pioneerelectronics.com/StaticFiles/PUSA/Files/Home%20Custom%20Install/VSX-1120-K-RS232.PDF) (serial protocol reference; network framing may differ)
 4. [measured] Local network check on a Pioneer VSX-935: ports 23 and 8102 refused; port 60128 was open.

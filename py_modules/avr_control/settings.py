@@ -37,8 +37,7 @@ def migrate(data: dict) -> dict:
 
     games: dict[str, dict] = {}
     old_games = data.get("games") if isinstance(data.get("games"), dict) else {}
-    # Legacy mode codes are eISCP codes, including when proto was omitted.
-    profile_driver = "pioneer_telnet" if proto == "telnet" else "eiscp"
+    profile_driver = _known_driver(proto)
     for appid, old_profile in old_games.items():
         if not isinstance(old_profile, dict):
             continue
@@ -66,14 +65,32 @@ def migrate(data: dict) -> dict:
 
 
 class SettingsStore:
-    def __init__(self, path: str):
+    def __init__(
+        self, path: str, legacy_paths: list[str] | tuple[str, ...] = (), logger=None
+    ):
         self.path = os.fspath(path)
+        self.legacy_paths = tuple(os.fspath(path) for path in legacy_paths)
+        self.logger = logger
+        self._memory_data: dict | None = None
 
     def load(self) -> dict:
+        if self._memory_data is not None:
+            return self._memory_data
         try:
             with open(self.path, "r", encoding="utf-8") as settings_file:
                 data = json.load(settings_file)
         except FileNotFoundError:
+            for legacy_path in self.legacy_paths:
+                try:
+                    with open(legacy_path, "r", encoding="utf-8") as legacy_file:
+                        legacy_data = json.load(legacy_file)
+                except (OSError, ValueError, TypeError):
+                    continue
+                migrated = migrate(
+                    legacy_data if isinstance(legacy_data, dict) else {}
+                )
+                self._save_migration(migrated)
+                return migrated
             return migrate({})
         except (OSError, ValueError, TypeError):
             return migrate({})
@@ -81,8 +98,17 @@ class SettingsStore:
             return migrate({})
         migrated = migrate(data)
         if migrated is not data:
-            self.save(migrated)
+            self._save_migration(migrated)
         return migrated
+
+    def _save_migration(self, data: dict) -> None:
+        try:
+            self.save(data)
+        except OSError as exc:
+            self._memory_data = data
+            error = getattr(self.logger, "error", None)
+            if error:
+                error(f"Couldn't save migrated settings: {exc}")
 
     def save(self, data: dict) -> None:
         directory = os.path.dirname(os.path.abspath(self.path))
@@ -102,6 +128,7 @@ class SettingsStore:
                 settings_file.flush()
                 os.fsync(settings_file.fileno())
             os.replace(temporary_path, self.path)
+            self._memory_data = None
         finally:
             if temporary_path and os.path.exists(temporary_path):
                 try:
@@ -112,16 +139,4 @@ class SettingsStore:
 
 def load_with_legacy(path: str, legacy_paths: list[str] | tuple[str, ...]) -> dict:
     """Load current settings, or adopt the first available old-plugin file."""
-    store = SettingsStore(path)
-    if os.path.exists(path):
-        return store.load()
-    for legacy_path in legacy_paths:
-        try:
-            with open(legacy_path, "r", encoding="utf-8") as legacy_file:
-                data = json.load(legacy_file)
-        except (OSError, ValueError, TypeError):
-            continue
-        migrated = migrate(data if isinstance(data, dict) else {})
-        store.save(migrated)
-        return migrated
-    return migrate({})
+    return SettingsStore(path, legacy_paths=legacy_paths).load()

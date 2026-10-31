@@ -83,7 +83,7 @@ class PioneerTelnetDriver(Driver):
     async def status(self) -> Status:
         volume = await self._call(r"?V", r"VOL(\d+)")
         mute = await self._call(r"?M", r"MUT([01])")
-        power = await self._call(r"?P", r"PWR([01])")
+        power = await self._call(r"?P", r"PWR([012])")
         return Status(
             volume=max(0, min(185, int(volume.group(1)))),
             muted=volume is not None and mute.group(1) == "0",
@@ -101,7 +101,7 @@ class PioneerTelnetDriver(Driver):
         return match.group(1) == "0"
 
     async def set_power(self, on: bool) -> bool:
-        match = await self._call("PO" if on else "PF", r"PWR([01])")
+        match = await self._call("PO" if on else "PF", r"PWR([012])")
         return match.group(1) == "0"
 
     @classmethod

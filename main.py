@@ -6,7 +6,7 @@ import decky
 
 from avr_control.controller import Controller
 from avr_control.drivers import REGISTRY
-from avr_control.settings import SettingsStore, load_with_legacy
+from avr_control.settings import SettingsStore
 
 SETTINGS = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "settings.json")
 LEGACY_SETTINGS = os.path.join(
@@ -14,8 +14,10 @@ LEGACY_SETTINGS = os.path.join(
     "pioneer-volume",
     "settings.json",
 )
-load_with_legacy(SETTINGS, [LEGACY_SETTINGS])
-controller = Controller(SettingsStore(SETTINGS), logger=decky.logger)
+controller = Controller(
+    SettingsStore(SETTINGS, legacy_paths=[LEGACY_SETTINGS], logger=decky.logger),
+    logger=decky.logger,
+)
 
 
 class Plugin:

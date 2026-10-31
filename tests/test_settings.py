@@ -54,7 +54,7 @@ class SettingsTests(unittest.TestCase):
             {"host": "a", "games": {"2": {"name": "y", "mode": "11"}}}
         )
         self.assertIsNone(old_no_proto["receiver"]["driver"])
-        self.assertEqual(old_no_proto["games"]["2"]["driver"], "eiscp")
+        self.assertIsNone(old_no_proto["games"]["2"]["driver"])
 
     def test_store_atomic_roundtrip_and_legacy_folder_adoption(self):
         with tempfile.TemporaryDirectory() as root:

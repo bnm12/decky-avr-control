@@ -8,8 +8,10 @@ import sys
 import tempfile
 import types
 import unittest
+from unittest.mock import patch
 
 from tests import PY_MODULES  # noqa: F401
+from avr_control.settings import SettingsStore
 
 
 class Logger:
@@ -53,6 +55,45 @@ class MainSmokeTests(unittest.TestCase):
                 )
                 asyncio.run(plugin._main())
                 asyncio.run(plugin._unload())
+            finally:
+                sys.modules.pop("avr_control_main_smoke", None)
+                if old_main is not None:
+                    sys.modules["avr_control_main_smoke"] = old_main
+                if old_decky is None:
+                    sys.modules.pop("decky", None)
+                else:
+                    sys.modules["decky"] = old_decky
+
+    def test_main_keeps_migrated_settings_in_memory_when_save_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings_dir = os.path.join(directory, "avr-control")
+            legacy_dir = os.path.join(directory, "pioneer-volume")
+            os.makedirs(legacy_dir)
+            with open(
+                os.path.join(legacy_dir, "settings.json"), "w", encoding="utf-8"
+            ) as file:
+                file.write('{"host": "192.0.2.7", "proto": "eiscp"}')
+
+            decky_stub = types.ModuleType("decky")
+            decky_stub.DECKY_PLUGIN_SETTINGS_DIR = settings_dir
+            decky_stub.logger = Logger()
+            old_decky = sys.modules.get("decky")
+            old_main = sys.modules.pop("avr_control_main_smoke", None)
+            sys.modules["decky"] = decky_stub
+            try:
+                with patch.object(
+                    SettingsStore, "save", side_effect=OSError("disk full")
+                ):
+                    spec = importlib.util.spec_from_file_location(
+                        "avr_control_main_smoke", os.path.join(
+                            os.path.dirname(__file__), os.pardir, "main.py"
+                        )
+                    )
+                    module = importlib.util.module_from_spec(spec)
+                    sys.modules[spec.name] = module
+                    spec.loader.exec_module(module)
+                    plugin = module.Plugin()
+                    self.assertEqual(asyncio.run(plugin.get_host()), "192.0.2.7")
             finally:
                 sys.modules.pop("avr_control_main_smoke", None)
                 if old_main is not None:

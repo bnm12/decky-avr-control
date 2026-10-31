@@ -45,6 +45,21 @@ class EiscpDriverTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(status.muted)
         self.assertIsNone(status.mode)
 
+    async def test_powered_receiver_waits_for_delayed_volume_and_mute(self):
+        self.fake.status_delay = 0.8
+
+        status = await self.driver.status()
+
+        self.assertEqual((status.volume, status.muted, status.power), (48, False, True))
+
+    async def test_status_accepts_volume_and_mute_when_power_is_unknown(self):
+        self.fake.report_power = False
+        self.fake.status_delay = 0.1
+
+        status = await self.driver.status()
+
+        self.assertEqual((status.volume, status.muted, status.power), (48, False, None))
+
     async def test_refused_mode_and_probe_yes_no(self):
         self.fake.refused_mode = "80"
         with self.assertRaisesRegex(Refused, "didn't accept that mode"):
@@ -121,6 +136,16 @@ class PioneerTelnetDriverTests(unittest.IsolatedAsyncioTestCase):
                 {"host": "127.0.0.1", "port": self.port + 1}
             )
         )
+
+    async def test_status_treats_pwr2_and_pwr1_as_standby(self):
+        self.fake.power = False
+
+        status = await self.driver.status()
+        self.assertFalse(status.power)
+
+        self.fake.off_power_reply = "1"
+        status = await self.driver.status()
+        self.assertFalse(status.power)
 
 
 if __name__ == "__main__":

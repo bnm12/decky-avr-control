@@ -7,7 +7,18 @@ import time
 from typing import Callable
 
 from .drivers import REGISTRY, discover_all, get_driver_class, probe_all
-from .drivers.base import MODE, MUTE, POWER, VOLUME, Driver, DriverError, Found, Refused, Status
+from .drivers.base import (
+    MODE,
+    MUTE,
+    POWER,
+    VOLUME,
+    Driver,
+    DriverError,
+    Found,
+    Refused,
+    Status,
+    Unsupported,
+)
 from .settings import SettingsStore, migrate
 
 _CAPABILITY_ORDER = (VOLUME, MUTE, POWER, MODE)
@@ -32,6 +43,7 @@ class Controller:
         self.reapply_delay = reapply_delay
         self.rediscover_interval = rediscover_interval
         self._active_driver: Driver | None = None
+        self._receiver_generation = 0
         self._last_rediscover: float | None = None
         self._last_found: list[Found] = []
         self._current_game: dict | None = None
@@ -62,6 +74,20 @@ class Controller:
     @staticmethod
     def _host(data: dict) -> str:
         return str(data.get("receiver", {}).get("config", {}).get("host", "")).strip()
+
+    @staticmethod
+    def _missing_config_field(driver_class, config: dict):
+        for field in driver_class.config_fields:
+            value = config.get(field.key)
+            if field.required and (value is None or not str(value).strip()):
+                return field
+        return None
+
+    @staticmethod
+    def _config_error(field) -> str:
+        if field.key == "host":
+            return "Enter the receiver IP address"
+        return f"Enter {field.label}"
 
     def _scale_for(self, data: dict):
         if self._active_driver is not None:
@@ -101,12 +127,17 @@ class Controller:
         receiver = data["receiver"]
         key = receiver.get("driver")
         config = dict(receiver.get("config") or {})
-        if not config.get("host"):
-            raise DriverError("Set the AVR IP address first, or tap Search network")
         driver_class = self._class_for(key)
         if driver_class is None:
+            if key is not None:
+                raise DriverError(f"Unknown receiver driver: {key}")
+            if not config.get("host"):
+                raise DriverError("Set the AVR IP address first, or tap Search network")
             found = await self._probe(config)
             if found is None:
+                replacement = await self._rediscover(data)
+                if replacement is not None:
+                    return replacement
                 raise DriverError("No supported receiver answered at that address")
             receiver["driver"] = found.driver
             receiver["config"] = dict(found.config)
@@ -115,12 +146,17 @@ class Controller:
             config = dict(found.config)
         if driver_class is None:
             raise DriverError(f"Unknown receiver driver: {key}")
+        missing_field = self._missing_config_field(driver_class, config)
+        if missing_field is not None:
+            raise DriverError(self._config_error(missing_field))
         if (
             self._active_driver is None
             or self._active_driver.key != driver_class.key
-            or self._active_driver.config.get("host") != config.get("host")
+            or self._active_driver.config != config
         ):
             self._active_driver = driver_class(config)
+            self._receiver_generation += 1
+        self._bind_unbound_profiles(data, self._active_driver.key)
         return self._active_driver
 
     async def _probe(self, config: dict) -> Found | None:
@@ -135,12 +171,29 @@ class Controller:
                 return found
         return None
 
-    def _persist_driver_config(self, driver: Driver) -> None:
+    def _persist_driver_config(self, driver: Driver, generation: int) -> None:
+        if (
+            generation != self._receiver_generation
+            or self._active_driver is not driver
+        ):
+            return
         data = self._settings()
         receiver = data["receiver"]
+        config = dict(driver.config)
+        if receiver.get("driver") == driver.key and receiver.get("config") == config:
+            return
         receiver["driver"] = driver.key
-        receiver["config"] = dict(driver.config)
+        receiver["config"] = config
         self._save(data)
+
+    def _bind_unbound_profiles(self, data: dict, driver_key: str) -> None:
+        changed = False
+        for profile in data.get("games", {}).values():
+            if isinstance(profile, dict) and profile.get("driver") is None:
+                profile["driver"] = driver_key
+                changed = True
+        if changed:
+            self._save(data)
 
     async def _rediscover(self, data: dict) -> Driver | None:
         ident = data.get("receiver", {}).get("id")
@@ -171,6 +224,7 @@ class Controller:
         data["receiver"]["id"] = found.id
         self._save(data)
         driver_class = self._class_for(found.driver)
+        self._receiver_generation += 1
         if driver_class is None:
             return None
         self._active_driver = driver_class(dict(found.config))
@@ -178,8 +232,11 @@ class Controller:
 
     async def _run(self, method: str, *args, expected_driver: str | None = None):
         driver = await self._get_driver()
+        generation = self._receiver_generation
         try:
             result = await getattr(driver, method)(*args)
+        except (Refused, Unsupported):
+            raise
         except DriverError:
             data = self._settings()
             replacement = await self._rediscover(data)
@@ -189,7 +246,8 @@ class Controller:
                 raise DriverError("The saved game profile belongs to another receiver driver")
             result = await getattr(replacement, method)(*args)
             driver = replacement
-        self._persist_driver_config(driver)
+            generation = self._receiver_generation
+        self._persist_driver_config(driver, generation)
         return result
 
     async def get_host(self) -> str:
@@ -199,17 +257,34 @@ class Controller:
         data = self._settings()
         config = dict(config)
         receiver = data["receiver"]
+        driver_class = None
+        if driver_key != "auto":
+            driver_class = self._class_for(driver_key)
+            if driver_class is None:
+                return {"ok": False, "error": f"Unknown receiver driver: {driver_key}"}
         if driver_key != "auto" and receiver.get("driver") == driver_key:
-            config = {**(receiver.get("config") or {}), **config}
+            saved_config = dict(receiver.get("config") or {})
+            config = {**saved_config, **config}
+            for field in driver_class.config_fields:
+                if field.secret and not str(config.get(field.key, "")).strip():
+                    if saved_config.get(field.key):
+                        config[field.key] = saved_config[field.key]
         if config.get("host"):
             config["host"] = str(config["host"]).strip()
-        if not config.get("host"):
-            return {"ok": False, "error": "Enter the receiver IP address"}
+        if driver_key == "auto":
+            if not config.get("host"):
+                return {"ok": False, "error": "Enter the receiver IP address"}
+            missing_field = None
+        else:
+            missing_field = self._missing_config_field(driver_class, config)
+        if missing_field is not None:
+            return {"ok": False, "error": self._config_error(missing_field)}
 
         receiver["config"] = config
         receiver["id"] = None
         receiver["driver"] = None
         self._active_driver = None
+        self._receiver_generation += 1
         if driver_key == "auto":
             self._save(data)
             found = await self._probe(config)
@@ -221,11 +296,9 @@ class Controller:
             )
             self._save(data)
             self._active_driver = self._class_for(found.driver)(dict(found.config))
+            self._receiver_generation += 1
             return {"ok": True}
 
-        driver_class = self._class_for(driver_key)
-        if driver_class is None:
-            return {"ok": False, "error": f"Unknown receiver driver: {driver_key}"}
         receiver["driver"] = driver_key
         self._save(data)
         self._active_driver = driver_class(config)
@@ -298,6 +371,7 @@ class Controller:
         self._save(data)
         driver_class = self._class_for(found.driver)
         self._active_driver = driver_class(dict(found.config)) if driver_class else None
+        self._receiver_generation += 1
 
     def _mode_label(self, driver: Driver, code: str | None) -> str | None:
         if not code:
@@ -439,6 +513,10 @@ class Controller:
             return {"applied": False}
         try:
             driver = await self._get_driver()
+            data = self._settings()
+            profile = data.get("games", {}).get(str(int(appid)))
+            if not profile:
+                return {"applied": False}
             if profile.get("driver") != driver.key:
                 return {"applied": False}
             self._suppress_save_until = self.clock() + 6.0
@@ -559,13 +637,14 @@ class Controller:
             active = bool(data.get("late", {}).get("active"))
             if on and not active:
                 status: Status = await self._run("status")
+                if status.volume is None:
+                    return {"ok": False, "error": "Turn the receiver on first"}
                 data = self._settings()
                 data["late"] = {"active": True, "prev_volume": status.volume}
                 self._save(data)
-                if status.volume is not None:
-                    cap = self._effective_cap(data)
-                    if status.volume > cap:
-                        await self.set_volume(cap)
+                cap = self._effective_cap(data)
+                if status.volume > cap:
+                    await self.set_volume(cap)
             elif not on and active:
                 previous = data.get("late", {}).get("prev_volume")
                 data["late"] = {"active": False}
