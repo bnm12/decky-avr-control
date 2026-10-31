@@ -8,7 +8,7 @@
       "audio",
       "utility"
     ],
-    "description": "Network volume, mute, power and listening-mode controls with opt-in per-game profiles for AV receivers.",
+    "description": "Quick Access volume and mute for network receivers; power and listening modes where supported. eISCP verified on Pioneer VSX-935; other drivers are experimental.",
     "image": "https://opengraph.githubassets.com/1/bnm12/decky-avr-control"
   }
 }
