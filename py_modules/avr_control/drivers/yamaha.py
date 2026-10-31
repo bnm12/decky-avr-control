@@ -161,6 +161,7 @@ def _power(value) -> bool | None:
 
 
 def _has_yxc_control_url(raw_xml: str) -> bool:
+    """Only the YXC-specific URL claims a device; legacy X_controlURL is separate."""
     try:
         root = ET.fromstring(raw_xml)
     except (ET.ParseError, TypeError):
