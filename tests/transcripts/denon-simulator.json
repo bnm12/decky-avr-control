@@ -1,0 +1,407 @@
+{
+  "schema_version": 1,
+  "source": "simulator",
+  "tool": {
+    "name": "avr_probe",
+    "version": "1.0"
+  },
+  "timestamp": "2026-10-31T14:28:57.663365+00:00",
+  "runtime": {
+    "python": "3.15.2",
+    "os": "Windows-11-10.0.22631-SP0"
+  },
+  "driver": {
+    "key": "denon",
+    "label": "Denon / Marantz"
+  },
+  "found": {
+    "model": "AVR-X3800H simulator",
+    "id": "RECEIVER_ID_1",
+    "host": "RECEIVER_IP"
+  },
+  "status": {
+    "volume": 91,
+    "muted": false,
+    "power": true,
+    "mode": "STEREO"
+  },
+  "capabilities": [
+    "mode",
+    "mute",
+    "power",
+    "volume"
+  ],
+  "scale": {
+    "min": 0,
+    "max": 139,
+    "unit": "dB",
+    "zero": 160,
+    "steps_per_unit": 2,
+    "default_cap": 100
+  },
+  "modes": [
+    {
+      "code": "MOVIE",
+      "name": "Movie"
+    },
+    {
+      "code": "MUSIC",
+      "name": "Music"
+    },
+    {
+      "code": "GAME",
+      "name": "Game"
+    },
+    {
+      "code": "DIRECT",
+      "name": "Direct"
+    },
+    {
+      "code": "PURE DIRECT",
+      "name": "Pure Direct"
+    },
+    {
+      "code": "STEREO",
+      "name": "Stereo"
+    },
+    {
+      "code": "AUTO",
+      "name": "Auto"
+    },
+    {
+      "code": "DOLBY DIGITAL",
+      "name": "Dolby Digital"
+    },
+    {
+      "code": "DOLBY SURROUND",
+      "name": "Dolby Surround"
+    },
+    {
+      "code": "DTS SURROUND",
+      "name": "DTS Surround"
+    },
+    {
+      "code": "DTS NEURAL:X",
+      "name": "DTS Neural:X"
+    },
+    {
+      "code": "MCH STEREO",
+      "name": "Multi-Channel Stereo"
+    },
+    {
+      "code": "VIRTUAL",
+      "name": "Virtual"
+    }
+  ],
+  "modes_error": null,
+  "getters": {
+    "volume": 91,
+    "mute": false,
+    "power": true,
+    "mode": "STEREO"
+  },
+  "write_restore_errors": [],
+  "proxy_errors": [],
+  "connections": [
+    {
+      "port": 51458,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.001214,
+          "data_b64": "UFc/DQ==",
+          "text": "PW?\r"
+        },
+        {
+          "dir": "rx",
+          "t": 0.001275,
+          "data_b64": "U0lTQVQvQ0JMDQ==",
+          "text": "SISAT/CBL\r"
+        },
+        {
+          "dir": "rx",
+          "t": 0.00145,
+          "data_b64": "U0lTQVQvQ0JMDVBXT04N",
+          "text": "SISAT/CBL\rPWON\r"
+        },
+        {
+          "dir": "tx",
+          "t": 0.06624,
+          "data_b64": "TVY/DQ==",
+          "text": "MV?\r"
+        },
+        {
+          "dir": "rx",
+          "t": 0.066343,
+          "data_b64": "U0lTQVQvQ0JMDU1WNDU1DU1WTUFYIDY5NQ0=",
+          "text": "SISAT/CBL\rMV455\rMVMAX 695\r"
+        },
+        {
+          "dir": "tx",
+          "t": 0.128317,
+          "data_b64": "TVU/DQ==",
+          "text": "MU?\r"
+        },
+        {
+          "dir": "rx",
+          "t": 0.12844,
+          "data_b64": "U0lTQVQvQ0JMDU1VT0ZGDQ==",
+          "text": "SISAT/CBL\rMUOFF\r"
+        },
+        {
+          "dir": "tx",
+          "t": 0.191134,
+          "data_b64": "TVM/DQ==",
+          "text": "MS?\r"
+        },
+        {
+          "dir": "rx",
+          "t": 0.191219,
+          "data_b64": "U0lTQVQvQ0JMDU1TU1RFUkVPDQ==",
+          "text": "SISAT/CBL\rMSSTEREO\r"
+        }
+      ]
+    },
+    {
+      "port": 51458,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.192174,
+          "data_b64": "UFc/DQ==",
+          "text": "PW?\r"
+        },
+        {
+          "dir": "rx",
+          "t": 0.192209,
+          "data_b64": "U0lTQVQvQ0JMDQ==",
+          "text": "SISAT/CBL\r"
+        },
+        {
+          "dir": "rx",
+          "t": 0.192328,
+          "data_b64": "U0lTQVQvQ0JMDVBXT04N",
+          "text": "SISAT/CBL\rPWON\r"
+        },
+        {
+          "dir": "tx",
+          "t": 0.254592,
+          "data_b64": "TVY/DQ==",
+          "text": "MV?\r"
+        },
+        {
+          "dir": "rx",
+          "t": 0.254727,
+          "data_b64": "U0lTQVQvQ0JMDU1WNDU1DU1WTUFYIDY5NQ0=",
+          "text": "SISAT/CBL\rMV455\rMVMAX 695\r"
+        },
+        {
+          "dir": "tx",
+          "t": 0.316602,
+          "data_b64": "TVU/DQ==",
+          "text": "MU?\r"
+        },
+        {
+          "dir": "rx",
+          "t": 0.316708,
+          "data_b64": "U0lTQVQvQ0JMDU1VT0ZGDQ==",
+          "text": "SISAT/CBL\rMUOFF\r"
+        },
+        {
+          "dir": "tx",
+          "t": 0.379147,
+          "data_b64": "TVM/DQ==",
+          "text": "MS?\r"
+        },
+        {
+          "dir": "rx",
+          "t": 0.379244,
+          "data_b64": "U0lTQVQvQ0JMDU1TU1RFUkVPDQ==",
+          "text": "SISAT/CBL\rMSSTEREO\r"
+        }
+      ]
+    },
+    {
+      "port": 51458,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.380097,
+          "data_b64": "UFc/DQ==",
+          "text": "PW?\r"
+        },
+        {
+          "dir": "rx",
+          "t": 0.380133,
+          "data_b64": "U0lTQVQvQ0JMDQ==",
+          "text": "SISAT/CBL\r"
+        },
+        {
+          "dir": "rx",
+          "t": 0.380251,
+          "data_b64": "U0lTQVQvQ0JMDVBXT04N",
+          "text": "SISAT/CBL\rPWON\r"
+        },
+        {
+          "dir": "tx",
+          "t": 0.441421,
+          "data_b64": "TVY/DQ==",
+          "text": "MV?\r"
+        },
+        {
+          "dir": "rx",
+          "t": 0.441513,
+          "data_b64": "U0lTQVQvQ0JMDU1WNDU1DU1WTUFYIDY5NQ0=",
+          "text": "SISAT/CBL\rMV455\rMVMAX 695\r"
+        },
+        {
+          "dir": "tx",
+          "t": 0.503307,
+          "data_b64": "TVU/DQ==",
+          "text": "MU?\r"
+        },
+        {
+          "dir": "rx",
+          "t": 0.503395,
+          "data_b64": "U0lTQVQvQ0JMDU1VT0ZGDQ==",
+          "text": "SISAT/CBL\rMUOFF\r"
+        },
+        {
+          "dir": "tx",
+          "t": 0.565981,
+          "data_b64": "TVM/DQ==",
+          "text": "MS?\r"
+        },
+        {
+          "dir": "rx",
+          "t": 0.566559,
+          "data_b64": "U0lTQVQvQ0JMDU1TU1RFUkVPDQ==",
+          "text": "SISAT/CBL\rMSSTEREO\r"
+        }
+      ]
+    },
+    {
+      "port": 51458,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.567559,
+          "data_b64": "UFc/DQ==",
+          "text": "PW?\r"
+        },
+        {
+          "dir": "rx",
+          "t": 0.567595,
+          "data_b64": "U0lTQVQvQ0JMDQ==",
+          "text": "SISAT/CBL\r"
+        },
+        {
+          "dir": "rx",
+          "t": 0.567713,
+          "data_b64": "U0lTQVQvQ0JMDVBXT04N",
+          "text": "SISAT/CBL\rPWON\r"
+        },
+        {
+          "dir": "tx",
+          "t": 0.62785,
+          "data_b64": "TVY/DQ==",
+          "text": "MV?\r"
+        },
+        {
+          "dir": "rx",
+          "t": 0.627942,
+          "data_b64": "U0lTQVQvQ0JMDU1WNDU1DU1WTUFYIDY5NQ0=",
+          "text": "SISAT/CBL\rMV455\rMVMAX 695\r"
+        },
+        {
+          "dir": "tx",
+          "t": 0.690708,
+          "data_b64": "TVU/DQ==",
+          "text": "MU?\r"
+        },
+        {
+          "dir": "rx",
+          "t": 0.690794,
+          "data_b64": "U0lTQVQvQ0JMDU1VT0ZGDQ==",
+          "text": "SISAT/CBL\rMUOFF\r"
+        },
+        {
+          "dir": "tx",
+          "t": 0.75381,
+          "data_b64": "TVM/DQ==",
+          "text": "MS?\r"
+        },
+        {
+          "dir": "rx",
+          "t": 0.753894,
+          "data_b64": "U0lTQVQvQ0JMDU1TU1RFUkVPDQ==",
+          "text": "SISAT/CBL\rMSSTEREO\r"
+        }
+      ]
+    },
+    {
+      "port": 51458,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.754827,
+          "data_b64": "UFc/DQ==",
+          "text": "PW?\r"
+        },
+        {
+          "dir": "rx",
+          "t": 0.754863,
+          "data_b64": "U0lTQVQvQ0JMDQ==",
+          "text": "SISAT/CBL\r"
+        },
+        {
+          "dir": "rx",
+          "t": 0.754978,
+          "data_b64": "U0lTQVQvQ0JMDVBXT04N",
+          "text": "SISAT/CBL\rPWON\r"
+        },
+        {
+          "dir": "tx",
+          "t": 0.817266,
+          "data_b64": "TVY/DQ==",
+          "text": "MV?\r"
+        },
+        {
+          "dir": "rx",
+          "t": 0.817364,
+          "data_b64": "U0lTQVQvQ0JMDU1WNDU1DU1WTUFYIDY5NQ0=",
+          "text": "SISAT/CBL\rMV455\rMVMAX 695\r"
+        },
+        {
+          "dir": "tx",
+          "t": 0.880457,
+          "data_b64": "TVU/DQ==",
+          "text": "MU?\r"
+        },
+        {
+          "dir": "rx",
+          "t": 0.88055,
+          "data_b64": "U0lTQVQvQ0JMDU1VT0ZGDQ==",
+          "text": "SISAT/CBL\rMUOFF\r"
+        },
+        {
+          "dir": "tx",
+          "t": 0.942294,
+          "data_b64": "TVM/DQ==",
+          "text": "MS?\r"
+        },
+        {
+          "dir": "rx",
+          "t": 0.942432,
+          "data_b64": "U0lTQVQvQ0JMDU1TU1RFUkVPDQ==",
+          "text": "SISAT/CBL\rMSSTEREO\r"
+        }
+      ]
+    }
+  ],
+  "notes": [
+    "The local recording proxy uses the receiver's selected TCP port.",
+    "The driver connects to RECEIVER_IP through the proxy; an HTTP driver would therefore send that address in its Host header."
+  ],
+  "raw_discovery": {}
+}
