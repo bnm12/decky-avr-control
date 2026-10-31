@@ -113,7 +113,52 @@ class Controller:
                 normalized.pop("port")
         return normalized
 
+    def _identity_config(self, driver_class, config: dict) -> dict:
+        driver, normalized = self._normalized_driver_config(
+            driver_class, config
+        )
+        identity = {}
+        for key in getattr(driver_class, "identity_keys", ("host",)):
+            if key not in normalized:
+                continue
+            value = normalized[key]
+            try:
+                value = getattr(driver, key)
+            except Exception:
+                pass
+            if isinstance(value, str):
+                value = value.strip()
+            identity[key] = value
+        return identity
+
     def _receiver_binding(self, data: dict) -> dict:
+        receiver = data.get("receiver", {})
+        driver = receiver.get("driver")
+        ident = receiver.get("id")
+        if ident:
+            return {"driver": driver, "id": str(ident).upper()}
+        config = receiver.get("config") or {}
+        driver_class = self._class_for(driver)
+        if driver_class is not None:
+            try:
+                config = self._identity_config(driver_class, config)
+            except Exception:
+                keys = getattr(driver_class, "identity_keys", ("host",))
+                config = {key: config[key] for key in keys if key in config}
+        else:
+            config = {"host": config["host"]} if "host" in config else {}
+        encoded = json.dumps(
+            config,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+        return {
+            "driver": driver,
+            "config_hash": hashlib.sha256(encoded).hexdigest(),
+        }
+
+    def _legacy_receiver_binding(self, data: dict) -> dict:
         receiver = data.get("receiver", {})
         driver = receiver.get("driver")
         ident = receiver.get("id")
@@ -139,6 +184,7 @@ class Controller:
 
     def _bind_receiver_state(self, data: dict) -> bool:
         binding = self._receiver_binding(data)
+        legacy_binding = self._legacy_receiver_binding(data)
         changed = False
         for value_key, binding_key in (
             ("cap", "cap_receiver"),
@@ -150,8 +196,9 @@ class Controller:
                     data[binding_key] = binding
                     changed = True
             elif previous != binding:
-                data[value_key] = None
                 data[binding_key] = binding
+                if previous != legacy_binding:
+                    data[value_key] = None
                 changed = True
 
         late = data.get("late", {})
@@ -161,8 +208,9 @@ class Controller:
                 data["late_receiver"] = binding
                 changed = True
         elif previous != binding:
-            data["late"] = {"active": False}
             data["late_receiver"] = binding
+            if previous != legacy_binding:
+                data["late"] = {"active": False}
             changed = True
         return changed
 
@@ -564,12 +612,12 @@ class Controller:
         candidate, config = self._normalized_driver_config(driver_class, config)
         old_driver = receiver.get("driver")
         try:
-            old_config = self._binding_config(
+            old_config = self._identity_config(
                 driver_class, receiver.get("config") or {}
             )
             same_connection = (
                 old_driver == driver_key
-                and old_config == self._binding_config(driver_class, config)
+                and old_config == self._identity_config(driver_class, config)
             )
         except Exception:
             same_connection = False

@@ -123,6 +123,8 @@ class Driver(ABC):
 
     key: ClassVar[str]  # stable id stored in settings, e.g. "eiscp"
     label: ClassVar[str]  # shown in the UI, e.g. "Onkyo / Pioneer / Integra (eISCP)"
+    # Config keys identifying this receiver; exclude learned or transport metadata.
+    identity_keys: ClassVar[tuple[str, ...]] = ("host",)
     config_fields: ClassVar[tuple[ConfigField, ...]] = (
         ConfigField("host", "Receiver IP address"),
     )

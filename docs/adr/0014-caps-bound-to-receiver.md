@@ -5,3 +5,5 @@ Caps, the late-night cap and the late-night restore volume are raw volumes (ADR-
 We considered converting caps between scales instead. We rejected it because there is no conversion between dB and percent, and a wrong guess means an unexpectedly loud receiver.
 
 This extends ADR-0012, which binds game profiles to a driver for the same reason.
+
+When no receiver ID is available, the fallback hash uses only the driver's declared identity keys; learned transport metadata is excluded.

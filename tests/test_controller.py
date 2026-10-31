@@ -282,6 +282,142 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(settings["late_cap"], 40)
         self.assertEqual(settings["late"], {"active": True, "prev_volume": 100})
 
+    async def test_driver_failover_metadata_does_not_replace_receiver_binding(self):
+        class FailoverDriver(Driver):
+            key = "failover"
+            label = "Failover Receiver"
+            capabilities = frozenset({VOLUME})
+            scale = VolumeScale(min=0, max=100, unit="%", default_cap=100)
+
+            async def status(self):
+                self.config.update({"transport": "http", "http_port": 8080})
+                return Status(volume=55)
+
+        self.controller.registry = [FailoverDriver]
+        self.save_settings(
+            {
+                "version": 2,
+                "receiver": {
+                    "driver": "failover",
+                    "config": {"host": "receiver"},
+                    "id": None,
+                },
+                "cap": 80,
+                "late_cap": 40,
+                "late": {"active": True, "prev_volume": 65},
+                "games": {},
+            }
+        )
+
+        state = await self.controller.get_state()
+        settings = self.store.load()
+
+        self.assertTrue(state["ok"])
+        self.assertEqual(settings["receiver"]["config"]["transport"], "http")
+        self.assertEqual(state["cap"], 80)
+        self.assertEqual(state["late_cap"], 40)
+        self.assertTrue(state["late"])
+        self.assertEqual(settings["late"]["prev_volume"], 65)
+
+    async def test_homeassistant_identity_change_replaces_receiver_binding(self):
+        class HomeAssistantLikeDriver(Driver):
+            key = "ha_like"
+            label = "Home Assistant-like Receiver"
+            identity_keys = ("url", "entity_id")
+            config_fields = ()
+            capabilities = frozenset({VOLUME})
+            scale = VolumeScale(min=0, max=100, unit="%", default_cap=60)
+
+            async def status(self):
+                return Status(volume=50)
+
+        self.controller.registry = [HomeAssistantLikeDriver]
+        self.save_settings(
+            {
+                "version": 2,
+                "receiver": {
+                    "driver": "ha_like",
+                    "config": {
+                        "url": "http://homeassistant.local:8123",
+                        "entity_id": "media_player.living_room",
+                    },
+                    "id": None,
+                },
+                "cap": 80,
+                "late_cap": 40,
+                "late": {"active": True, "prev_volume": 65},
+                "games": {},
+            }
+        )
+        await self.controller.get_state()
+
+        result = await self.controller.configure(
+            "ha_like", {"entity_id": "media_player.bedroom"}
+        )
+        settings = self.store.load()
+
+        self.assertTrue(result["ok"])
+        self.assertIsNone(settings["cap"])
+        self.assertIsNone(settings["late_cap"])
+        self.assertEqual(settings["late"], {"active": False})
+
+    async def test_legacy_config_hash_migrates_without_resetting_receiver_state(self):
+        class LegacyDriver(Driver):
+            key = "legacy"
+            label = "Legacy Receiver"
+            config_fields = ()
+            capabilities = frozenset({VOLUME})
+            scale = VolumeScale(min=0, max=100, unit="%", default_cap=100)
+
+            async def status(self):
+                return Status(volume=55)
+
+        self.controller.registry = [LegacyDriver]
+        legacy_binding = {
+            "driver": "legacy",
+            "config_hash": "f8fca4025c3fcc1e8f60ecc7035093a33e21656184128c532f94dbd2753b7672",
+        }
+        self.save_settings(
+            {
+                "version": 2,
+                "receiver": {
+                    "driver": "legacy",
+                    "config": {
+                        "host": "receiver",
+                        "transport": "http",
+                        "http_port": 8080,
+                    },
+                    "id": None,
+                },
+                "cap": 80,
+                "cap_receiver": legacy_binding,
+                "late_cap": 40,
+                "late_cap_receiver": legacy_binding,
+                "late": {"active": True, "prev_volume": 65},
+                "late_receiver": legacy_binding,
+                "games": {},
+            }
+        )
+
+        state = await self.controller.get_state()
+        settings = self.store.load()
+
+        self.assertEqual(state["cap"], 80)
+        self.assertEqual(state["late_cap"], 40)
+        self.assertTrue(state["late"])
+        self.assertEqual(settings["late"]["prev_volume"], 65)
+        self.assertEqual(
+            settings["cap_receiver"],
+            {
+                "driver": "legacy",
+                "config_hash": "97240f857488c3f87ff7c4624cbd843d92532ae32a25dc3b0518a7dacdbc8fc6",
+            },
+        )
+        self.assertEqual(
+            settings["late_cap_receiver"], settings["cap_receiver"]
+        )
+        self.assertEqual(settings["late_receiver"], settings["cap_receiver"])
+
     async def test_auto_configure_rebinds_state_when_same_host_has_a_new_receiver_id(self):
         old_binding = {"driver": "memory", "id": "STABLE-ID"}
         self.save_settings(
