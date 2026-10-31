@@ -20,6 +20,7 @@ from tests.test_sony import FakeSonyScalarWebAPI
 from tests.test_upnp import FakeUpnpRenderer
 from tests.test_yamaha import FakeYamahaYXC
 from tests.test_yamaha_ync import FakeYamahaYNC
+from avr_control.drivers.upnp import UpnpDriver
 from tools.avr_probe import (
     RecordingTcpProxy,
     capture_found,
@@ -295,6 +296,34 @@ class TranscriptReplayTests(unittest.IsolatedAsyncioTestCase):
             await receiver.close()
 
         self.assertEqual(transcript["source"], "contributor-hardware")
+
+    async def test_upnp_probe_result_can_be_captured_through_recording_proxy(self):
+        receiver = FakeUpnpRenderer(sonos=True)
+        port = await receiver.start()
+        found = await UpnpDriver.probe({"host": "127.0.0.1", "port": port})
+
+        try:
+            transcript = await capture_found(found)
+        finally:
+            await receiver.close()
+
+        requests = [
+            base64.b64decode(exchange["data_b64"])
+            for connection in transcript["connections"]
+            for exchange in connection["exchanges"]
+            if exchange["dir"] == "tx"
+        ]
+        self.assertTrue(
+            any(request.startswith(b"GET /xml/device_description.xml") for request in requests)
+        )
+        self.assertTrue(
+            any(
+                request.startswith(
+                    b"POST /MediaRenderer/RenderingControl/Control"
+                )
+                for request in requests
+            )
+        )
 
     async def test_recording_proxy_captures_both_directions(self):
         async def echo(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):

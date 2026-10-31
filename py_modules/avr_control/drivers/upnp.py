@@ -190,9 +190,29 @@ def _format_host(host: str) -> str:
     return host
 
 
+def _url_host(url: str) -> str:
+    try:
+        return (urllib.parse.urlsplit(url).hostname or "").strip().lower()
+    except ValueError:
+        return ""
+
+
+def _same_host(left: str, right: str) -> bool:
+    return left.strip().strip("[]").lower() == right.strip().strip("[]").lower()
+
+
+def _proxy_service_url(url: str, proxy_base: str) -> str:
+    parsed = urllib.parse.urlsplit(url)
+    proxy = urllib.parse.urlsplit(proxy_base)
+    return urllib.parse.urlunsplit(
+        (proxy.scheme, proxy.netloc, parsed.path, parsed.query, parsed.fragment)
+    )
+
+
 class UpnpDriver(Driver):
     key: ClassVar[str] = "upnp"
     label: ClassVar[str] = "UPnP / DLNA renderer (Sonos and others; volume and mute only)"
+    identity_keys: ClassVar[tuple[str, ...]] = ("host", "udn")
 
     def __init__(self, config: dict):
         super().__init__(config)
@@ -201,6 +221,7 @@ class UpnpDriver(Driver):
         self._control_url = ""
         self._service_type = SERVICE_TYPE
         self._scpd_url = ""
+        self._service_host = ""
         self._device_info: dict[str, str] = {}
         self._scale = VolumeScale(
             min=DEFAULT_MIN_VOLUME,
@@ -223,7 +244,13 @@ class UpnpDriver(Driver):
 
     @property
     def location(self) -> str:
-        return str(self.config.get("location", "")).strip()
+        location = str(self.config.get("location", "")).strip()
+        location_host = _url_host(location)
+        if not location_host or not self.host or not _same_host(
+            location_host, self.host
+        ):
+            return ""
+        return location
 
     async def _get(self, url: str) -> bytes:
         try:
@@ -268,7 +295,23 @@ class UpnpDriver(Driver):
         services = _services_in_description(root)
         if not services:
             raise DriverError("UPnP device has no RenderingControl:1 service")
-        await self._configure_service(root, location, *services[0])
+        selected_udn = str(self.config.get("udn", "")).strip()
+        if selected_udn:
+            selected = next(
+                (
+                    (service, device)
+                    for service, device in services
+                    if _direct_text(device, "UDN") == selected_udn
+                ),
+                None,
+            )
+            if selected is None:
+                raise DriverError(
+                    f"UPnP device has no RenderingControl service for {selected_udn}"
+                )
+        else:
+            selected = services[0]
+        await self._configure_service(root, location, *selected)
 
     async def _configure_service(
         self,
@@ -279,12 +322,22 @@ class UpnpDriver(Driver):
     ) -> None:
         control_url = _direct_text(service, "controlURL")
         scpd_url = _direct_text(service, "SCPDURL")
-        base = _direct_text(root, "URLBase") or location
+        base = (
+            str(self.config.get("service_url_base", "")).strip()
+            or _direct_text(root, "URLBase")
+            or location
+        )
         try:
             self._control_url = urllib.parse.urljoin(base, control_url)
             self._scpd_url = urllib.parse.urljoin(base, scpd_url) if scpd_url else ""
+            proxy_base = str(self.config.get("service_url_base", "")).strip()
+            if proxy_base:
+                self._control_url = _proxy_service_url(self._control_url, proxy_base)
+                if self._scpd_url:
+                    self._scpd_url = _proxy_service_url(self._scpd_url, proxy_base)
         except ValueError as exc:
             raise DriverError("UPnP device returned an invalid service URL") from exc
+        self._service_host = _url_host(location)
 
         # A nested renderer owns its own identity and model; fall back to the
         # root device fields only when that child omitted them.
@@ -317,10 +370,24 @@ class UpnpDriver(Driver):
         self._service_loaded = True
 
     async def _ensure_service(self) -> None:
-        if self._service_loaded:
+        if self._service_loaded and _same_host(self._service_host, self.host):
             return
+        if self._service_loaded:
+            self._service_loaded = False
+            self._control_url = ""
+            self._scpd_url = ""
+            self._service_host = ""
+            self._device_info = {}
+            self._scale = VolumeScale(
+                min=DEFAULT_MIN_VOLUME,
+                max=DEFAULT_MAX_VOLUME,
+                unit="%",
+                default_cap=DEFAULT_CAP,
+            )
+            if hasattr(self, "_volume_step"):
+                del self._volume_step
         async with self._service_lock:
-            if self._service_loaded:
+            if self._service_loaded and _same_host(self._service_host, self.host):
                 return
             if self.location:
                 await self._load_description(self.location)
@@ -355,7 +422,7 @@ class UpnpDriver(Driver):
                 results = []
             for item in results:
                 location = str(item.get("location", ""))
-                if not location:
+                if not location or not _same_host(_url_host(location), self.host):
                     continue
                 try:
                     await self._load_description(location)
@@ -403,7 +470,7 @@ class UpnpDriver(Driver):
         step = getattr(self, "_volume_step", DEFAULT_VOLUME_STEP)
         maximum = self.scale.min + (self.scale.max - self.scale.min) // step * step
         value = max(self.scale.min, min(maximum, raw))
-        value = self.scale.min + round((value - self.scale.min) / step) * step
+        value = self.scale.min + (value - self.scale.min) // step * step
         value = max(self.scale.min, min(maximum, value))
         await self._soap(
             "SetVolume",
@@ -437,12 +504,14 @@ class UpnpDriver(Driver):
             model=model,
             id=device_id,
             host=host,
-            config={"host": host, "location": location},
+            config={"host": host, "location": location, "udn": device_id},
         )
 
     @classmethod
-    async def _probe_location(cls, host: str, location: str) -> Found | None:
-        driver = cls({"host": host, "location": location})
+    async def _probe_location(
+        cls, host: str, location: str, udn: str = ""
+    ) -> Found | None:
+        driver = cls({"host": host, "location": location, "udn": udn})
         try:
             await driver._ensure_service()
             await driver._get_volume()
@@ -452,6 +521,8 @@ class UpnpDriver(Driver):
 
     @classmethod
     async def _discover_location(cls, host: str, location: str) -> list[Found]:
+        if not _same_host(_url_host(location), host):
+            return []
         description_driver = cls({"host": host, "location": location})
         try:
             payload = await description_driver._get(location)
@@ -498,8 +569,9 @@ class UpnpDriver(Driver):
         if not host:
             return None
         location = str(config.get("location", "")).strip()
-        if location:
-            return await cls._probe_location(host, location)
+        udn = str(config.get("udn", "")).strip()
+        if location and _same_host(_url_host(location), host):
+            return await cls._probe_location(host, location, udn)
 
         try:
             sonos_port = int(config.get("port", DEFAULT_SONOS_PORT))
@@ -510,7 +582,7 @@ class UpnpDriver(Driver):
         sonos_location = (
             f"http://{_format_host(host)}:{sonos_port}/xml/device_description.xml"
         )
-        result = await cls._probe_location(host, sonos_location)
+        result = await cls._probe_location(host, sonos_location, udn)
         if result is not None:
             return result
         try:
@@ -524,8 +596,8 @@ class UpnpDriver(Driver):
             return None
         for response in responses:
             candidate = str(response.get("location", "")).strip()
-            if candidate:
-                result = await cls._probe_location(host, candidate)
+            if candidate and _same_host(_url_host(candidate), host):
+                result = await cls._probe_location(host, candidate, udn)
                 if result is not None:
                     return result
         return None

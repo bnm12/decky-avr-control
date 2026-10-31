@@ -28,6 +28,7 @@ class FakeUpnpRenderer:
         include_service: bool = True,
         fault: tuple[str, str] | None = None,
         volume_range: tuple[int, int, int] = (0, 100, 1),
+        host: str = "127.0.0.1",
     ):
         self.nested = nested
         self.multiple_nested = multiple_nested
@@ -35,32 +36,37 @@ class FakeUpnpRenderer:
         self.include_service = include_service
         self.fault = fault
         self.volume_range = volume_range
+        self.host = host
         self.volume = 35
+        self.nested_volumes = {"living": 35, "kitchen": 75}
         self.muted = False
         self.requests: list[tuple[str, str]] = []
         self.request_bodies: list[str] = []
         self.server = None
 
     def description(self, base: str) -> bytes:
-        control_url = (
+        def service_for(control_url: str) -> str:
+            if not self.include_service:
+                return ""
+            return (
+                "<service><serviceType>"
+                f"{SERVICE_TYPE}</serviceType><serviceId>"
+                "urn:upnp-org:serviceId:RenderingControl</serviceId>"
+                f"<controlURL>{control_url}</controlURL>"
+                "<SCPDURL>/scpd.xml</SCPDURL></service>"
+            )
+
+        living_control = (
             "/MediaRenderer/RenderingControl/Control"
             if self.sonos
-            else "/control"
+            else "/control/living" if self.multiple_nested else "/control"
         )
-        service = (
-            "<service><serviceType>"
-            f"{SERVICE_TYPE}</serviceType><serviceId>"
-            "urn:upnp-org:serviceId:RenderingControl</serviceId>"
-            f"<controlURL>{control_url}</controlURL>"
-            "<SCPDURL>/scpd.xml</SCPDURL></service>"
-            if self.include_service
-            else ""
-        )
+        kitchen_control = "/control/kitchen"
         secondary_renderer = (
             "<device><friendlyName>Kitchen</friendlyName>"
             "<manufacturer>Sonos</manufacturer><modelName>Play:3</modelName>"
             "<UDN>uuid:RINCON_SECOND</UDN>"
-            f"<serviceList>{service}</serviceList></device>"
+            f"<serviceList>{service_for(kitchen_control)}</serviceList></device>"
             if self.multiple_nested
             else ""
         )
@@ -68,7 +74,7 @@ class FakeUpnpRenderer:
             "<device><friendlyName>Living Room</friendlyName>"
             "<manufacturer>Sonos</manufacturer><modelName>Play:1</modelName>"
             "<UDN>uuid:RINCON_123456789</UDN>"
-            f"<serviceList>{service}</serviceList></device>"
+            f"<serviceList>{service_for(living_control)}</serviceList></device>"
         )
         device = (
             "<device><friendlyName>Root Device</friendlyName>"
@@ -96,7 +102,7 @@ class FakeUpnpRenderer:
             "</serviceStateTable></scpd>"
         ).encode()
 
-    def soap_response(self, action: str) -> bytes:
+    def soap_response(self, action: str, path: str) -> bytes:
         if self.fault:
             code, description = self.fault
             return (
@@ -108,11 +114,21 @@ class FakeUpnpRenderer:
             ).encode()
 
         if action == "GetVolume":
-            result = f"<CurrentVolume>{self.volume}</CurrentVolume>"
+            volume = (
+                self.nested_volumes[path.rsplit("/", 1)[-1]]
+                if self.multiple_nested
+                else self.volume
+            )
+            result = f"<CurrentVolume>{volume}</CurrentVolume>"
         elif action == "GetMute":
             result = f"<CurrentMute>{int(self.muted)}</CurrentMute>"
         elif action == "SetVolume":
-            self.volume = int(self._argument("DesiredVolume"))
+            if self.multiple_nested:
+                self.nested_volumes[path.rsplit("/", 1)[-1]] = int(
+                    self._argument("DesiredVolume")
+                )
+            else:
+                self.volume = int(self._argument("DesiredVolume"))
             result = ""
         elif action == "SetMute":
             self.muted = self._argument("DesiredMute") == "1"
@@ -138,7 +154,7 @@ class FakeUpnpRenderer:
                 elif self.path == "/device.xml" or (
                     renderer.sonos and self.path == "/xml/device_description.xml"
                 ):
-                    base = f"http://127.0.0.1:{renderer.server.server_port}/"
+                    base = f"http://{renderer.host}:{renderer.server.server_port}/"
                     body = renderer.description(base)
                 else:
                     self.send_error(404)
@@ -157,7 +173,7 @@ class FakeUpnpRenderer:
                 request_body = self.rfile.read(content_length)
                 renderer.request_bodies.append(request_body.decode())
                 renderer._soap_body = ET.fromstring(request_body)
-                body = renderer.soap_response(action)
+                body = renderer.soap_response(action, self.path)
                 self.send_response(500 if renderer.fault else 200)
                 self.send_header("Content-Type", "text/xml; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
@@ -167,7 +183,7 @@ class FakeUpnpRenderer:
             def log_message(self, _format, *args):
                 pass
 
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.server = ThreadingHTTPServer((self.host, 0), Handler)
         self.server.daemon_threads = True
         thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         thread.start()
@@ -224,8 +240,20 @@ class UpnpDriverTests(unittest.IsolatedAsyncioTestCase):
             (driver.scale.min, driver.scale.max, driver.scale.default_cap),
             (10, 90, 40),
         )
-        self.assertEqual(await driver.set_volume(43), 45)
-        self.assertEqual(self.fake.volume, 45)
+        self.assertEqual(await driver.set_volume(43), 40)
+        self.assertEqual(self.fake.volume, 40)
+
+    async def test_volume_step_rounds_down_without_crossing_lower_targets(self):
+        await self.fake.close()
+        self.fake = FakeUpnpRenderer(volume_range=(10, 90, 10))
+        self.port = await self.fake.start()
+        self.location = f"http://127.0.0.1:{self.port}/device.xml"
+        driver = UpnpDriver({"host": "127.0.0.1", "location": self.location})
+
+        await driver.status()
+        self.assertEqual(await driver.set_volume(26), 20)
+        self.assertEqual(await driver.set_volume(15), 10)
+        self.assertEqual(await driver.set_volume(9), 10)
 
     async def test_sonos_probe_uses_description_path_and_returns_stable_identity(self):
         await self.fake.close()
@@ -245,6 +273,7 @@ class UpnpDriverTests(unittest.IsolatedAsyncioTestCase):
                 "location": (
                     f"http://127.0.0.1:{self.port}/xml/device_description.xml"
                 ),
+                "udn": "uuid:RINCON_123456789",
             },
         )
         self.assertEqual(
@@ -301,9 +330,41 @@ class UpnpDriverTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(
                 all(item.config["location"] == self.location for item in found)
             )
+            kitchen = next(
+                item for item in found if item.id == "uuid:RINCON_SECOND"
+            )
+            self.assertEqual(kitchen.config["udn"], kitchen.id)
+            driver = UpnpDriver(kitchen.config)
+            status = await driver.status()
+            self.assertEqual(status.volume, 75)
+            self.assertEqual(await driver.set_volume(68), 68)
+            self.assertEqual(self.fake.nested_volumes, {"living": 35, "kitchen": 68})
         finally:
             ssdp.SSDP_ADDRESS = old_address
             transport.close()
+
+    async def test_saved_location_on_previous_host_is_discarded(self):
+        previous = FakeUpnpRenderer(host="127.0.0.1")
+        previous_port = await previous.start()
+        current = FakeUpnpRenderer(sonos=True, host="127.0.0.2")
+        current.volume = 73
+        current_port = await current.start()
+        try:
+            driver = UpnpDriver(
+                {
+                    "host": "127.0.0.2",
+                    "location": f"http://127.0.0.1:{previous_port}/device.xml",
+                    "port": current_port,
+                }
+            )
+
+            self.assertEqual((await driver.status()).volume, 73)
+            self.assertEqual(await driver.set_volume(44), 44)
+            self.assertEqual(previous.requests, [])
+            self.assertTrue(current.requests)
+        finally:
+            await previous.close()
+            await current.close()
 
     async def test_non_renderers_are_not_probed_or_discovered(self):
         await self.fake.close()

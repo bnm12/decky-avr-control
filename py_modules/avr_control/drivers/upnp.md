@@ -41,22 +41,22 @@ Content-Type: text/xml; charset="utf-8"
 
 ## Discovery
 
-[spec][2] LAN discovery sends SSDP M-SEARCH with `ST: urn:schemas-upnp-org:service:RenderingControl:1`, fetches each response's `LOCATION`, and inspects the device description. The service may belong to a nested device, so the driver searches the device tree and uses that service-owning device's `UDN`, manufacturer, and model metadata. The `UDN` is the receiver ID.
+[spec][2] LAN discovery sends SSDP M-SEARCH with `ST: urn:schemas-upnp-org:service:RenderingControl:1`, fetches each response's `LOCATION`, and inspects the device description. The service may belong to a nested device, so the driver searches the device tree and uses that service-owning device's `UDN`, manufacturer, and model metadata. The `UDN` is the receiver ID and is saved in `Found.config` so reconstruction selects the same renderer's service when one description contains several renderers.
 
-[assumed] A manual probe first tries `http://<host>:1400/xml/device_description.xml` (Sonos convention), then sends a unicast M-SEARCH to `<host>:1900` if that description is unavailable. It validates the service and performs read-only `GetVolume` before returning a `Found`. A supplied `location` skips location search. Sonos service control URLs are taken from the description rather than hardcoded. [community][3][4]
+[assumed] A manual probe first tries `http://<host>:<port>/xml/device_description.xml` (Sonos convention; default port 1400), then sends a unicast M-SEARCH to `<host>:1900` if that description is unavailable. An explicit `config["port"]` overrides the Sonos default. It validates the service and performs read-only `GetVolume` before returning a `Found`. A saved `location` is reused only when its URL host matches the configured host; otherwise the driver discards it and resolves from the configured host. Sonos service control URLs are taken from the description rather than hardcoded. [community][3][4]
 
 ## Commands
 
 | Capability | Query | Set | Reply | Notes |
 |---|---|---|---|---|
-| Volume | [spec][1] `GetVolume` | [spec][1] `SetVolume` | `CurrentVolume` | [spec][1] `InstanceID=0`, `Channel=Master`; clamp and quantize to the SCPD `Volume` allowed range when available |
+| Volume | [spec][1] `GetVolume` | [spec][1] `SetVolume` | `CurrentVolume` | [spec][1] `InstanceID=0`, `Channel=Master`; clamp and quantize down to the SCPD `Volume` allowed range when available, so a discrete step never exceeds the requested value |
 | Mute | [spec][1] `GetMute` | [spec][1] `SetMute` | `CurrentMute` | [spec][1] `DesiredMute` / `CurrentMute` use `0` or `1`; always `InstanceID=0`, `Channel=Master` |
 | Power | — | — | — | [spec][1] Not part of this driver's capabilities |
 | Listening mode | — | — | — | [spec][1] Not part of this driver's capabilities |
 
 ## Volume scale
 
-[spec][1] The SCPD `Volume` state variable may provide `minimum`, `maximum`, and `step`; the driver reads those values when available. [assumed] Without a usable range, the driver uses 0–100, step 1. The default cap is raw value 40, clamped to the reported range.
+[spec][1] The SCPD `Volume` state variable may provide `minimum`, `maximum`, and `step`; the driver reads those values when available. [assumed] Without a usable range, the driver uses 0–100, step 1. The default cap is raw value 40, clamped to the reported range. Requested volumes are floored to the nearest legal step at or below the request, never below the reported minimum.
 
 [community][3][4] Sonos commonly uses the 0–100 volume range, represented as `%`. [assumed] For a non-0–100 range, the driver preserves the renderer's raw minimum, maximum, and step and still labels the scale `%` because `VolumeScale` only supports `dB` or `%`; this is not normalized to 0–100 and is not a dB conversion.
 
@@ -70,6 +70,7 @@ Content-Type: text/xml; charset="utf-8"
 - [community][3] The Sonos control URL commonly looks like `http://<player>:1400/MediaRenderer/RenderingControl/Control`. The description remains authoritative.
 - [assumed] A Set action's response is not treated as a confirmed value; the driver follows it with the corresponding Get action.
 - [assumed] The probe is read-only and requires `GetVolume` to succeed; it does not test mute by changing state.
+- [assumed] The transcript probe kit derives the TCP endpoint from the description's RenderingControl control URL and routes both the rewritten description `LOCATION` and service URLs through its recording proxy.
 
 ## Unknowns and open questions
 
