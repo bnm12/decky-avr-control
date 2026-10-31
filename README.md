@@ -8,11 +8,18 @@ up/down. Anything else with a volume can be controlled through Home Assistant.
 
 | Receivers | Driver | Status |
 |---|---|---|
-| Onkyo, Pioneer (2016+), Integra (eISCP) | [eiscp](py_modules/avr_control/drivers/eiscp.md) | Verified on a Pioneer VSX-935 |
-| Yamaha MusicCast (YXC) | [yamaha](py_modules/avr_control/drivers/yamaha.md) | Experimental: built from Yamaha's spec, not yet tested on hardware |
-| Denon, Marantz | [denon](py_modules/avr_control/drivers/denon.md) | Experimental: built from Denon's spec, not yet tested on hardware |
+| Onkyo, Pioneer (2016+), Integra (eISCP) | [eiscp](py_modules/avr_control/drivers/eiscp.md) | Verified on a Pioneer VSX-935; other models' volume scales can be set in manual setup |
+| Yamaha MusicCast (YXC) | [yamaha](py_modules/avr_control/drivers/yamaha.md) | Experimental |
+| Yamaha before MusicCast, 2010–2016 (XML) | [yamaha_ync](py_modules/avr_control/drivers/yamaha_ync.md) | Experimental |
+| Denon, Marantz (telnet, with HTTP fallback) | [denon](py_modules/avr_control/drivers/denon.md) | Experimental |
+| Denon HEOS speakers and soundbars (volume, mute) | [heos](py_modules/avr_control/drivers/heos.md) | Experimental |
+| Sony receivers and soundbars (Audio Control API) | [sony](py_modules/avr_control/drivers/sony.md) | Experimental |
 | Pioneer before 2016 (telnet) | [pioneer_telnet](py_modules/avr_control/drivers/pioneer_telnet.md) | Experimental |
+| Sonos and other UPnP/DLNA renderers (volume, mute) | [upnp](py_modules/avr_control/drivers/upnp.md) | Experimental |
 | Any Home Assistant media player | [homeassistant](py_modules/avr_control/drivers/homeassistant.md) | Experimental |
+
+"Experimental" means built from the vendor's spec or community documentation and
+tested against simulated receivers, not yet on real hardware.
 
 Each driver links to its protocol spec. Own one of the experimental receivers? A
 two-minute recording from your receiver makes it verified: see
@@ -81,8 +88,9 @@ zip is stamped with the tag's version, and the build warns if `package.json` dif
 ## Discovery
 
 **Search network** runs every driver's discovery at once: the eISCP UDP broadcast
-on port 60128 (the same probe the Pioneer/Onkyo apps send) and an SSDP search for
-Yamaha and Denon/Marantz receivers. The receiver's unique ID is remembered, so if
+on port 60128 (the same probe the Pioneer/Onkyo apps send) and SSDP searches for
+Yamaha, Denon/Marantz, HEOS, Sony and UPnP/Sonos devices. A receiver that answers
+several protocols is listed once, under its brand's driver. The receiver's unique ID is remembered, so if
 its IP address changes the plugin looks it up again automatically. Typing an IP by
 hand disables this. Broadcasts only work within one subnet, so a VLAN or guest
 network needs the IP entered manually.
