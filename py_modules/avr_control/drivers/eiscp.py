@@ -14,6 +14,7 @@ from .base import (
     MUTE,
     POWER,
     VOLUME,
+    ConfigField,
     Driver,
     DriverError,
     Found,
@@ -54,6 +55,11 @@ REFUSED_MODE_MESSAGE = (
     "current input or signal)"
 )
 _NJAPUSH = re.compile(r"(?:^|!)\d*NJA")
+_DEFAULT_VOLUME_SCALE = {"zero_db": 164, "volume_steps": 2, "max_volume": 185}
+_MODEL_VOLUME_SCALES = {
+    # The zero point and step size are measured; 185 is the historical clamp.
+    "VSX-935": {"zero_db": 164, "volume_steps": 2, "max_volume": 185},
+}
 
 
 def packet(message: str) -> bytes:
@@ -243,18 +249,105 @@ def _discover_blocking(timeout: float) -> list[Found]:
                 model=model,
                 id=ident,
                 host=address[0],
-                config={"host": address[0], "port": int(port)},
+                config={"host": address[0], "port": int(port), "model": model},
             )
         return list(by_id.values())
     finally:
         sock.close()
 
 
+def _volume_setting(value, key: str, minimum: int, maximum: int) -> int:
+    if isinstance(value, bool):
+        raise DriverError(f"eISCP {key} must be an integer from {minimum} to {maximum}")
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise DriverError(
+            f"eISCP {key} must be an integer from {minimum} to {maximum}"
+        ) from exc
+    if not minimum <= parsed <= maximum:
+        raise DriverError(f"eISCP {key} must be an integer from {minimum} to {maximum}")
+    return parsed
+
+
+def _volume_scale(config: dict) -> VolumeScale:
+    model = str(config.get("model", "")).strip().upper()
+    defaults = dict(_DEFAULT_VOLUME_SCALE)
+    defaults.update(_MODEL_VOLUME_SCALES.get(model, {}))
+
+    max_value = config.get("max_volume")
+    maximum = (
+        _volume_setting(max_value, "max_volume", 1, 255)
+        if max_value is not None and str(max_value).strip()
+        else defaults["max_volume"]
+    )
+
+    zero_value = config.get("zero_db")
+    zero_text = str(zero_value).strip().lower() if zero_value is not None else ""
+    absolute = (
+        "zero_db" in config
+        and (zero_value is None or not zero_text or zero_text == "absolute")
+    ) or (
+        "zero_db" not in config
+        and max_value is not None
+        and bool(str(max_value).strip())
+        and maximum == 100
+    )
+    zero = (
+        None
+        if absolute
+        else _volume_setting(zero_value, "zero_db", 0, 255)
+        if "zero_db" in config
+        else defaults["zero_db"]
+    )
+
+    steps_value = config.get("volume_steps")
+    if steps_value is not None and str(steps_value).strip():
+        steps = _volume_setting(steps_value, "volume_steps", 1, 2)
+    else:
+        steps = 1 if zero is None else defaults["volume_steps"]
+
+    if zero is None:
+        if maximum != 100:
+            raise DriverError(
+                "eISCP absolute volume needs max_volume=100 to display as %; "
+                "otherwise provide zero_db for a dB scale"
+            )
+        if steps != 1:
+            raise DriverError("eISCP absolute 0-100 volume requires volume_steps=1")
+        return VolumeScale(
+            min=0,
+            max=maximum,
+            unit="%",
+            zero=0,
+            steps_per_unit=1,
+            default_cap=round(maximum * 0.4),
+        )
+
+    return VolumeScale(
+        min=0,
+        max=maximum,
+        unit="dB",
+        zero=zero,
+        steps_per_unit=steps,
+        default_cap=max(0, min(maximum, zero - 32 * steps)),
+    )
+
+
 class EiscpDriver(Driver):
     key: ClassVar[str] = "eiscp"
     label: ClassVar[str] = "Onkyo / Pioneer / Integra (eISCP)"
     capabilities = frozenset({VOLUME, MUTE, POWER, MODE})
-    scale = VolumeScale(min=0, max=185, unit="dB", zero=164, steps_per_unit=2, default_cap=100)
+    scale = _volume_scale({})
+    config_fields: ClassVar[tuple[ConfigField, ...]] = Driver.config_fields + (
+        ConfigField("volume_steps", "Volume steps per displayed unit (1 or 2)", required=False),
+        ConfigField("zero_db", "Raw volume at 0 dB (blank for absolute volume)", required=False),
+        ConfigField("max_volume", "Maximum raw volume", required=False),
+    )
+
+    def __init__(self, config: dict):
+        super().__init__(config)
+        self.scale = _volume_scale(self.config)
 
     @property
     def host(self) -> str:
@@ -363,5 +456,7 @@ class EiscpDriver(Driver):
             model=model,
             id=str(config.get("id", host)),
             host=host,
-            config={**config, "host": host, "port": port},
+            config={**config, "host": host, "port": port, "model": model}
+            if config.get("model")
+            else {**config, "host": host, "port": port},
         )
