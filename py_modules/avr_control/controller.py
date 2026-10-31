@@ -50,7 +50,7 @@ class Controller:
         self._last_rediscover: float | None = None
         self._last_found: list[Found] = []
         self._current_game: dict | None = None
-        self._suppress_save_until = 0.0
+        self._suppress_save_until: tuple[int, int, float] | None = None
 
     def _log(self, level: str, message: str) -> None:
         log = getattr(self.logger, level, None)
@@ -203,6 +203,21 @@ class Controller:
         return generation == self._receiver_generation and (
             driver is None or self._active_driver is driver
         )
+
+    def _is_current_game(self, generation: int, appid: int) -> bool:
+        return (
+            self._is_current(generation)
+            and self._current_game is not None
+            and self._current_game["appid"] == int(appid)
+        )
+
+    def _suppress_game_saves(self, generation: int, appid: int) -> None:
+        if self._is_current_game(generation, appid):
+            self._suppress_save_until = (
+                generation,
+                int(appid),
+                self.clock() + 6.0,
+            )
 
     @staticmethod
     def _stale_receiver_error() -> DriverError:
@@ -513,6 +528,12 @@ class Controller:
                             and active_config == found_config
                         )
                 if active_matches_receiver:
+                    if found is not None and found.id:
+                        resolved_id = str(found.id).upper()
+                        if current["receiver"].get("id") != resolved_id:
+                            current["receiver"]["id"] = resolved_id
+                            self._bind_receiver_state(current)
+                            self._save(current)
                     return {"ok": True}
                 return {"ok": False, "error": str(self._stale_receiver_error())}
             if found is None:
@@ -527,6 +548,8 @@ class Controller:
             data["receiver"].update(
                 {"driver": found.driver, "config": found_config}
             )
+            if found.id:
+                data["receiver"]["id"] = str(found.id).upper()
             self._bind_receiver_state(data)
             self._save(data)
             self._active_driver = active_driver
@@ -843,7 +866,14 @@ class Controller:
             driver = self._active_driver
         if not self._is_current(generation, driver):
             return
-        if not self._current_game or self.clock() < self._suppress_save_until:
+        if not self._current_game:
+            return
+        suppression = self._suppress_save_until
+        if (
+            suppression is not None
+            and suppression[:2] == (generation, self._current_game["appid"])
+            and self.clock() < suppression[2]
+        ):
             return
         data = self._settings()
         profile = data.get("games", {}).get(str(self._current_game["appid"]))
@@ -886,7 +916,7 @@ class Controller:
                 return {"applied": False}
             if profile.get("driver") != driver.key:
                 return {"applied": False}
-            self._suppress_save_until = self.clock() + 6.0
+            self._suppress_game_saves(generation, appid)
             driver = await self._ensure_initialized(
                 driver, generation, expected_driver=driver.key
             )
@@ -894,7 +924,7 @@ class Controller:
             profile = data.get("games", {}).get(str(int(appid)))
             if not profile or profile.get("driver") != driver.key:
                 return {"applied": False}
-            self._suppress_save_until = self.clock() + 6.0
+            self._suppress_game_saves(generation, appid)
             applied = False
             volume = profile.get("volume")
             if volume is not None:
@@ -939,7 +969,7 @@ class Controller:
                     )
             return {"applied": applied}
         except Exception as exc:
-            self._suppress_save_until = self.clock() + 6.0
+            self._suppress_game_saves(generation, appid)
             self._log("error", f"Applying game profile failed: {exc}")
             return {"applied": False, "error": str(exc)}
 

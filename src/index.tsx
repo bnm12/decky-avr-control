@@ -21,6 +21,7 @@ type GameProfile = {
   driver?: string;
 };
 type ModeOption = { code: string; name: string };
+type LocalControl = "volume" | "mute" | "power" | "mode";
 type VolumeScale = {
   min: number;
   max: number;
@@ -167,6 +168,18 @@ function Content() {
   const timer = useRef<number | undefined>(undefined);
   const lastLocal = useRef(0); // time of the last change made in this panel
   const selectionGeneration = useRef(0);
+  const controlSequences = useRef<Record<LocalControl, number>>({
+    volume: 0,
+    mute: 0,
+    power: 0,
+    mode: 0,
+  });
+  const localRequestsInFlight = useRef<Record<LocalControl, number>>({
+    volume: 0,
+    mute: 0,
+    power: 0,
+    mode: 0,
+  });
   const switchingReceiver = useRef(false);
   const connectionRef = useRef<Connection | null>(null);
 
@@ -176,6 +189,18 @@ function Content() {
   };
   const isCurrent = (generation: number) =>
     generation === selectionGeneration.current;
+  const startLocalRequest = (control: LocalControl) => {
+    localRequestsInFlight.current[control] += 1;
+    lastLocal.current = Date.now();
+  };
+  const finishLocalRequest = (control: LocalControl, generation: number) => {
+    if (!isCurrent(generation)) return;
+    localRequestsInFlight.current[control] = Math.max(
+      0,
+      localRequestsInFlight.current[control] - 1,
+    );
+    lastLocal.current = Date.now();
+  };
   const updateConnection = (value: Connection) => {
     connectionRef.current = value;
     setConnection(value);
@@ -183,6 +208,7 @@ function Content() {
   const beginReceiverChange = () => {
     selectionGeneration.current += 1;
     switchingReceiver.current = true;
+    localRequestsInFlight.current = { volume: 0, mute: 0, power: 0, mode: 0 };
     window.clearTimeout(timer.current);
     timer.current = undefined;
     return selectionGeneration.current;
@@ -193,22 +219,34 @@ function Content() {
 
   // full=true also (re)fills the settings fields; polling must not clobber typing.
   const refresh = async (full: boolean, generation = selectionGeneration.current) => {
+    const sequencesAtStart = { ...controlSequences.current };
+    const inFlightAtStart = { ...localRequestsInFlight.current };
     const r = await getState();
     if (!isCurrent(generation)) return;
+    const canApplyControl = (control: LocalControl) =>
+      sequencesAtStart[control] === controlSequences.current[control] &&
+      inFlightAtStart[control] === 0 &&
+      localRequestsInFlight.current[control] === 0;
+    const canApplyRefreshError =
+      full || (["volume", "mute", "power", "mode"] as LocalControl[]).every(canApplyControl);
     if (!r.ok) {
-      if (connectionRef.current?.configured) setErr(r.error ?? "Unknown error");
-      else setErr(null);
-      setReceiverState(null);
+      if (canApplyRefreshError) {
+        if (connectionRef.current?.configured) setErr(r.error ?? "Unknown error");
+        else setErr(null);
+        setReceiverState(null);
+      }
       return;
     }
-    setErr(null);
+    if (canApplyRefreshError) setErr(null);
     setReceiverState(r);
-    setVol(r.volume ?? null);
-    setMuted(r.muted ?? null);
+    if (canApplyControl("volume")) setVol(r.volume ?? null);
+    if (canApplyControl("mute")) setMuted(r.muted ?? null);
     setMaxState(r.max ?? r.scale?.max ?? 100);
-    setPowerState(r.power ?? null);
-    setModeLabel(r.mode ?? null);
-    setModeCode(r.mode_code ?? null);
+    if (canApplyControl("power")) setPowerState(r.power ?? null);
+    if (canApplyControl("mode")) {
+      setModeLabel(r.mode ?? null);
+      setModeCode(r.mode_code ?? null);
+    }
     setModes(r.modes ?? []);
     setGame(r.game ?? null);
     setLateOn(!!r.late);
@@ -288,7 +326,14 @@ function Content() {
       // Live sync: follow changes made with the remote or the receiver app.
       const loop = async () => {
         if (stop) return;
-        if (connectionRef.current?.configured && Date.now() - lastLocal.current > 2000) {
+        const hasRequestsInFlight = Object.values(localRequestsInFlight.current).some(
+          (count) => count > 0,
+        );
+        if (
+          connectionRef.current?.configured &&
+          !hasRequestsInFlight &&
+          Date.now() - lastLocal.current > 2000
+        ) {
           await refresh(false);
         }
         if (!stop) t = window.setTimeout(loop, 2000);
@@ -320,20 +365,34 @@ function Content() {
   const onSlide = (v: number) => {
     if (vol === null || switchingReceiver.current) return;
     const generation = selectionGeneration.current;
+    const sequence = ++controlSequences.current.volume;
     lastLocal.current = Date.now();
     setVol(v);
     window.clearTimeout(timer.current);
     timer.current = window.setTimeout(async () => {
-      if (!isCurrent(generation) || switchingReceiver.current) return;
-      const r = await setVolume(v);
-      if (!isCurrent(generation)) return;
-      lastLocal.current = Date.now();
-      if (r.volume !== undefined) setVol(r.volume);
-      updateCommandNote(r.confirmed);
-      if (!r.ok) {
-        setErr(r.error ?? "Unknown error");
-        if (r.volume === undefined) await refresh(false, generation);
-      } else setErr(null);
+      if (
+        !isCurrent(generation) ||
+        switchingReceiver.current ||
+        sequence !== controlSequences.current.volume
+      ) return;
+      startLocalRequest("volume");
+      let requestActive = true;
+      try {
+        const r = await setVolume(v);
+        if (!isCurrent(generation) || sequence !== controlSequences.current.volume) return;
+        if (r.volume !== undefined) setVol(r.volume);
+        updateCommandNote(r.confirmed);
+        if (!r.ok) {
+          setErr(r.error ?? "Unknown error");
+          if (r.volume === undefined) {
+            finishLocalRequest("volume", generation);
+            requestActive = false;
+            await refresh(false, generation);
+          }
+        } else setErr(null);
+      } finally {
+        if (requestActive) finishLocalRequest("volume", generation);
+      }
     }, 150);
   };
 
@@ -465,19 +524,31 @@ function Content() {
               onChange={async (on: boolean) => {
                 const generation = selectionGeneration.current;
                 if (switchingReceiver.current) return;
-                lastLocal.current = Date.now();
+                const sequence = ++controlSequences.current.power;
+                startLocalRequest("power");
                 setPowerState(on);
-                if (!isCurrent(generation) || switchingReceiver.current) return;
-                const result = await setPower(on);
-                if (!isCurrent(generation)) return;
-                lastLocal.current = Date.now();
-                if (result.power !== undefined) setPowerState(result.power);
-                updateCommandNote(result.confirmed);
-                if (!result.ok) {
-                  setErr(result.error ?? "Unknown error");
-                  if (result.power === undefined) await refresh(false, generation);
-                } else {
-                  setErr(null);
+                let requestActive = true;
+                try {
+                  if (!isCurrent(generation) || switchingReceiver.current) return;
+                  const result = await setPower(on);
+                  if (
+                    !isCurrent(generation) ||
+                    sequence !== controlSequences.current.power
+                  ) return;
+                  if (result.power !== undefined) setPowerState(result.power);
+                  updateCommandNote(result.confirmed);
+                  if (!result.ok) {
+                    setErr(result.error ?? "Unknown error");
+                    if (result.power === undefined) {
+                      finishLocalRequest("power", generation);
+                      requestActive = false;
+                      await refresh(false, generation);
+                    }
+                  } else {
+                    setErr(null);
+                  }
+                } finally {
+                  if (requestActive) finishLocalRequest("power", generation);
                 }
               }}
             />
@@ -510,18 +581,30 @@ function Content() {
               onChange={async (c: boolean) => {
                 const generation = selectionGeneration.current;
                 if (switchingReceiver.current) return;
-                lastLocal.current = Date.now();
+                const sequence = ++controlSequences.current.mute;
+                startLocalRequest("mute");
                 setMuted(c);
-                if (!isCurrent(generation) || switchingReceiver.current) return;
-                const r = await setMute(c);
-                if (!isCurrent(generation)) return;
-                lastLocal.current = Date.now();
-                if (r.muted !== undefined) setMuted(r.muted);
-                updateCommandNote(r.confirmed);
-                if (!r.ok) {
-                  setErr(r.error ?? "Unknown error");
-                  if (r.muted === undefined) await refresh(false, generation);
-                } else setErr(null);
+                let requestActive = true;
+                try {
+                  if (!isCurrent(generation) || switchingReceiver.current) return;
+                  const r = await setMute(c);
+                  if (
+                    !isCurrent(generation) ||
+                    sequence !== controlSequences.current.mute
+                  ) return;
+                  if (r.muted !== undefined) setMuted(r.muted);
+                  updateCommandNote(r.confirmed);
+                  if (!r.ok) {
+                    setErr(r.error ?? "Unknown error");
+                    if (r.muted === undefined) {
+                      finishLocalRequest("mute", generation);
+                      requestActive = false;
+                      await refresh(false, generation);
+                    }
+                  } else setErr(null);
+                } finally {
+                  if (requestActive) finishLocalRequest("mute", generation);
+                }
               }}
             />
           </PanelSectionRow>
@@ -565,30 +648,40 @@ function Content() {
               onChange={async (opt: { data: string }) => {
                 const generation = selectionGeneration.current;
                 if (switchingReceiver.current) return;
-                lastLocal.current = Date.now();
+                const sequence = ++controlSequences.current.mode;
+                startLocalRequest("mode");
                 setModeCode(opt.data);
-                if (!isCurrent(generation) || switchingReceiver.current) return;
-                const r = await setMode(opt.data);
-                if (!isCurrent(generation)) return;
-                if (r.code !== undefined) {
-                  setModeCode(r.code);
-                } else if (r.mode !== undefined) {
-                  const observedMode = modes.find(
-                    (item) => item.name === r.mode || item.code === r.mode,
-                  );
-                  setModeCode(r.mode === null ? null : observedMode?.code ?? r.mode);
-                }
-                if (r.mode !== undefined) setModeLabel(r.mode);
-                else if (r.code) {
-                  const observedMode = modes.find((item) => item.code === r.code);
-                  if (observedMode) setModeLabel(observedMode.name);
-                }
-                updateCommandNote(r.confirmed);
-                if (!r.ok) setErr(r.error ?? "Unknown error");
-                else setErr(null);
-                lastLocal.current = Date.now();
-                if (!r.ok && r.code === undefined && r.mode === undefined) {
-                  await refresh(false, generation); // snap back to the real mode
+                let requestActive = true;
+                try {
+                  if (!isCurrent(generation) || switchingReceiver.current) return;
+                  const r = await setMode(opt.data);
+                  if (
+                    !isCurrent(generation) ||
+                    sequence !== controlSequences.current.mode
+                  ) return;
+                  if (r.code !== undefined) {
+                    setModeCode(r.code);
+                  } else if (r.mode !== undefined) {
+                    const observedMode = modes.find(
+                      (item) => item.name === r.mode || item.code === r.mode,
+                    );
+                    setModeCode(r.mode === null ? null : observedMode?.code ?? r.mode);
+                  }
+                  if (r.mode !== undefined) setModeLabel(r.mode);
+                  else if (r.code) {
+                    const observedMode = modes.find((item) => item.code === r.code);
+                    if (observedMode) setModeLabel(observedMode.name);
+                  }
+                  updateCommandNote(r.confirmed);
+                  if (!r.ok) setErr(r.error ?? "Unknown error");
+                  else setErr(null);
+                  if (!r.ok && r.code === undefined && r.mode === undefined) {
+                    finishLocalRequest("mode", generation);
+                    requestActive = false;
+                    await refresh(false, generation); // snap back to the real mode
+                  }
+                } finally {
+                  if (requestActive) finishLocalRequest("mode", generation);
                 }
               }}
             />
