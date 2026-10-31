@@ -30,6 +30,7 @@ from .settings import GameProfile, Settings, SettingsRepository
 from .volume import VolumePolicy
 
 _CAPABILITY_ORDER = (VOLUME, MUTE, POWER, MODE)
+_SCHEDULE_MAX_ATTEMPTS = 3
 
 
 @dataclass(frozen=True)
@@ -203,8 +204,11 @@ class ControlApplication:
         self._schedule_task: asyncio.Task | None = None
         self._resume_task: asyncio.Task | None = None
         self._suspend_task: asyncio.Task | None = None
+        self._schedule_generation = 0
         self._schedule_config: tuple | None = None
         self._schedule_window_key: str | None = None
+        self._schedule_attempts: dict[tuple[str, str], int] = {}
+        self._schedule_exhausted_logged: set[tuple[str, str]] = set()
         self._schedule_late_done = False
         self._schedule_mode_done = False
         self._panel_open = False
@@ -213,6 +217,9 @@ class ControlApplication:
         self._watch_generation: int | None = None
         self._push_active = False
         self._revision = 0
+        self._push_sequence = 0
+        self._push_field_sequences: dict[str, int] = {}
+        self._watch_start_token = 0
         self._watch_lock = asyncio.Lock()
         self._push_tasks: set[asyncio.Task] = set()
 
@@ -221,7 +228,9 @@ class ControlApplication:
         if log:
             log(message)
 
-    async def _stop_watch_locked(self) -> None:
+    async def _stop_watch_locked(self, invalidate_start: bool = True) -> None:
+        if invalidate_start:
+            self._watch_start_token += 1
         self._push_active = False
         self._watch_driver = None
         self._watch_generation = None
@@ -240,25 +249,36 @@ class ControlApplication:
     async def _start_watch(self) -> None:
         if not self._panel_open or self.publish is None:
             return
+        self._watch_start_token += 1
+        start_token = self._watch_start_token
         generation = self._receiver_generation
         try:
             driver = await self._get_driver(generation)
             async with self._watch_lock:
-                if not self._panel_open or not self._is_current(generation, driver):
+                if (
+                    start_token != self._watch_start_token
+                    or not self._panel_open
+                    or not self._is_current(generation, driver)
+                ):
                     return
                 if self._watch_generation == generation and self._watch_driver is driver:
                     return
-                await self._stop_watch_locked()
+                await self._stop_watch_locked(invalidate_start=False)
                 self._watch_generation = generation
                 self._watch_driver = driver
 
             await self._run("status", generation=generation, driver=driver)
-            if not self._panel_open or not self._is_current(generation, driver):
+            if (
+                start_token != self._watch_start_token
+                or not self._panel_open
+                or not self._is_current(generation, driver)
+            ):
                 return
 
             def on_change(partial: Status) -> None:
                 if (
-                    not self._panel_open
+                    start_token != self._watch_start_token
+                    or not self._panel_open
                     or not self._push_active
                     or self._watch_driver is not driver
                     or self._watch_generation != generation
@@ -282,11 +302,17 @@ class ControlApplication:
                     value = getattr(partial, field)
                     if value is not None:
                         setattr(status, field, value)
+                self._push_sequence += 1
+                for field in ("volume", "muted", "power", "mode"):
+                    if getattr(partial, field) is not None:
+                        self._push_field_sequences[field] = self._push_sequence
                 self._last_status = (generation, driver, status)
                 self._revision += 1
                 revision = self._revision
                 task = asyncio.create_task(
-                    self._publish_push_snapshot(revision, generation, driver)
+                    self._publish_push_snapshot(
+                        revision, generation, driver, start_token
+                    )
                 )
                 self._push_tasks.add(task)
                 task.add_done_callback(self._push_tasks.discard)
@@ -295,14 +321,19 @@ class ControlApplication:
             unsubscribe = await driver.watch(on_change)
             if unsubscribe is None:
                 async with self._watch_lock:
-                    if self._watch_generation == generation:
+                    if (
+                        start_token == self._watch_start_token
+                        and self._watch_generation == generation
+                        and self._watch_driver is driver
+                    ):
                         self._push_active = False
                         self._watch_driver = None
                         self._watch_generation = None
                 return
             async with self._watch_lock:
                 if (
-                    not self._panel_open
+                    start_token != self._watch_start_token
+                    or not self._panel_open
                     or not self._is_current(generation, driver)
                     or self._watch_driver is not driver
                     or self._watch_generation != generation
@@ -315,14 +346,18 @@ class ControlApplication:
         except Exception as exc:
             self._log("debug", f"Receiver push watch unavailable: {exc}")
             async with self._watch_lock:
-                if self._watch_generation == generation:
+                if (
+                    start_token == self._watch_start_token
+                    and self._watch_generation == generation
+                ):
                     await self._stop_watch_locked()
 
     async def _publish_push_snapshot(
-        self, revision: int, generation: int, driver: Driver
+        self, revision: int, generation: int, driver: Driver, start_token: int
     ) -> None:
         if (
-            not self._push_active
+            start_token != self._watch_start_token
+            or not self._push_active
             or not self._is_current(generation, driver)
             or self._watch_generation != generation
         ):
@@ -330,7 +365,8 @@ class ControlApplication:
         try:
             snapshot = await self._snapshot(refresh=False)
             if (
-                not self._push_active
+                start_token != self._watch_start_token
+                or not self._push_active
                 or not self._is_current(generation, driver)
                 or self._watch_generation != generation
             ):
@@ -347,7 +383,11 @@ class ControlApplication:
         except Exception as exc:
             self._log("error", f"Push snapshot publish failed: {exc}")
             async with self._watch_lock:
-                if self._watch_generation == generation:
+                if (
+                    start_token == self._watch_start_token
+                    and self._watch_generation == generation
+                    and self._watch_driver is driver
+                ):
                     await self._stop_watch_locked()
 
     def _cancel_reapply(self) -> None:
@@ -413,6 +453,7 @@ class ControlApplication:
 
     async def tick(self) -> None:
         """Apply the current schedule window, retrying incomplete boundary work."""
+        schedule_generation = self._schedule_generation
         data = self._settings()
         now = self.wall_clock()
         active, window_key = self._schedule_window(data.schedule, now)
@@ -425,12 +466,16 @@ class ControlApplication:
         if config != self._schedule_config:
             self._schedule_config = config
             self._schedule_window_key = None
+            self._schedule_attempts.clear()
+            self._schedule_exhausted_logged.clear()
             self._schedule_late_done = False
             self._schedule_mode_done = False
 
         if active and window_key is not None:
             if window_key != self._schedule_window_key:
                 self._schedule_window_key = window_key
+                self._schedule_attempts.clear()
+                self._schedule_exhausted_logged.clear()
                 self._schedule_late_done = (
                     data.schedule.last_late_window == window_key
                 )
@@ -443,11 +488,17 @@ class ControlApplication:
                     self._save(data)
                 data = self._settings()
             if data.schedule.override_window == window_key:
-                self._mark_schedule_late_done(window_key)
-            await self._apply_schedule_window(window_key)
+                self._mark_schedule_late_done(
+                    window_key, schedule_generation, config
+                )
+            await self._apply_schedule_window(
+                window_key, schedule_generation, config
+            )
             return
 
         self._schedule_window_key = None
+        self._schedule_attempts.clear()
+        self._schedule_exhausted_logged.clear()
         self._schedule_late_done = False
         self._schedule_mode_done = False
         if data.schedule.override_window is not None:
@@ -455,12 +506,77 @@ class ControlApplication:
             self._save(data)
         data = self._settings()
         if data.late.active and data.late.auto:
-            await self._exit_schedule_late_night()
+            await self._exit_schedule_late_night(
+                schedule_generation, config, window_key
+            )
 
-    async def _apply_schedule_window(self, window_key: str) -> None:
+    def _schedule_operation_is_current(
+        self,
+        generation: int,
+        config: tuple,
+        window_key: str | None,
+        active: bool,
+    ) -> bool:
+        if generation != self._schedule_generation:
+            return False
+        schedule = self._settings().schedule
+        current_config = (
+            schedule.enabled,
+            schedule.start,
+            schedule.end,
+            schedule.mode,
+        )
+        if current_config != config:
+            return False
+        current_active, current_key = self._schedule_window(
+            schedule, self.wall_clock()
+        )
+        return current_active == active and current_key == window_key
+
+    def _begin_schedule_attempt(self, window_key: str, operation: str) -> bool:
+        key = (window_key, operation)
+        attempts = self._schedule_attempts.get(key, 0)
+        if attempts >= _SCHEDULE_MAX_ATTEMPTS:
+            if key not in self._schedule_exhausted_logged:
+                self._schedule_exhausted_logged.add(key)
+                self._log(
+                    "warning",
+                    f"Scheduled {operation} boundary remains pending after "
+                    f"{_SCHEDULE_MAX_ATTEMPTS} attempts for {window_key}",
+                )
+            return False
+        self._schedule_attempts[key] = attempts + 1
+        return True
+
+    def _log_schedule_unconfirmed(
+        self, window_key: str, operation: str, observed: Any, requested: Any
+    ) -> None:
+        key = (window_key, operation)
+        attempts = self._schedule_attempts.get(key, 0)
+        if attempts >= _SCHEDULE_MAX_ATTEMPTS:
+            message = (
+                f"Scheduled {operation} boundary remains pending after "
+                f"{attempts} attempts for {window_key}"
+            )
+        else:
+            message = (
+                f"Scheduled {operation} was not confirmed for {window_key}: "
+                f"requested {requested}, observed {observed}; will retry"
+            )
+        self._log("warning", message)
+
+    async def _apply_schedule_window(
+        self, window_key: str, schedule_generation: int, config: tuple
+    ) -> None:
+        if not self._schedule_operation_is_current(
+            schedule_generation, config, window_key, active=True
+        ):
+            return
         data = self._settings()
         if data.schedule.override_window == window_key:
-            self._schedule_late_done = True
+            self._mark_schedule_late_done(
+                window_key, schedule_generation, config
+            )
         mode = data.schedule.mode
         if self._schedule_late_done and (
             self._schedule_mode_done or mode is None
@@ -475,7 +591,9 @@ class ControlApplication:
             status: Status = await self._run(
                 "status", generation=generation, driver=driver
             )
-            if not self._is_current(generation, driver):
+            if not self._is_current(generation, driver) or not self._schedule_operation_is_current(
+                schedule_generation, config, window_key, active=True
+            ):
                 return
             if status.power is False:
                 return
@@ -483,13 +601,23 @@ class ControlApplication:
             data = self._settings()
             if not self._schedule_late_done:
                 if VOLUME not in driver.capabilities:
-                    self._mark_schedule_late_done(window_key)
+                    self._mark_schedule_late_done(
+                        window_key, schedule_generation, config
+                    )
                 elif data.schedule.override_window == window_key:
-                    self._mark_schedule_late_done(window_key)
+                    self._mark_schedule_late_done(
+                        window_key, schedule_generation, config
+                    )
                 elif data.late.active and not data.late.auto:
-                    self._mark_schedule_late_done(window_key)
+                    self._mark_schedule_late_done(
+                        window_key, schedule_generation, config
+                    )
                 elif status.volume is not None:
                     if not data.late.active:
+                        if not self._schedule_operation_is_current(
+                            schedule_generation, config, window_key, active=True
+                        ):
+                            return
                         data = self._settings()
                         data.late.active = True
                         data.late.prev_volume = status.volume
@@ -497,23 +625,40 @@ class ControlApplication:
                         data.late.binding = self._receiver_binding(data)
                         self._save(data)
                     cap = self._effective_cap(self._settings(), driver.scale)
+                    observed_volume = status.volume
                     if status.volume > cap:
-                        await self._run(
-                            "set_volume",
-                            cap,
-                            generation=generation,
-                            driver=driver,
-                        )
-                        if not self._is_current(generation, driver):
+                        if not self._schedule_operation_is_current(
+                            schedule_generation, config, window_key, active=True
+                        ):
                             return
-                    self._mark_schedule_late_done(window_key)
+                        if self._begin_schedule_attempt(window_key, "volume"):
+                            observed_volume = await self._run(
+                                "set_volume",
+                                cap,
+                                generation=generation,
+                                driver=driver,
+                            )
+                            if not self._is_current(generation, driver) or not self._schedule_operation_is_current(
+                                schedule_generation, config, window_key, active=True
+                            ):
+                                return
+                            if observed_volume is None or observed_volume > cap:
+                                self._log_schedule_unconfirmed(
+                                    window_key, "volume", observed_volume, cap
+                                )
+                    if observed_volume is not None and observed_volume <= cap:
+                        self._mark_schedule_late_done(
+                            window_key, schedule_generation, config
+                        )
 
             if self._schedule_mode_done:
                 return
             data = self._settings()
             mode = data.schedule.mode
             if mode is None or MODE not in driver.capabilities:
-                self._mark_schedule_mode_done(window_key)
+                self._mark_schedule_mode_done(
+                    window_key, schedule_generation, config
+                )
                 return
             profile_has_mode = False
             if self._current_game is not None:
@@ -524,31 +669,74 @@ class ControlApplication:
                     and profile.mode
                 )
             if profile_has_mode:
-                self._mark_schedule_mode_done(window_key)
+                self._mark_schedule_mode_done(
+                    window_key, schedule_generation, config
+                )
                 return
-            await self._run(
+            if status.mode == mode:
+                self._mark_schedule_mode_done(
+                    window_key, schedule_generation, config
+                )
+                return
+            if not self._schedule_operation_is_current(
+                schedule_generation, config, window_key, active=True
+            ):
+                return
+            if not self._begin_schedule_attempt(window_key, "mode"):
+                return
+            observed_mode = await self._run(
                 "set_mode", mode, generation=generation, driver=driver
             )
-            if self._is_current(generation, driver):
-                self._mark_schedule_mode_done(window_key)
+            if (
+                not self._is_current(generation, driver)
+                or not self._schedule_operation_is_current(
+                    schedule_generation, config, window_key, active=True
+                )
+            ):
+                return
+            if observed_mode == mode:
+                self._mark_schedule_mode_done(
+                    window_key, schedule_generation, config
+                )
+            else:
+                self._log_schedule_unconfirmed(
+                    window_key, "mode", observed_mode, mode
+                )
         except Exception as exc:
             self._log("error", f"Applying time-of-day profile failed: {exc}")
 
-    def _mark_schedule_mode_done(self, window_key: str) -> None:
+    def _mark_schedule_mode_done(
+        self, window_key: str, schedule_generation: int, config: tuple
+    ) -> None:
+        if not self._schedule_operation_is_current(
+            schedule_generation, config, window_key, active=True
+        ):
+            return
         data = self._settings()
         if data.schedule.last_mode_window != window_key:
             data.schedule.last_mode_window = window_key
             self._save(data)
         self._schedule_mode_done = True
 
-    def _mark_schedule_late_done(self, window_key: str) -> None:
+    def _mark_schedule_late_done(
+        self, window_key: str, schedule_generation: int, config: tuple
+    ) -> None:
+        if not self._schedule_operation_is_current(
+            schedule_generation, config, window_key, active=True
+        ):
+            return
         data = self._settings()
         if data.schedule.last_late_window != window_key:
             data.schedule.last_late_window = window_key
             self._save(data)
         self._schedule_late_done = True
 
-    async def _exit_schedule_late_night(self) -> None:
+    async def _exit_schedule_late_night(
+        self,
+        schedule_generation: int,
+        config: tuple,
+        window_key: str | None,
+    ) -> None:
         generation = self._receiver_generation
         try:
             driver = await self._get_driver(generation)
@@ -559,6 +747,9 @@ class ControlApplication:
             )
             if (
                 not self._is_current(generation, driver)
+                or not self._schedule_operation_is_current(
+                    schedule_generation, config, window_key, active=False
+                )
                 or status.power is False
                 or status.volume is None
             ):
@@ -572,13 +763,25 @@ class ControlApplication:
                     int(previous), self._base_cap(data, driver.scale), driver.scale
                 )
                 if status.volume != volume:
+                    if not self._schedule_operation_is_current(
+                        schedule_generation, config, window_key, active=False
+                    ):
+                        return
                     await self._run(
                         "set_volume", volume, generation=generation, driver=driver
                     )
-                    if not self._is_current(generation, driver):
+                    if not self._is_current(generation, driver) or not self._schedule_operation_is_current(
+                        schedule_generation, config, window_key, active=False
+                    ):
                         return
             data = self._settings()
-            if not data.late.active or not data.late.auto:
+            if (
+                not data.late.active
+                or not data.late.auto
+                or not self._schedule_operation_is_current(
+                    schedule_generation, config, window_key, active=False
+                )
+            ):
                 return
             data.late.active = False
             data.late.prev_volume = None
@@ -1060,6 +1263,7 @@ class ControlApplication:
         if driver is not None and active_driver is not driver:
             raise self._stale_receiver_error()
         driver = active_driver
+        push_sequence = self._push_sequence if method == "status" else None
         try:
             result = await getattr(driver, method)(*args)
         except (Refused, Unsupported):
@@ -1088,12 +1292,29 @@ class ControlApplication:
         if not self._is_current(generation, driver):
             raise self._stale_receiver_error()
         if method == "status":
+            status = Status(result.volume, result.muted, result.power, result.mode)
+            cached = self._last_status
+            if (
+                push_sequence is not None
+                and cached is not None
+                and cached[0] == generation
+                and cached[1] is driver
+            ):
+                for field in ("volume", "muted", "power", "mode"):
+                    if self._push_field_sequences.get(field, 0) > push_sequence:
+                        setattr(status, field, getattr(cached[2], field))
+            result = status
             self._initialized_driver = driver
             self._last_status = (
                 generation,
                 driver,
                 Status(result.volume, result.muted, result.power, result.mode),
             )
+            if (
+                push_sequence is not None
+                and self._push_sequence != push_sequence
+            ):
+                self._revision += 1
         elif self._last_status is not None:
             cached_generation, cached_driver, status = self._last_status
             if cached_generation == generation and cached_driver is driver:
@@ -1816,6 +2037,9 @@ class ControlApplication:
         data.schedule.end = intent.end
         data.schedule.mode = mode
         if changed:
+            self._schedule_generation += 1
+            self._schedule_attempts.clear()
+            self._schedule_exhausted_logged.clear()
             data.schedule.override_window = None
             data.schedule.last_late_window = None
             data.schedule.last_mode_window = None
@@ -1838,6 +2062,7 @@ class ControlApplication:
         return {"ok": True}
 
     async def _set_late_night(self, on: bool) -> dict:
+        self._schedule_generation += 1
         generation = self._receiver_generation
         try:
             data = self._settings()
@@ -2022,17 +2247,8 @@ class ControlApplication:
         active_now, _window_key = self._schedule_window(
             data.schedule, self.wall_clock()
         )
-        configured_driver = self._class_for(connection.get("driver"))
         power_supported = bool(
-            POWER in (
-                driver.capabilities
-                if driver is not None
-                else (
-                    configured_driver.capabilities
-                    if configured_driver is not None
-                    else ()
-                )
-            )
+            driver is not None and POWER in driver.capabilities
         )
         result = {
             "connection": connection,
@@ -2118,6 +2334,8 @@ class ControlApplication:
 
     async def dispatch(self, intent: ControlIntent) -> dict[str, Any]:
         result: dict[str, Any] | None
+        result_generation: int | None = None
+        result_driver: Driver | None = None
         try:
             if isinstance(intent, SetVolume):
                 generation = self._receiver_generation
@@ -2127,12 +2345,20 @@ class ControlApplication:
                     raise self._stale_receiver_error()
                 raw = VolumePolicy.to_raw(intent.display, driver.scale)
                 result = await self._set_volume(raw)
+                result_generation = generation
+                result_driver = driver
             elif isinstance(intent, SetMute):
                 result = await self._set_mute(intent.muted)
+                result_generation = self._receiver_generation
+                result_driver = self._active_driver
             elif isinstance(intent, SetPower):
                 result = await self._set_power(intent.on)
+                result_generation = self._receiver_generation
+                result_driver = self._active_driver
             elif isinstance(intent, SetMode):
                 result = await self._set_mode(intent.code)
+                result_generation = self._receiver_generation
+                result_driver = self._active_driver
             elif isinstance(intent, SetLateNight):
                 result = await self._set_late_night(intent.on)
             elif isinstance(intent, SetSchedule):
@@ -2272,10 +2498,22 @@ class ControlApplication:
         error = result.get("error") if result else None
         if error:
             outcome["error"] = str(error)
+        has_command_state = result is not None and any(
+            field in result for field in ("volume", "muted", "power", "mode")
+        )
+        if (
+            outcome["ok"]
+            and has_command_state
+            and result_generation is not None
+            and not self._is_current(result_generation, result_driver)
+        ):
+            outcome["ok"] = False
+            outcome["error"] = str(self._stale_receiver_error())
         if result is not None and "confirmed" in result:
-            outcome["confirmed"] = bool(result["confirmed"])
+            if outcome["ok"]:
+                outcome["confirmed"] = bool(result["confirmed"])
 
-        if outcome["ok"] and result is not None:
+        if outcome["ok"] and result is not None and has_command_state:
             receiver = current_snapshot.get("receiver", {})
             if "volume" in result:
                 active_scale = self._active_driver.scale if self._active_driver else None

@@ -47,6 +47,7 @@ from avr_control.drivers.eiscp import EiscpDriver
 from avr_control.drivers.heos import HeosDriver
 from avr_control.drivers.homeassistant import HomeAssistantDriver
 from avr_control.drivers.pioneer_telnet import PioneerTelnetDriver
+from avr_control.drivers.sony import SonyDriver
 from avr_control.drivers.yamaha import YamahaDriver
 from avr_control.settings import MemorySettingsStore, SettingsRepository
 from avr_control.volume import VolumePolicy
@@ -487,6 +488,119 @@ class ApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(closed["snapshot"]["push"])
         self.assertEqual(PushMemoryDriver.unsubscribe_count, 2)
 
+    async def test_reopening_panel_supersedes_a_pending_watch_startup(self):
+        self.save_settings()
+
+        class BlockingStatusDriver(PushMemoryDriver):
+            status_calls = 0
+            first_status_started = asyncio.Event()
+            release_first_status = asyncio.Event()
+
+            async def status(self):
+                type(self).status_calls += 1
+                if type(self).status_calls == 1:
+                    type(self).first_status_started.set()
+                    await type(self).release_first_status.wait()
+                return Status(volume=100, muted=False, power=True, mode="00")
+
+        BlockingStatusDriver.status_calls = 0
+        BlockingStatusDriver.first_status_started = asyncio.Event()
+        BlockingStatusDriver.release_first_status = asyncio.Event()
+        BlockingStatusDriver.watch_callbacks = []
+        BlockingStatusDriver.unsubscribe_count = 0
+        self.application.registry = [BlockingStatusDriver]
+        self.application.publish = lambda _snapshot: None
+
+        first_open = asyncio.create_task(self.application.dispatch(PanelOpened()))
+        await asyncio.wait_for(BlockingStatusDriver.first_status_started.wait(), 1)
+        await self.application.dispatch(PanelClosed())
+        await self.application.dispatch(PanelOpened())
+        BlockingStatusDriver.release_first_status.set()
+        await first_open
+
+        await self.application.dispatch(PanelClosed())
+        await self.application.close()
+
+        self.assertEqual(len(BlockingStatusDriver.watch_callbacks), 1)
+        self.assertEqual(BlockingStatusDriver.unsubscribe_count, 1)
+
+    async def test_status_started_before_push_keeps_pushed_profile_volume(self):
+        self.save_settings()
+
+        class BlockingPollDriver(PushMemoryDriver):
+            block_next_status = False
+            status_started = asyncio.Event()
+            release_status = asyncio.Event()
+
+            async def status(self):
+                if type(self).block_next_status:
+                    type(self).block_next_status = False
+                    type(self).status_started.set()
+                    await type(self).release_status.wait()
+                    return Status(volume=100, muted=False, power=True, mode="00")
+                return Status(volume=100, muted=False, power=True, mode="00")
+
+        BlockingPollDriver.block_next_status = False
+        BlockingPollDriver.status_started = asyncio.Event()
+        BlockingPollDriver.release_status = asyncio.Event()
+        BlockingPollDriver.watch_callbacks = []
+        BlockingPollDriver.unsubscribe_count = 0
+        published = asyncio.Queue()
+        self.application.registry = [BlockingPollDriver]
+        self.application.publish = published.put_nowait
+
+        await self.application.dispatch(PanelOpened())
+        await self.application.dispatch(SetCurrentGame(81, "Push race"))
+        await self.application.dispatch(RememberForGame("volume", True))
+        BlockingPollDriver.block_next_status = True
+        stale_poll = asyncio.create_task(self.application.snapshot())
+        await asyncio.wait_for(BlockingPollDriver.status_started.wait(), 1)
+
+        BlockingPollDriver.watch_callbacks[-1](Status(volume=111))
+        pushed_snapshot = await asyncio.wait_for(published.get(), 1)
+        BlockingPollDriver.release_status.set()
+        completed_poll = await stale_poll
+
+        self.assertEqual(pushed_snapshot["receiver"]["volume"]["raw"], 111)
+        self.assertEqual(completed_poll["receiver"]["volume"]["raw"], 111)
+        self.assertGreater(completed_poll["revision"], pushed_snapshot["revision"])
+        self.assertEqual(self.store.load()["games"]["81"]["volume"], 111)
+        await self.application.close()
+
+    async def test_dispatch_drops_command_result_after_receiver_changes(self):
+        self.save_settings()
+
+        class BlockingSnapshotDriver(MemoryDriver):
+            mode_state_started = asyncio.Event()
+            release_mode_state = asyncio.Event()
+
+            async def mode_state(self, status):
+                type(self).mode_state_started.set()
+                await type(self).release_mode_state.wait()
+                return await super().mode_state(status)
+
+        class PercentDriver(MemoryDriver):
+            key = "percent"
+            label = "Percent Receiver"
+            scale = VolumeScale(
+                min=0, max=100, unit="%", zero=0, steps_per_unit=1,
+                default_cap=100,
+            )
+
+        BlockingSnapshotDriver.mode_state_started = asyncio.Event()
+        BlockingSnapshotDriver.release_mode_state = asyncio.Event()
+        self.application.registry = [BlockingSnapshotDriver, PercentDriver]
+
+        command = asyncio.create_task(self.application.dispatch(SetVolume(-32)))
+        await asyncio.wait_for(BlockingSnapshotDriver.mode_state_started.wait(), 1)
+        await self.application.dispatch(ConfigureReceiver("percent", {"host": "other"}))
+        BlockingSnapshotDriver.release_mode_state.set()
+        outcome = await command
+
+        self.assertFalse(outcome["ok"])
+        self.assertIn("Receiver changed", outcome["error"])
+        self.assertIsNone(outcome["snapshot"]["receiver"]["volume"])
+
     async def test_panel_watch_stays_on_polling_for_driver_without_push(self):
         self.save_settings()
         published = []
@@ -520,6 +634,25 @@ class ApplicationTests(unittest.IsolatedAsyncioTestCase):
         caps = outcome["snapshot"]["caps"]
         self.assertEqual(caps["cap_display"], -30)
         self.assertEqual(caps["effective_max_display"], -30)
+
+    async def test_incomplete_property_capability_drivers_return_configuration_errors(self):
+        self.save_settings()
+        for driver_class in (HomeAssistantDriver, YamahaDriver, SonyDriver):
+            with self.subTest(driver=driver_class.key):
+                settings = self.store.load()
+                settings["receiver"]["driver"] = driver_class.key
+                settings["receiver"]["config"] = {}
+                settings["receiver"]["id"] = None
+                self.store.save(settings)
+                self.application.registry = [driver_class]
+                self.application._active_driver = None
+
+                snapshot = await self.application.snapshot()
+
+                self.assertFalse(snapshot["connection"]["configured"])
+                self.assertTrue(snapshot.get("error"))
+                self.assertEqual(snapshot["capabilities"], [])
+                self.assertFalse(snapshot["sleep_wake"]["supports_power"])
 
     async def test_snapshot_keeps_unknown_current_mode_displayable_but_unselectable(self):
         class UnknownModeDriver(MemoryDriver):
@@ -2185,6 +2318,74 @@ class ApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(MemoryDriver.state.volume, 100)
         self.assertEqual(MemoryDriver.state.mode, "11")
 
+    async def test_schedule_tick_does_not_apply_after_schedule_is_disabled(self):
+        self.save_settings()
+        self.local_time.set(2026, 10, 31, 22, 0)
+
+        class BlockingScheduleDriver(MemoryDriver):
+            status_calls = 0
+            status_started = asyncio.Event()
+            release_status = asyncio.Event()
+
+            async def status(self):
+                type(self).status_calls += 1
+                if type(self).status_calls == 1:
+                    type(self).status_started.set()
+                    await type(self).release_status.wait()
+                return Status(100, False, True, "00")
+
+        BlockingScheduleDriver.status_calls = 0
+        BlockingScheduleDriver.status_started = asyncio.Event()
+        BlockingScheduleDriver.release_status = asyncio.Event()
+        self.application.registry = [BlockingScheduleDriver]
+        await self.application.dispatch(SetSchedule(True, "22:00", "23:00", "11"))
+        tick = asyncio.create_task(self.application.tick())
+        await asyncio.wait_for(BlockingScheduleDriver.status_started.wait(), 1)
+
+        await self.application.dispatch(SetSchedule(False, "22:00", "23:00", "11"))
+        BlockingScheduleDriver.release_status.set()
+        await tick
+
+        self.assertFalse(self.store.load()["late"]["active"])
+        self.assertIsNone(self.store.load()["schedule"].get("last_late_window"))
+        self.assertNotIn(("volume", 64), MemoryDriver.actions)
+        self.assertNotIn(("mode", "11"), MemoryDriver.actions)
+
+    async def test_manual_late_night_toggle_invalidates_a_pending_schedule_tick(self):
+        self.save_settings()
+        self.local_time.set(2026, 10, 31, 22, 0)
+
+        class BlockingScheduleDriver(MemoryDriver):
+            status_calls = 0
+            status_started = asyncio.Event()
+            release_status = asyncio.Event()
+
+            async def status(self):
+                type(self).status_calls += 1
+                if type(self).status_calls == 1:
+                    type(self).status_started.set()
+                    await type(self).release_status.wait()
+                return Status(100, False, True, "00")
+
+        BlockingScheduleDriver.status_calls = 0
+        BlockingScheduleDriver.status_started = asyncio.Event()
+        BlockingScheduleDriver.release_status = asyncio.Event()
+        self.application.registry = [BlockingScheduleDriver]
+        await self.application.dispatch(SetSchedule(True, "22:00", "23:00", "11"))
+        tick = asyncio.create_task(self.application.tick())
+        await asyncio.wait_for(BlockingScheduleDriver.status_started.wait(), 1)
+
+        await self.application.dispatch(SetLateNight(False))
+        BlockingScheduleDriver.release_status.set()
+        await tick
+
+        self.assertFalse(self.store.load()["late"]["active"])
+        self.assertEqual(
+            self.store.load()["schedule"]["override_window"], "2026-10-31"
+        )
+        self.assertNotIn(("volume", 64), MemoryDriver.actions)
+        self.assertNotIn(("mode", "11"), MemoryDriver.actions)
+
     async def test_schedule_window_crosses_midnight_without_reentering(self):
         self.save_settings()
         await self.application.dispatch(SetSchedule(True, "22:00", "07:00", None))
@@ -2279,6 +2480,93 @@ class ApplicationTests(unittest.IsolatedAsyncioTestCase):
         await self.application.tick()
         self.assertTrue(self.store.load()["late"]["auto"])
         self.assertEqual(MemoryDriver.state.mode, "11")
+
+    async def test_schedule_retries_unconfirmed_volume_and_mode_at_later_ticks(self):
+        self.save_settings()
+
+        class InitiallyUnconfirmedDriver(MemoryDriver):
+            volume_attempts = 0
+            mode_attempts = 0
+
+            async def set_volume(self, raw):
+                type(self).volume_attempts += 1
+                self.actions.append(("volume", raw))
+                if type(self).volume_attempts == 1:
+                    return 100
+                self.state.volume = raw
+                return raw
+
+            async def set_mode(self, code):
+                type(self).mode_attempts += 1
+                self.actions.append(("mode", code))
+                if type(self).mode_attempts == 1:
+                    return "00"
+                self.state.mode = code
+                return code
+
+        InitiallyUnconfirmedDriver.volume_attempts = 0
+        InitiallyUnconfirmedDriver.mode_attempts = 0
+        self.application.registry = [InitiallyUnconfirmedDriver]
+        self.local_time.set(2026, 10, 31, 22, 0)
+        await self.application.dispatch(SetSchedule(True, "22:00", "23:00", "11"))
+
+        await self.application.tick()
+        first_schedule = self.store.load()["schedule"]
+        self.assertIsNone(first_schedule.get("last_late_window"))
+        self.assertIsNone(first_schedule.get("last_mode_window"))
+
+        await self.application.tick()
+        self.assertEqual(
+            self.store.load()["schedule"]["last_late_window"], "2026-10-31"
+        )
+        self.assertEqual(
+            self.store.load()["schedule"]["last_mode_window"], "2026-10-31"
+        )
+        self.assertEqual(InitiallyUnconfirmedDriver.volume_attempts, 2)
+        self.assertEqual(InitiallyUnconfirmedDriver.mode_attempts, 2)
+
+    async def test_unconfirmed_schedule_setters_stop_after_bounded_attempts(self):
+        self.save_settings()
+
+        class NeverConfirmedDriver(MemoryDriver):
+            volume_attempts = 0
+            mode_attempts = 0
+
+            async def set_volume(self, raw):
+                type(self).volume_attempts += 1
+                self.actions.append(("volume", raw))
+                return 100
+
+            async def set_mode(self, code):
+                type(self).mode_attempts += 1
+                self.actions.append(("mode", code))
+                return "00"
+
+        class WarningLogger:
+            warnings = []
+
+            def warning(self, message):
+                self.warnings.append(message)
+
+        NeverConfirmedDriver.volume_attempts = 0
+        NeverConfirmedDriver.mode_attempts = 0
+        WarningLogger.warnings = []
+        self.application.registry = [NeverConfirmedDriver]
+        self.application.logger = WarningLogger()
+        self.local_time.set(2026, 10, 31, 22, 0)
+        await self.application.dispatch(SetSchedule(True, "22:00", "23:00", "11"))
+
+        for _ in range(5):
+            await self.application.tick()
+
+        self.assertEqual(NeverConfirmedDriver.volume_attempts, 3)
+        self.assertEqual(NeverConfirmedDriver.mode_attempts, 3)
+        self.assertIsNone(self.store.load()["schedule"].get("last_late_window"))
+        self.assertIsNone(self.store.load()["schedule"].get("last_mode_window"))
+        self.assertTrue(
+            any("remains pending after 3 attempts" in item
+                for item in WarningLogger.warnings)
+        )
 
     async def test_game_mode_profile_overrides_schedule_mode_and_late_volume_is_not_saved(self):
         self.save_settings()
