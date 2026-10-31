@@ -83,10 +83,6 @@ Enable the receiver's network standby setting (Pioneer/Onkyo "Network Standby",
 Denon/Marantz "Network Control: Always On", Yamaha "Network Standby") so it accepts
 commands while idle.
 
-When upgrading from **Pioneer Volume**, settings migrate automatically on first
-launch. After confirming the new plugin works, remove the old
-`~/homebrew/plugins/pioneer-volume/` folder to avoid loading both plugins.
-
 ## Build locally
 
 ```

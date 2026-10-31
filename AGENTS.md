@@ -10,7 +10,7 @@ AVR Control is a Decky Loader plugin: a Quick Access panel on a Steam Deck / Ste
   - `volume.py`: the canonical raw/display conversion and cap policy used by the application.
   - `drivers/base.py`: the driver seam (ADR-0009). `drivers/__init__.py` holds `REGISTRY`, which also sets the probe order.
   - `drivers/<key>.py` + `drivers/<key>.md`: one driver and its protocol spec (ADR-0011).
-  - `settings.py`: `SettingsRepository` (filesystem and in-memory stores) returning normalised domain values; owns schema versions, migrations and the old `pioneer-volume` folder.
+  - `settings.py`: `SettingsRepository` (filesystem and in-memory stores) for persisted user settings.
   - `drivers/receiver_session.py`: the shared TCP transaction channel for eISCP, Denon, Pioneer telnet and HEOS (ADR-0016). Framing and protocol rules stay in each driver.
   - `ssdp.py`: SSDP search and UPnP description fetching, shared by drivers.
 - `src/index.tsx`: the React panel (`@decky/ui`, `@decky/api`).
@@ -26,7 +26,7 @@ corepack pnpm install --frozen-lockfile         # pnpm 12 from the lockfile
 corepack pnpm build                             # type-checks and bundles the UI
 ```
 
-CI (`.github/workflows/build.yml`) runs the tests on Python 3.10 and builds with pnpm 12.16.1, the same pnpm the Decky store uses (ADR-0017). Keep `pnpm-lock.yaml` unchanged unless dependencies change.
+CI (`.github/workflows/build.yml`) runs the tests on Python 3.10 and builds with pnpm 12.16.1, the same pnpm the Decky store uses (ADR-0017). Keep `pnpm-lock.yaml` unchanged unless dependencies or the pnpm version change.
 
 ## Constraints that aren't visible in the code
 
