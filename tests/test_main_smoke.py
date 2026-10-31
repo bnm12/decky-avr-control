@@ -45,8 +45,18 @@ class MainSmokeTests(unittest.TestCase):
                 sys.modules[spec.name] = module
                 spec.loader.exec_module(module)
                 plugin = module.Plugin()
+                public_rpcs = {
+                    name
+                    for name, value in vars(module.Plugin).items()
+                    if not name.startswith("_") and callable(value)
+                }
                 self.assertEqual(
-                    asyncio.run(plugin.get_connection()),
+                    public_rpcs,
+                    {"snapshot", "dispatch", "discover", "list_drivers", "setup_options"},
+                )
+                snapshot = asyncio.run(plugin.snapshot())
+                self.assertEqual(
+                    snapshot["connection"],
                     {
                         "configured": False,
                         "driver": None,
@@ -55,14 +65,25 @@ class MainSmokeTests(unittest.TestCase):
                         "fields": {},
                     },
                 )
-                state = asyncio.run(plugin.get_state())
-                self.assertFalse(state["ok"])
                 from avr_control.drivers import REGISTRY
 
                 drivers = asyncio.run(plugin.list_drivers())
                 self.assertEqual(
                     [d["key"] for d in drivers], [d.key for d in REGISTRY]
                 )
+                bad_type = asyncio.run(plugin.dispatch({"type": "future_intent"}))
+                self.assertEqual(
+                    bad_type,
+                    {
+                        "ok": False,
+                        "error": "Unknown intent type: 'future_intent'",
+                    },
+                )
+                bad_fields = asyncio.run(
+                    plugin.dispatch({"type": "set_volume", "display": "loud"})
+                )
+                self.assertFalse(bad_fields["ok"])
+                self.assertIn("Invalid display", bad_fields["error"])
                 asyncio.run(plugin._main())
                 asyncio.run(plugin._unload())
             finally:
@@ -103,7 +124,8 @@ class MainSmokeTests(unittest.TestCase):
                     sys.modules[spec.name] = module
                     spec.loader.exec_module(module)
                     plugin = module.Plugin()
-                    self.assertEqual(asyncio.run(plugin.get_host()), "192.0.2.7")
+                    snapshot = asyncio.run(plugin.snapshot())
+                    self.assertEqual(snapshot["connection"]["summary"], "192.0.2.7")
             finally:
                 sys.modules.pop("avr_control_main_smoke", None)
                 if old_main is not None:

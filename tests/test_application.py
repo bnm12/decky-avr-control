@@ -1,12 +1,25 @@
 from __future__ import annotations
 
 import asyncio
-import os
-import tempfile
 import unittest
 
 from tests import PY_MODULES  # noqa: F401
-from avr_control.controller import Controller
+from avr_control.application import (
+    ConfigureReceiver,
+    ControlApplication,
+    ForgetGame,
+    GameStarted,
+    GameStopped,
+    RememberForGame,
+    SelectReceiver,
+    SetCaps,
+    SetCurrentGame,
+    SetLateNight,
+    SetMode,
+    SetMute,
+    SetPower,
+    SetVolume,
+)
 from avr_control.drivers.base import (
     MODE,
     MUTE,
@@ -27,7 +40,8 @@ from avr_control.drivers.heos import HeosDriver
 from avr_control.drivers.homeassistant import HomeAssistantDriver
 from avr_control.drivers.pioneer_telnet import PioneerTelnetDriver
 from avr_control.drivers.yamaha import YamahaDriver
-from avr_control.settings import SettingsRepository, SettingsStore
+from avr_control.settings import MemorySettingsStore, SettingsRepository
+from avr_control.volume import VolumePolicy
 from tests.test_heos import FakeHeos
 from tests.test_homeassistant import ENTITY_ID, TOKEN, FakeHomeAssistant
 
@@ -85,7 +99,8 @@ class MemoryDriver(Driver):
     async def list_modes(self):
         return [Mode("00", "Stereo"), Mode("11", "Direct")]
 
-    def mode_name(self, code):
+    @classmethod
+    def mode_label(cls, code):
         return {"00": "Stereo", "11": "Direct"}.get(code, f"Mode {code}")
 
     @classmethod
@@ -105,15 +120,237 @@ class MemoryDriver(Driver):
         )
 
 
-class ControllerTests(unittest.IsolatedAsyncioTestCase):
+class ApplicationClient:
+    """Translate legacy scenario fixtures into calls across the new interface."""
+
+    def __init__(self, application, repository):
+        self.application = application
+        self.repository = repository
+
+    @property
+    def registry(self):
+        return self.application.registry
+
+    @registry.setter
+    def registry(self, value):
+        self.application.registry = value
+
+    @property
+    def clock(self):
+        return self.application.clock
+
+    @clock.setter
+    def clock(self, value):
+        self.application.clock = value
+
+    @property
+    def sleep(self):
+        return self.application.sleep
+
+    @sleep.setter
+    def sleep(self, value):
+        self.application.sleep = value
+
+    async def _scale(self):
+        if self.application._active_driver is not None:
+            return self.application._active_driver.scale
+        data = self.repository.load()
+        driver_class = next(
+            (item for item in self.application.registry if item.key == data.receiver.driver),
+            None,
+        )
+        return driver_class(dict(data.receiver.config)).scale
+
+    async def _dispatch(self, intent):
+        return await self.application.dispatch(intent)
+
+    async def get_state(self):
+        snapshot = await self.application.snapshot()
+        if snapshot.get("error"):
+            return {"ok": False, "error": snapshot["error"]}
+        scale = await self._scale()
+        caps = snapshot["caps"]
+        current = snapshot["modes"]["current"]
+        game = snapshot["game"]
+        return {
+            "ok": True,
+            "volume": (
+                snapshot["receiver"]["volume"]["raw"]
+                if snapshot["receiver"]["volume"]
+                else None
+            ),
+            "muted": snapshot["receiver"]["muted"],
+            "power": snapshot["receiver"]["power"],
+            "max": VolumePolicy.to_raw(caps["effective_max_display"], scale),
+            "cap": VolumePolicy.to_raw(caps["cap_display"], scale),
+            "late_cap": VolumePolicy.to_raw(caps["late_cap_display"], scale),
+            "late": caps["late_night"],
+            "mode": current["label"] if current else None,
+            "mode_code": current["code"] if current else None,
+            "modes": [
+                {"code": item["code"], "name": item["label"]}
+                for item in snapshot["modes"]["selectable"]
+            ],
+            "game": (
+                {
+                    "appid": game["appid"],
+                    "name": game["name"],
+                    "volume": game["remembers_volume"],
+                    "mode": game["remembers_mode"],
+                }
+                if game
+                else None
+            ),
+            "driver": snapshot["connection"]["driver"],
+            "driver_label": snapshot["connection"]["label"],
+            "scale": scale.as_dict(),
+            "capabilities": snapshot["capabilities"],
+        }
+
+    async def get_connection(self):
+        return (await self.application.snapshot())["connection"]
+
+    async def get_host(self):
+        return str(self.repository.load().receiver.config.get("host", "")).strip()
+
+    async def configure(self, driver_key, config):
+        result = await self._dispatch(ConfigureReceiver(driver_key, config))
+        return {"ok": result["ok"], **({"error": result["error"]} if result.get("error") else {})}
+
+    async def set_host(self, host):
+        return await self.configure("auto", {"host": host})
+
+    async def discover(self):
+        return await self.application.discover()
+
+    async def select_receiver(self, ip, ident):
+        await self.application.discover()
+        return await self._dispatch(SelectReceiver(ident))
+
+    async def set_volume(self, raw):
+        scale = await self._scale()
+        result = await self._dispatch(
+            SetVolume(VolumePolicy.to_display(raw, scale))
+        )
+        value = result.get("snapshot", {}).get("receiver", {}).get("volume")
+        response = {"ok": result["ok"]}
+        if value is not None:
+            response["volume"] = value["raw"]
+        if result.get("error"):
+            response["error"] = result["error"]
+        if result.get("confirmed") is not None:
+            response["confirmed"] = result["confirmed"]
+        return response
+
+    async def set_mute(self, muted):
+        result = await self._dispatch(SetMute(muted))
+        response = {"ok": result["ok"]}
+        value = result.get("snapshot", {}).get("receiver", {}).get("muted")
+        if value is not None:
+            response["muted"] = value
+        if result.get("error"):
+            response["error"] = result["error"]
+        if result.get("confirmed") is not None:
+            response["confirmed"] = result["confirmed"]
+        return response
+
+    async def set_power(self, on):
+        result = await self._dispatch(SetPower(on))
+        response = {"ok": result["ok"]}
+        value = result.get("snapshot", {}).get("receiver", {}).get("power")
+        if value is not None:
+            response["power"] = value
+        if result.get("error"):
+            response["error"] = result["error"]
+        if result.get("confirmed") is not None:
+            response["confirmed"] = result["confirmed"]
+        return response
+
+    async def _set_caps(self, cap_raw, late_raw):
+        scale = await self._scale()
+        result = await self._dispatch(
+            SetCaps(
+                VolumePolicy.to_display(cap_raw, scale),
+                VolumePolicy.to_display(late_raw, scale),
+            )
+        )
+        return {"ok": result["ok"], **({"error": result["error"]} if result.get("error") else {})}
+
+    async def set_max(self, raw):
+        data = self.repository.load()
+        scale = await self._scale()
+        current_late = data.late.cap
+        if current_late is None:
+            current_late = VolumePolicy.default_late_cap(scale)
+        return await self._set_caps(raw, current_late)
+
+    async def set_late_max(self, raw):
+        data = self.repository.load()
+        scale = await self._scale()
+        current_cap = data.cap.cap
+        if current_cap is None:
+            current_cap = VolumePolicy.default_cap(scale)
+        return await self._set_caps(current_cap, raw)
+
+    async def set_late_night(self, on):
+        result = await self._dispatch(SetLateNight(on))
+        return {"ok": result["ok"], **({"error": result["error"]} if result.get("error") else {})}
+
+    async def set_mode(self, code):
+        result = await self._dispatch(SetMode(code))
+        response = {"ok": result["ok"]}
+        current = result.get("snapshot", {}).get("modes", {}).get("current")
+        if current:
+            response.update({"mode": current["label"], "code": current["code"]})
+        if result.get("error"):
+            response["error"] = result["error"]
+        if result.get("confirmed") is not None:
+            response["confirmed"] = result["confirmed"]
+        return response
+
+    async def set_current_game(self, appid, name):
+        return await self._dispatch(SetCurrentGame(appid, name))
+
+    async def game_started(self, appid, name):
+        result = await self._dispatch(GameStarted(appid, name))
+        if not result["ok"]:
+            return {"applied": False, **({"error": result["error"]} if result.get("error") else {})}
+        data = self.repository.load()
+        profile = data.games.get(str(appid))
+        snapshot = result["snapshot"]
+        driver = snapshot["connection"]["driver"]
+        caps = snapshot["capabilities"]
+        applied = bool(
+            profile
+            and profile.driver == driver
+            and (
+                (profile.volume is not None and "volume" in caps)
+                or (profile.mode is not None and "mode" in caps)
+            )
+        )
+        return {"applied": applied}
+
+    async def game_stopped(self, appid):
+        return await self._dispatch(GameStopped(appid))
+
+    async def set_game_remember(self, what, enabled):
+        result = await self._dispatch(RememberForGame(what, enabled))
+        return {"ok": result["ok"], **({"error": result["error"]} if result.get("error") else {})}
+
+    async def list_games(self):
+        return (await self.application.snapshot())["profiles"]
+
+    async def forget_game(self, appid):
+        return await self._dispatch(ForgetGame(appid))
+
+
+class ApplicationTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
-        self.path = os.path.join(self.temp.name, "settings.json")
-        self.store = SettingsStore(self.path)
+        self.store = MemorySettingsStore()
         self.repository = SettingsRepository(self.store)
         self.clock = FakeClock()
         self.reset_driver()
-        self.controller = Controller(
+        self.application = ControlApplication(
             self.repository,
             registry=[MemoryDriver],
             clock=self.clock,
@@ -121,9 +358,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
             reapply_delay=4,
             rediscover_interval=30,
         )
-
-    def tearDown(self):
-        self.temp.cleanup()
+        self.client = ApplicationClient(self.application, self.repository)
 
     def reset_driver(self):
         MemoryDriver.state = Status(100, False, True, "00")
@@ -151,9 +386,66 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
             }
         )
 
+    async def test_snapshot_and_display_intents_cross_the_application_interface(self):
+        self.save_settings()
+
+        before = await self.application.snapshot()
+        self.assertEqual(before["receiver"]["volume"]["raw"], 100)
+        self.assertEqual(before["receiver"]["volume"]["display"], -32)
+        self.assertEqual(before["scale"]["step_display"], 0.5)
+        self.assertEqual(before["modes"]["current"], {"code": "00", "label": "Stereo"})
+        self.assertEqual(
+            before["modes"]["selectable"],
+            [{"code": "00", "label": "Stereo"}, {"code": "11", "label": "Direct"}],
+        )
+
+        outcome = await self.application.dispatch(SetVolume(-32.25))
+
+        self.assertTrue(outcome["ok"])
+        self.assertEqual(outcome["snapshot"]["receiver"]["volume"]["raw"], 99)
+        self.assertEqual(outcome["snapshot"]["receiver"]["volume"]["display"], -32.5)
+        caps = outcome["snapshot"]["caps"]
+        self.assertEqual(caps["cap_display"], -30)
+        self.assertEqual(caps["effective_max_display"], -30)
+
+    async def test_snapshot_keeps_unknown_current_mode_displayable_but_unselectable(self):
+        class UnknownModeDriver(MemoryDriver):
+            @classmethod
+            def mode_label(cls, code):
+                return f"Unlisted {code}"
+
+            async def status(self):
+                return Status(volume=100, muted=False, power=True, mode="99")
+
+        self.client.registry = [UnknownModeDriver]
+        self.save_settings(
+            {
+                "version": 3,
+                "receiver": {
+                    "driver": "memory",
+                    "config": {"host": "receiver"},
+                    "id": "stable-id",
+                },
+                "cap": None,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {},
+            }
+        )
+
+        snapshot = await self.application.snapshot()
+
+        self.assertEqual(
+            snapshot["modes"]["current"],
+            {"code": "99", "label": "Unlisted 99"},
+        )
+        self.assertNotIn(
+            "99", [item["code"] for item in snapshot["modes"]["selectable"]]
+        )
+
     async def test_cap_clamping_late_night_restore_and_state_contract(self):
         self.save_settings()
-        state = await self.controller.get_state()
+        state = await self.client.get_state()
         self.assertTrue(state["ok"])
         self.assertEqual(state["driver"], "memory")
         self.assertEqual(state["driver_label"], "Memory Receiver")
@@ -163,17 +455,17 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         settings = self.store.load()
         settings["cap"] = 0
         self.store.save(settings)
-        self.assertEqual((await self.controller.get_state())["cap"], 100)
-        self.assertEqual((await self.controller.set_volume(180))["volume"], 100)
+        self.assertEqual((await self.client.get_state())["cap"], 104)
+        self.assertEqual((await self.client.set_volume(180))["volume"], 104)
 
-        await self.controller.set_max(150)
-        await self.controller.set_late_max(70)
-        result = await self.controller.set_late_night(True)
+        await self.client.set_max(150)
+        await self.client.set_late_max(70)
+        result = await self.client.set_late_night(True)
         self.assertTrue(result["ok"])
         self.assertEqual(MemoryDriver.state.volume, 70)
-        self.assertEqual(self.store.load()["late"], {"active": True, "prev_volume": 100})
-        await self.controller.set_late_night(False)
-        self.assertEqual(MemoryDriver.state.volume, 100)
+        self.assertEqual(self.store.load()["late"], {"active": True, "prev_volume": 104})
+        await self.client.set_late_night(False)
+        self.assertEqual(MemoryDriver.state.volume, 104)
         self.assertEqual(self.store.load()["late"], {"active": False})
 
     async def test_steps_scale_defaults_are_fractions_of_its_range(self):
@@ -189,7 +481,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
             async def set_volume(self, raw):
                 return raw
 
-        self.controller.registry = [StepsDriver]
+        self.client.registry = [StepsDriver]
         self.save_settings(
             {
                 "version": 2,
@@ -205,7 +497,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        state = await self.controller.get_state()
+        state = await self.client.get_state()
 
         self.assertEqual(state["scale"]["unit"], "steps")
         self.assertEqual(state["scale"]["default_cap"], 42)
@@ -214,13 +506,13 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_late_night_restore_respects_a_lowered_normal_cap(self):
         self.save_settings()
-        await self.controller.get_state()
-        await self.controller.set_max(100)
-        await self.controller.set_late_max(70)
-        await self.controller.set_late_night(True)
-        await self.controller.set_max(60)
+        await self.client.get_state()
+        await self.client.set_max(100)
+        await self.client.set_late_max(70)
+        await self.client.set_late_night(True)
+        await self.client.set_max(60)
 
-        result = await self.controller.set_late_night(False)
+        result = await self.client.set_late_night(False)
 
         self.assertTrue(result["ok"])
         self.assertEqual(MemoryDriver.state.volume, 60)
@@ -245,7 +537,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
                 self.volume = raw
                 return raw
 
-        self.controller.registry = [MemoryDriver, PercentDriver]
+        self.client.registry = [MemoryDriver, PercentDriver]
         self.save_settings(
             {
                 "version": 2,
@@ -261,24 +553,24 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        result = await self.controller.configure("percent", {"host": "new-receiver"})
+        result = await self.client.configure("percent", {"host": "new-receiver"})
         self.assertTrue(result["ok"])
-        state = await self.controller.get_state()
+        state = await self.client.get_state()
 
         self.assertEqual(state["cap"], 60)
         self.assertEqual(state["late_cap"], 20)
         self.assertFalse(state["late"])
-        self.assertEqual((await self.controller.set_volume(100))["volume"], 60)
+        self.assertEqual((await self.client.set_volume(100))["volume"], 60)
 
     async def test_resaving_same_receiver_keeps_caps_and_late_night_restore(self):
         self.save_settings()
-        await self.controller.get_state()
-        await self.controller.set_max(50)
-        await self.controller.set_late_max(40)
-        await self.controller.set_late_night(True)
+        await self.client.get_state()
+        await self.client.set_max(50)
+        await self.client.set_late_max(40)
+        await self.client.set_late_night(True)
         self.assertEqual(MemoryDriver.state.volume, 40)
 
-        result = await self.controller.configure("memory", {"host": "receiver"})
+        result = await self.client.configure("memory", {"host": "receiver"})
         settings = self.store.load()
 
         self.assertTrue(result["ok"])
@@ -297,7 +589,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
                 self.config.update({"transport": "http", "http_port": 8080})
                 return Status(volume=55)
 
-        self.controller.registry = [FailoverDriver]
+        self.client.registry = [FailoverDriver]
         self.save_settings(
             {
                 "version": 2,
@@ -313,7 +605,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        state = await self.controller.get_state()
+        state = await self.client.get_state()
         settings = self.store.load()
 
         self.assertTrue(state["ok"])
@@ -335,7 +627,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
             async def status(self):
                 return Status(volume=50)
 
-        self.controller.registry = [HomeAssistantLikeDriver]
+        self.client.registry = [HomeAssistantLikeDriver]
         self.save_settings(
             {
                 "version": 2,
@@ -353,9 +645,9 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
                 "games": {},
             }
         )
-        await self.controller.get_state()
+        await self.client.get_state()
 
-        result = await self.controller.configure(
+        result = await self.client.configure(
             "ha_like", {"entity_id": "media_player.bedroom"}
         )
         settings = self.store.load()
@@ -376,7 +668,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
             async def status(self):
                 return Status(volume=55)
 
-        self.controller.registry = [LegacyDriver]
+        self.client.registry = [LegacyDriver]
         legacy_binding = {
             "driver": "legacy",
             "config_hash": "f8fca4025c3fcc1e8f60ecc7035093a33e21656184128c532f94dbd2753b7672",
@@ -403,7 +695,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        state = await self.controller.get_state()
+        state = await self.client.get_state()
         settings = self.store.load()
 
         self.assertEqual(state["cap"], 80)
@@ -442,7 +734,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        result = await self.controller.configure("auto", {"host": "receiver"})
+        result = await self.client.configure("auto", {"host": "receiver"})
 
         self.assertTrue(result["ok"])
         settings = self.store.load()
@@ -468,11 +760,11 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
                 config={"host": "new-receiver"},
             ),
         ]
-        state = await self.controller.get_state()
+        state = await self.client.get_state()
 
         self.assertTrue(state["ok"], state)
         self.assertEqual(self.store.load()["receiver"]["config"]["host"], "new-receiver")
-        self.assertEqual(state["cap"], MemoryDriver.scale.default_cap)
+        self.assertEqual(state["cap"], VolumePolicy.default_cap(MemoryDriver.scale))
 
     async def test_auto_configure_updates_receiver_id_after_concurrent_resolution(self):
         probe_started = asyncio.Event()
@@ -503,7 +795,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
                 )
 
         ConcurrentProbeDriver.probe_calls = 0
-        self.controller.registry = [ConcurrentProbeDriver]
+        self.client.registry = [ConcurrentProbeDriver]
         old_binding = {"driver": "concurrent_probe", "id": "OLD-ID"}
         self.save_settings(
             {
@@ -522,11 +814,11 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
             }
         )
         configuring = asyncio.create_task(
-            self.controller.configure("auto", {"host": "receiver"})
+            self.client.configure("auto", {"host": "receiver"})
         )
         await probe_started.wait()
 
-        state = await self.controller.get_state()
+        state = await self.client.get_state()
         release_probe.set()
         result = await configuring
 
@@ -552,7 +844,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
             async def set_volume(self, raw):
                 return raw
 
-        self.controller.registry = [MemoryDriver, PercentDriver]
+        self.client.registry = [MemoryDriver, PercentDriver]
         self.save_settings(
             {
                 "version": 2,
@@ -567,11 +859,11 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
                 "games": {},
             }
         )
-        await self.controller.set_max(50)
-        await self.controller.set_late_max(40)
-        await self.controller.set_late_night(True)
+        await self.client.set_max(50)
+        await self.client.set_late_max(40)
+        await self.client.set_late_night(True)
 
-        self.controller._last_found = [
+        MemoryDriver.discovered = [
             Found(
                 driver="memory",
                 model="Memory Receiver",
@@ -587,15 +879,16 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
                 config={"host": "receiver-b"},
             ),
         ]
-        await self.controller.select_receiver("receiver-b", "receiver-b-id")
-        state_b = await self.controller.get_state()
+        await self.client.discover()
+        await self.client.select_receiver("receiver-b", "receiver-b-id")
+        state_b = await self.client.get_state()
         self.assertEqual(state_b["cap"], 60)
         self.assertEqual(state_b["late_cap"], 20)
         self.assertFalse(state_b["late"])
 
-        await self.controller.select_receiver("receiver-a", "receiver-a-id")
-        state_a = await self.controller.get_state()
-        self.assertEqual(state_a["cap"], 100)
+        await self.client.select_receiver("receiver-a", "receiver-a-id")
+        state_a = await self.client.get_state()
+        self.assertEqual(state_a["cap"], 104)
         self.assertEqual(state_a["late_cap"], 64)
         self.assertFalse(state_a["late"])
 
@@ -603,28 +896,28 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         self.save_settings()
         MemoryDriver.state = Status(volume=None, muted=None, power=False, mode=None)
 
-        result = await self.controller.set_late_night(True)
+        result = await self.client.set_late_night(True)
 
         self.assertEqual(result, {"ok": False, "error": "Turn the receiver on first"})
         self.assertEqual(self.store.load()["late"], {"active": False})
 
     async def test_per_game_volume_mode_and_combined_opt_in(self):
         self.save_settings()
-        await self.controller.set_current_game(11, "Volume only")
-        self.assertTrue((await self.controller.set_game_remember("volume", True))["ok"])
+        await self.client.set_current_game(11, "Volume only")
+        self.assertTrue((await self.client.set_game_remember("volume", True))["ok"])
         profile = self.store.load()["games"]["11"]
         self.assertEqual(profile["volume"], 100)
         self.assertNotIn("mode", profile)
 
-        await self.controller.set_current_game(12, "Mode only")
-        self.assertTrue((await self.controller.set_game_remember("mode", True))["ok"])
+        await self.client.set_current_game(12, "Mode only")
+        self.assertTrue((await self.client.set_game_remember("mode", True))["ok"])
         profile = self.store.load()["games"]["12"]
         self.assertEqual(profile["mode"], "00")
         self.assertNotIn("volume", profile)
 
-        await self.controller.set_current_game(13, "Both")
-        await self.controller.set_game_remember("volume", True)
-        await self.controller.set_game_remember("mode", True)
+        await self.client.set_current_game(13, "Both")
+        await self.client.set_game_remember("volume", True)
+        await self.client.set_game_remember("mode", True)
         profile = self.store.load()["games"]["13"]
         self.assertEqual((profile["volume"], profile["mode"]), (100, "00"))
         self.assertEqual(profile["driver"], "memory")
@@ -643,7 +936,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        result = await self.controller.game_started(14, "Legacy profile")
+        result = await self.client.game_started(14, "Legacy profile")
 
         self.assertTrue(result["applied"])
         self.assertEqual(MemoryDriver.state.volume, 70)
@@ -682,7 +975,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        result = await self.controller.game_started(15, "Moved receiver profile")
+        result = await self.client.game_started(15, "Moved receiver profile")
 
         self.assertTrue(result["applied"], result)
         self.assertEqual(MemoryDriver.discovery_calls, 1)
@@ -715,11 +1008,11 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        result = await self.controller.game_started(16, "Unavailable profile")
+        result = await self.client.game_started(16, "Unavailable profile")
         self.assertFalse(result["applied"])
 
         MemoryDriver.fail_hosts = set()
-        await self.controller.get_state()
+        await self.client.get_state()
 
         self.assertEqual(self.store.load()["games"]["16"]["volume"], 70)
 
@@ -750,7 +1043,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
             async def set_volume(self, raw):
                 return raw
 
-        self.controller.registry = [OldReceiver, NewReceiver]
+        self.client.registry = [OldReceiver, NewReceiver]
         self.save_settings(
             {
                 "version": 2,
@@ -777,17 +1070,17 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
             }
         )
         applying_old_profile = asyncio.create_task(
-            self.controller.game_started(101, "Game A")
+            self.client.game_started(101, "Game A")
         )
         await status_started.wait()
 
-        await self.controller.configure("new", {"host": "receiver-b"})
-        await self.controller.set_current_game(202, "Game B")
+        await self.client.configure("new", {"host": "receiver-b"})
+        await self.client.set_current_game(202, "Game B")
         self.clock.value += 7
         release_status.set()
         await applying_old_profile
 
-        state = await self.controller.get_state()
+        state = await self.client.get_state()
 
         self.assertTrue(state["ok"], state)
         self.assertEqual(self.store.load()["games"]["202"]["volume"], 40)
@@ -821,7 +1114,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
 
         LearningDriver.status_calls = 0
         LearningDriver.sent_volumes = []
-        self.controller.registry = [LearningDriver]
+        self.client.registry = [LearningDriver]
         self.save_settings(
             {
                 "version": 2,
@@ -839,7 +1132,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        result = await self.controller.game_started(81, "Percent profile")
+        result = await self.client.game_started(81, "Percent profile")
 
         self.assertTrue(result["applied"])
         self.assertEqual(LearningDriver.sent_volumes, [70])
@@ -872,7 +1165,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
 
         LearningDriver.status_calls = 0
         LearningDriver.sent_modes = []
-        self.controller.registry = [LearningDriver]
+        self.client.registry = [LearningDriver]
         self.save_settings(
             {
                 "version": 2,
@@ -890,7 +1183,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        result = await self.controller.game_started(82, "Mode profile")
+        result = await self.client.game_started(82, "Mode profile")
 
         self.assertTrue(result["applied"])
         self.assertEqual(LearningDriver.sent_modes, ["Movie"])
@@ -906,7 +1199,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
             async def status(self):
                 return Status(volume=40)
 
-        self.controller.registry = [NoModeDriver]
+        self.client.registry = [NoModeDriver]
         self.save_settings(
             {
                 "version": 2,
@@ -924,7 +1217,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        result = await self.controller.game_started(
+        result = await self.client.game_started(
             83, "Unsupported mode profile"
         )
 
@@ -948,10 +1241,10 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
                 },
             }
         )
-        await self.controller.set_current_game(21, "Remembered")
+        await self.client.set_current_game(21, "Remembered")
         MemoryDriver.state.volume = 85
         MemoryDriver.state.mode = "11"
-        await self.controller.get_state()
+        await self.client.get_state()
         profile = self.store.load()["games"]["21"]
         self.assertEqual((profile["volume"], profile["mode"]), (85, "11"))
 
@@ -959,7 +1252,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         data["late"] = {"active": True, "prev_volume": 85}
         self.store.save(data)
         MemoryDriver.state.volume = 60
-        await self.controller.get_state()
+        await self.client.get_state()
         self.assertEqual(self.store.load()["games"]["21"]["volume"], 85)
 
     async def test_six_second_suppression_and_driver_mismatch_skip_both_settings(self):
@@ -980,27 +1273,27 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
                 },
             }
         )
-        await self.controller.game_started(22, "Suppressed")
+        await self.client.game_started(22, "Suppressed")
         await asyncio.sleep(0)
         self.assertEqual(MemoryDriver.state.volume, 60)
         MemoryDriver.state.volume = 80
         MemoryDriver.state.mode = "00"
-        await self.controller.get_state()
+        await self.client.get_state()
         profile = self.store.load()["games"]["22"]
         self.assertEqual((profile["volume"], profile["mode"]), (60, "11"))
         self.clock.value += 6
-        await self.controller.get_state()
+        await self.client.get_state()
         profile = self.store.load()["games"]["22"]
         self.assertEqual((profile["volume"], profile["mode"]), (80, "00"))
 
-        await self.controller.game_stopped(22)
+        await self.client.game_stopped(22)
         data = self.store.load()
         data["games"]["22"]["driver"] = "other-driver"
         data["games"]["22"]["volume"] = 40
         data["games"]["22"]["mode"] = "FF"
         self.store.save(data)
         MemoryDriver.actions.clear()
-        result = await self.controller.game_started(22, "Suppressed")
+        result = await self.client.game_started(22, "Suppressed")
         self.assertEqual(result, {"applied": False})
         self.assertEqual(MemoryDriver.actions, [])
 
@@ -1019,7 +1312,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
                 config={"host": "new"},
             )
         ]
-        state = await self.controller.get_state()
+        state = await self.client.get_state()
         self.assertTrue(state["ok"])
         self.assertEqual(self.store.load()["receiver"]["config"]["host"], "new")
         self.assertEqual(MemoryDriver.discovery_calls, 1)
@@ -1027,14 +1320,13 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         data = self.store.load()
         data["receiver"]["config"]["host"] = "old"
         self.store.save(data)
-        self.controller._active_driver = None
         self.clock.value += 5
-        state = await self.controller.get_state()
+        state = await self.client.get_state()
         self.assertFalse(state["ok"])
         self.assertEqual(MemoryDriver.discovery_calls, 1)
 
         self.clock.value += 30
-        state = await self.controller.get_state()
+        state = await self.client.get_state()
         self.assertTrue(state["ok"])
         self.assertEqual(MemoryDriver.discovery_calls, 2)
 
@@ -1049,7 +1341,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
                 cls.discovery_calls += 1
                 return list(cls.discovered)
 
-        self.controller.registry = [UnresolvedMemoryDriver]
+        self.client.registry = [UnresolvedMemoryDriver]
         self.save_settings(
             {
                 "version": 2,
@@ -1075,7 +1367,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
             )
         ]
 
-        state = await self.controller.get_state()
+        state = await self.client.get_state()
 
         self.assertTrue(state["ok"])
         self.assertEqual(self.store.load()["receiver"]["config"]["host"], "new")
@@ -1088,25 +1380,25 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
             async def set_mode(self, code):
                 raise self.error_to_raise
 
-        self.controller.registry = [NonConnectivityMemoryDriver]
+        self.client.registry = [NonConnectivityMemoryDriver]
         self.save_settings()
         for error in (Refused("mode unavailable"), Unsupported("not supported")):
             with self.subTest(error=type(error).__name__):
                 NonConnectivityMemoryDriver.error_to_raise = error
-                result = await self.controller.set_mode("80")
+                result = await self.client.set_mode("80")
                 self.assertFalse(result["ok"])
                 self.assertEqual(NonConnectivityMemoryDriver.discovery_calls, 0)
 
-    async def test_mode_codes_are_opaque_to_the_controller(self):
+    async def test_mode_codes_remain_opaque_to_the_application(self):
         class OpaqueModeDriver(MemoryDriver):
             async def set_mode(self, code):
                 self.actions.append(("mode", code))
                 return code
 
-        self.controller.registry = [OpaqueModeDriver]
+        self.client.registry = [OpaqueModeDriver]
         self.save_settings()
 
-        result = await self.controller.set_mode("  stereoX  ")
+        result = await self.client.set_mode("  stereoX  ")
 
         self.assertEqual(result["code"], "stereoX")
         self.assertEqual(OpaqueModeDriver.actions[-1], ("mode", "stereoX"))
@@ -1133,7 +1425,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
             async def set_mode(self, code):
                 return "00"
 
-        self.controller.registry = [ObservedDriver]
+        self.client.registry = [ObservedDriver]
         self.save_settings(
             {
                 "version": 2,
@@ -1149,19 +1441,19 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(
-            await self.controller.set_volume(70),
+            await self.client.set_volume(70),
             {"ok": True, "volume": 40, "confirmed": False},
         )
         self.assertEqual(
-            await self.controller.set_mute(True),
+            await self.client.set_mute(True),
             {"ok": True, "muted": False, "confirmed": False},
         )
         self.assertEqual(
-            await self.controller.set_power(False),
+            await self.client.set_power(False),
             {"ok": True, "power": True, "confirmed": False},
         )
         self.assertEqual(
-            await self.controller.set_mode("11"),
+            await self.client.set_mode("11"),
             {
                 "ok": True,
                 "mode": "Mode 00",
@@ -1170,11 +1462,11 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
             },
         )
         self.assertEqual(
-            await self.controller.set_volume(40), {"ok": True, "volume": 40}
+            await self.client.set_volume(40), {"ok": True, "volume": 40}
         )
-        await self.controller.set_max(30)
+        await self.client.set_max(30)
         self.assertEqual(
-            await self.controller.set_volume(70),
+            await self.client.set_volume(70),
             {"ok": True, "volume": 30, "confirmed": False},
         )
 
@@ -1183,7 +1475,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         data = self.store.load()
         data["receiver"]["id"] = "old-id"
         self.store.save(data)
-        result = await self.controller.configure("auto", {"host": "manual-host"})
+        result = await self.client.configure("auto", {"host": "manual-host"})
         self.assertTrue(result["ok"])
         self.assertEqual(MemoryDriver.probe_calls[-1]["host"], "manual-host")
         settings = self.store.load()
@@ -1195,13 +1487,13 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
             async def status(self):
                 return Status(volume=40, muted=False, power=True)
 
-        self.controller.registry = [LocalTelnetDriver]
-        result = await self.controller.configure(
+        self.client.registry = [LocalTelnetDriver]
+        result = await self.client.configure(
             "pioneer_telnet", {"host": "receiver"}
         )
         self.assertTrue(result["ok"])
 
-        state = await self.controller.get_state()
+        state = await self.client.get_state()
 
         self.assertTrue(state["ok"], state)
         self.assertEqual(state["driver"], "pioneer_telnet")
@@ -1216,8 +1508,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
             PioneerTelnetDriver,
         ):
             with self.subTest(driver=driver_class.key):
-                self.controller.registry = [driver_class]
-                self.controller._active_driver = None
+                self.client.registry = [driver_class]
                 self.save_settings(
                     {
                         "version": 2,
@@ -1231,17 +1522,14 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
                         "games": {},
                     }
                 )
-                generation = self.controller._receiver_generation
-
-                driver = await self.controller._get_driver()
+                await self.application.snapshot()
 
                 self.assertIn("port", self.store.load()["receiver"]["config"])
-                self.assertEqual(self.controller._receiver_generation, generation)
                 legacy = self.store.load()
                 legacy["receiver"]["config"] = {"host": "receiver"}
                 self.store.save(legacy)
-                self.assertIs(await self.controller._get_driver(), driver)
-                self.assertEqual(self.controller._receiver_generation, generation)
+                await self.application.snapshot()
+                self.assertIn("port", self.store.load()["receiver"]["config"])
 
     async def test_discover_returns_driver_metadata_and_selection_remembers_driver(self):
         self.save_settings()
@@ -1254,10 +1542,10 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
                 config={"host": "192.0.2.2", "port": 23},
             )
         ]
-        found = await self.controller.discover()
+        found = await self.client.discover()
         self.assertEqual(found[0]["driver"], "memory")
         self.assertEqual(found[0]["label"], "Memory Receiver")
-        await self.controller.select_receiver("192.0.2.2", "abc")
+        await self.client.select_receiver("192.0.2.2", "abc")
         self.assertEqual(self.store.load()["receiver"]["driver"], "memory")
         self.assertEqual(self.store.load()["receiver"]["config"]["port"], 23)
 
@@ -1269,7 +1557,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         )
         self.store.save(data)
 
-        result = await self.controller.configure("memory", {"host": "new-host"})
+        result = await self.client.configure("memory", {"host": "new-host"})
 
         self.assertTrue(result["ok"])
         config = self.store.load()["receiver"]["config"]
@@ -1281,44 +1569,47 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         second = FakeHomeAssistant()
         second.attributes["volume_level"] = 0.73
         second_port = second.start()
-        controller = Controller(self.repository, registry=[HomeAssistantDriver])
+        client = ApplicationClient(
+            ControlApplication(self.repository, registry=[HomeAssistantDriver]),
+            self.repository,
+        )
         config = {
             "url": f"http://127.0.0.1:{first_port}",
             "token": TOKEN,
             "entity_id": ENTITY_ID,
         }
         try:
-            missing = await controller.configure(
+            missing = await client.configure(
                 "homeassistant",
                 {"url": config["url"], "entity_id": ENTITY_ID},
             )
             self.assertFalse(missing["ok"])
             self.assertIn("Long-lived access token", missing["error"])
-            missing_auto_host = await controller.configure("auto", {})
+            missing_auto_host = await client.configure("auto", {})
             self.assertEqual(
                 missing_auto_host,
                 {"ok": False, "error": "Enter the receiver IP address"},
             )
 
-            result = await controller.configure("homeassistant", config)
+            result = await client.configure("homeassistant", config)
             self.assertTrue(result["ok"])
-            state = await controller.get_state()
+            state = await client.get_state()
             self.assertTrue(state["ok"])
             self.assertEqual(state["volume"], 42)
 
-            result = await controller.configure(
+            result = await client.configure(
                 "homeassistant",
                 {**config, "token": ""},
             )
             self.assertTrue(result["ok"])
-            state = await controller.get_state()
+            state = await client.get_state()
             self.assertTrue(state["ok"])
             self.assertEqual(self.store.load()["receiver"]["config"]["token"], TOKEN)
 
             data = self.store.load()
             data["receiver"]["config"]["url"] = f"http://127.0.0.1:{second_port}"
             self.store.save(data)
-            state = await controller.get_state()
+            state = await client.get_state()
             self.assertTrue(state["ok"])
             self.assertEqual(state["volume"], 73)
         finally:
@@ -1339,9 +1630,9 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
                 await release.wait()
                 return await super().set_mute(muted)
 
-        self.controller.registry = [BlockingMemoryDriver]
+        self.client.registry = [BlockingMemoryDriver]
         self.save_settings()
-        command = asyncio.create_task(self.controller.set_mute(True))
+        command = asyncio.create_task(self.client.set_mute(True))
         await started.wait()
 
         BlockingMemoryDriver.discovered = [
@@ -1353,8 +1644,8 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
                 config={"host": "receiver-b"},
             )
         ]
-        await self.controller.discover()
-        await self.controller.select_receiver("receiver-b", "new-id")
+        await self.client.discover()
+        await self.client.select_receiver("receiver-b", "new-id")
         release.set()
 
         result = await command
@@ -1388,7 +1679,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
             async def status(self):
                 return Status(volume=15)
 
-        self.controller.registry = [OldDriver, NewDriver]
+        self.client.registry = [OldDriver, NewDriver]
         self.save_settings(
             {
                 "version": 2,
@@ -1405,20 +1696,11 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
                 },
             }
         )
-        await self.controller.set_current_game(91, "New receiver profile")
-        lookup = asyncio.create_task(self.controller.get_state())
+        await self.client.set_current_game(91, "New receiver profile")
+        lookup = asyncio.create_task(self.client.get_state())
         await started.wait()
 
-        self.controller._last_found = [
-            Found(
-                driver="new",
-                model="New Receiver",
-                id="new-id",
-                host="receiver-b",
-                config={"host": "receiver-b"},
-            )
-        ]
-        await self.controller.select_receiver("receiver-b", "new-id")
+        await self.client.configure("new", {"host": "receiver-b"})
         release.set()
         await lookup
 
@@ -1438,6 +1720,10 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
                 return Status(volume=10)
 
             @classmethod
+            async def discover(cls, timeout):
+                return list(cls.discovered)
+
+            @classmethod
             async def probe(cls, config):
                 started.set()
                 await release.wait()
@@ -1449,9 +1735,9 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
                     config=dict(config),
                 )
 
-        self.controller.registry = [ProbeDriver]
+        self.client.registry = [ProbeDriver]
         self.save_settings()
-        self.controller._last_found = [
+        ProbeDriver.discovered = [
             Found(
                 driver="probe",
                 model="Probe Receiver",
@@ -1460,12 +1746,13 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
                 config={"host": "receiver-b"},
             )
         ]
+        await self.client.discover()
         probing = asyncio.create_task(
-            self.controller.configure("auto", {"host": "receiver-a"})
+            self.client.configure("auto", {"host": "receiver-a"})
         )
         await started.wait()
 
-        await self.controller.select_receiver("receiver-b", "receiver-b-id")
+        await self.client.select_receiver("receiver-b", "receiver-b-id")
         release.set()
         await probing
 
@@ -1514,7 +1801,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
                 )
 
         ConcurrentProbeDriver.probe_calls = 0
-        self.controller.registry = [ConcurrentProbeDriver]
+        self.client.registry = [ConcurrentProbeDriver]
         self.save_settings(
             {
                 "version": 2,
@@ -1526,11 +1813,11 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
             }
         )
         configuring = asyncio.create_task(
-            self.controller.configure("auto", {"host": "receiver"})
+            self.client.configure("auto", {"host": "receiver"})
         )
         await configure_probe_started.wait()
 
-        state = await self.controller.get_state()
+        state = await self.client.get_state()
         release_configure_probe.set()
         result = await configuring
 
@@ -1572,8 +1859,8 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
             delay_started.set()
             await release_delay.wait()
 
-        self.controller.registry = [ProfileDriver, NewReceiverDriver]
-        self.controller.sleep = hold_reapply
+        self.client.registry = [ProfileDriver, NewReceiverDriver]
+        self.client.sleep = hold_reapply
         self.save_settings(
             {
                 "version": 2,
@@ -1591,19 +1878,12 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        result = await self.controller.game_started(92, "Mode profile")
+        result = await self.client.game_started(92, "Mode profile")
         self.assertTrue(result["applied"])
         await delay_started.wait()
-        self.controller._last_found = [
-            Found(
-                driver="denon_fake",
-                model="Denon Receiver",
-                id="denon-id",
-                host="receiver-b",
-                config={"host": "receiver-b"},
-            )
-        ]
-        await self.controller.select_receiver("receiver-b", "denon-id")
+        await self.client.configure(
+            "denon_fake", {"host": "receiver-b"}
+        )
         release_delay.set()
         await asyncio.sleep(0.02)
 
@@ -1619,7 +1899,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
             original_save(data)
 
         self.store.save = track_save
-        await self.controller.set_mute(True)
+        await self.client.set_mute(True)
 
         self.assertEqual(writes, [])
 
@@ -1636,12 +1916,15 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         }
         self.store.save(data)
 
-        profiles = await self.controller.list_games()
+        profiles = await self.client.list_games()
 
         self.assertEqual(profiles[0]["driver"], "memory")
 
     async def test_connection_summary_supports_home_assistant_without_exposing_token(self):
-        controller = Controller(self.repository, registry=[HomeAssistantDriver])
+        client = ApplicationClient(
+            ControlApplication(self.repository, registry=[HomeAssistantDriver]),
+            self.repository,
+        )
         self.store.save(
             {
                 "version": 2,
@@ -1657,7 +1940,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        connection = await controller.get_connection()
+        connection = await client.get_connection()
 
         self.assertEqual(
             connection,
@@ -1678,23 +1961,23 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(fake.close)
         for player in fake.players:
             player.pop("ip")
-        self.controller.registry = [HeosDriver]
+        self.client.registry = [HeosDriver]
         heos = {"host": "127.0.0.1", "port": port}
 
-        await self.controller.configure("heos", {**heos, "player": "Living Room"})
-        await self.controller.set_max(100)
-        await self.controller.set_volume(85)
-        await self.controller.set_late_max(40)
-        self.assertTrue((await self.controller.set_late_night(True))["ok"])
+        await self.client.configure("heos", {**heos, "player": "Living Room"})
+        await self.client.set_max(100)
+        await self.client.set_volume(85)
+        await self.client.set_late_max(40)
+        self.assertTrue((await self.client.set_late_night(True))["ok"])
         self.assertEqual(fake.players[0]["level"], 40)
 
-        result = await self.controller.configure("heos", {**heos, "player": "Kitchen"})
-        state = await self.controller.get_state()
+        result = await self.client.configure("heos", {**heos, "player": "Kitchen"})
+        state = await self.client.get_state()
         self.assertTrue(result["ok"])
         self.assertFalse(state["late"])
         self.assertEqual(state["cap"], 60)
 
-        self.assertTrue((await self.controller.set_late_night(False))["ok"])
+        self.assertTrue((await self.client.set_late_night(False))["ok"])
         self.assertEqual(fake.players[1]["level"], 58)
         self.assertEqual(fake.players[0]["level"], 40)
 
@@ -1704,17 +1987,17 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(fake.close)
         for player in fake.players:
             player.pop("ip")
-        self.controller.registry = [HeosDriver]
+        self.client.registry = [HeosDriver]
         heos = {"host": "127.0.0.1", "port": port}
-        await self.controller.configure("heos", {**heos, "player": "Living Room"})
+        await self.client.configure("heos", {**heos, "player": "Living Room"})
         settings = self.store.load()
         settings["receiver"]["config"].update(
             {"serial": "HEOS-101", "serial_for": "living room"}
         )
         self.store.save(settings)
 
-        await self.controller.configure("heos", {**heos, "player": "Kitchen"})
-        result = await self.controller.set_volume(50)
+        await self.client.configure("heos", {**heos, "player": "Kitchen"})
+        result = await self.client.set_volume(50)
 
         self.assertTrue(result["ok"])
         self.assertEqual(fake.players[1]["level"], 50)
