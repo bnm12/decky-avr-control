@@ -63,6 +63,7 @@ type ConfigField = {
 };
 type DriverOption = { key: string; label: string; fields: ConfigField[] };
 type Result = { ok: boolean; error?: string };
+type CommandResult<T> = Result & { confirmed?: boolean } & T;
 type Connection = {
   configured: boolean;
   driver: string | null;
@@ -72,13 +73,16 @@ type Connection = {
 };
 
 const getState = callable<[], State>("get_state");
-const setVolume = callable<[number], State>("set_volume");
-const setMute = callable<[boolean], Result>("set_mute");
+const setVolume = callable<[number], CommandResult<{ volume?: number | null }>>("set_volume");
+const setMute = callable<[boolean], CommandResult<{ muted?: boolean | null }>>("set_mute");
 const getConnection = callable<[], Connection>("get_connection");
 const setMax = callable<[number], void>("set_max");
 const setLateMax = callable<[number], void>("set_late_max");
-const setMode = callable<[string], Result>("set_mode");
-const setPower = callable<[boolean], Result>("set_power");
+const setMode = callable<
+  [string],
+  CommandResult<{ mode?: string | null; code?: string | null }>
+>("set_mode");
+const setPower = callable<[boolean], CommandResult<{ power?: boolean | null }>>("set_power");
 const setLateNight = callable<[boolean], Result>("set_late_night");
 const discover = callable<[], Receiver[]>("discover");
 const selectReceiver = callable<[string, string], void>("select_receiver");
@@ -159,12 +163,17 @@ function Content() {
   const [found, setFound] = useState<Receiver[]>([]);
   const [searching, setSearching] = useState(false);
   const [saving, setSaving] = useState(false);
+  const commandNotAppliedNote = "The receiver didn't apply that change";
   const timer = useRef<number | undefined>(undefined);
   const lastLocal = useRef(0); // time of the last change made in this panel
   const selectionGeneration = useRef(0);
   const switchingReceiver = useRef(false);
   const connectionRef = useRef<Connection | null>(null);
 
+  const updateCommandNote = (confirmed?: boolean) => {
+    if (confirmed === false) setNote(commandNotAppliedNote);
+    else setNote((current) => current === commandNotAppliedNote ? null : current);
+  };
   const isCurrent = (generation: number) =>
     generation === selectionGeneration.current;
   const updateConnection = (value: Connection) => {
@@ -319,8 +328,12 @@ function Content() {
       const r = await setVolume(v);
       if (!isCurrent(generation)) return;
       lastLocal.current = Date.now();
-      if (!r.ok) setErr(r.error ?? "Unknown error");
-      else setErr(null);
+      if (r.volume !== undefined) setVol(r.volume);
+      updateCommandNote(r.confirmed);
+      if (!r.ok) {
+        setErr(r.error ?? "Unknown error");
+        if (r.volume === undefined) await refresh(false, generation);
+      } else setErr(null);
     }, 150);
   };
 
@@ -457,9 +470,12 @@ function Content() {
                 if (!isCurrent(generation) || switchingReceiver.current) return;
                 const result = await setPower(on);
                 if (!isCurrent(generation)) return;
+                lastLocal.current = Date.now();
+                if (result.power !== undefined) setPowerState(result.power);
+                updateCommandNote(result.confirmed);
                 if (!result.ok) {
                   setErr(result.error ?? "Unknown error");
-                  await refresh(false, generation);
+                  if (result.power === undefined) await refresh(false, generation);
                 } else {
                   setErr(null);
                 }
@@ -499,9 +515,12 @@ function Content() {
                 if (!isCurrent(generation) || switchingReceiver.current) return;
                 const r = await setMute(c);
                 if (!isCurrent(generation)) return;
+                lastLocal.current = Date.now();
+                if (r.muted !== undefined) setMuted(r.muted);
+                updateCommandNote(r.confirmed);
                 if (!r.ok) {
                   setErr(r.error ?? "Unknown error");
-                  await refresh(false, generation);
+                  if (r.muted === undefined) await refresh(false, generation);
                 } else setErr(null);
               }}
             />
@@ -551,10 +570,26 @@ function Content() {
                 if (!isCurrent(generation) || switchingReceiver.current) return;
                 const r = await setMode(opt.data);
                 if (!isCurrent(generation)) return;
+                if (r.code !== undefined) {
+                  setModeCode(r.code);
+                } else if (r.mode !== undefined) {
+                  const observedMode = modes.find(
+                    (item) => item.name === r.mode || item.code === r.mode,
+                  );
+                  setModeCode(r.mode === null ? null : observedMode?.code ?? r.mode);
+                }
+                if (r.mode !== undefined) setModeLabel(r.mode);
+                else if (r.code) {
+                  const observedMode = modes.find((item) => item.code === r.code);
+                  if (observedMode) setModeLabel(observedMode.name);
+                }
+                updateCommandNote(r.confirmed);
                 if (!r.ok) setErr(r.error ?? "Unknown error");
                 else setErr(null);
                 lastLocal.current = Date.now();
-                if (!r.ok) await refresh(false, generation); // snap back to the real mode
+                if (!r.ok && r.code === undefined && r.mode === undefined) {
+                  await refresh(false, generation); // snap back to the real mode
+                }
               }}
             />
           </PanelSectionRow>
