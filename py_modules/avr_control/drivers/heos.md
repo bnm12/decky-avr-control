@@ -57,6 +57,10 @@ Raw range 0–100, one-unit steps, displayed as percent [spec, 1, p. 13]. Zero i
 
 Not supported. HEOS playback/group functions are not AVR surround listening modes [assumed].
 
+`mode_state()` returns `current=None`, no selectable modes, and `complete=false`
+without I/O [assumed]. The base `Mode {code}` label is used for any saved
+unknown code [assumed].
+
 ## Quirks and gotchas
 
 - HEOS volume is the HEOS player's volume. On a Denon/Marantz AVR with HEOS built in, this is **not necessarily the AVR's main-zone master volume** [assumed; not verified on hardware]. Use the Denon driver for AVR master-volume control.

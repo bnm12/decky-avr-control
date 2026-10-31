@@ -42,6 +42,10 @@
 
 [assumed] This driver does not expose listening modes. Whether legacy receivers offer a compatible query/set pair is unknown.
 
+`mode_state()` returns no current or selectable modes with `complete=false`
+without contacting the receiver [assumed]. Unknown display codes use the base
+`Mode {code}` fallback [assumed].
+
 ## Quirks and gotchas
 
 - [community] Power flags are inverted relative to their apparent boolean values: `PWR0` means on and `PWR2` means standby; [assumed] `PWR1` is also accepted as off.

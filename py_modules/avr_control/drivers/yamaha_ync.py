@@ -22,6 +22,7 @@ from .base import (
     DriverError,
     Found,
     Mode,
+    ModeState,
     Refused,
     Status,
     VolumeScale,
@@ -349,6 +350,7 @@ class YamahaYNCDriver(Driver):
         super().__init__(config)
         self._scale = self._make_scale(194)
         self._modes: list[Mode] | None = None
+        self._modes_complete = False
         self._config_loaded = False
         self._config_lock = asyncio.Lock()
 
@@ -422,6 +424,7 @@ class YamahaYNCDriver(Driver):
                     maximum = _configured_volume_max(zone_config)
                     if maximum is not None:
                         self._scale = self._make_scale(maximum)
+            self._modes_complete = bool(modes)
             self._modes = modes or [Mode(*entry) for entry in _COMMON_PROGRAMS]
             self._config_loaded = True
 
@@ -523,7 +526,19 @@ class YamahaYNCDriver(Driver):
         await self._ensure_config()
         return list(self._modes or [])
 
-    def mode_name(self, code: str) -> str:
+    async def mode_state(self, status: Status | None = None) -> ModeState:
+        current_status = status if status is not None else await self.status()
+        if current_status.power is False:
+            return ModeState(None, (), complete=False)
+        await self._ensure_config()
+        return ModeState(
+            current_status.mode,
+            tuple(self._modes or ()),
+            complete=self._modes_complete,
+        )
+
+    @classmethod
+    def mode_label(cls, code: str) -> str:
         if code.casefold() == "straight":
             return "Straight"
         return code.replace("_", " ").replace("-", " ").title()

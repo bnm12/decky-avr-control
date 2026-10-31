@@ -9,7 +9,17 @@ from typing import ClassVar
 from urllib.parse import parse_qs, urlencode
 
 from .. import ssdp
-from .base import MUTE, VOLUME, ConfigField, Driver, DriverError, Found, Status, VolumeScale
+from .base import (
+    MUTE,
+    VOLUME,
+    ConfigField,
+    Driver,
+    DriverError,
+    Found,
+    ModeState,
+    Status,
+    VolumeScale,
+)
 from .receiver_session import ReceiverSessionError, shared_session
 
 HEOS_PORT = 1255
@@ -283,6 +293,13 @@ class HeosDriver(Driver):
             return Status(volume=volume, muted=muted)
 
         return await self._transaction(read)
+
+    async def mode_state(self, status: Status | None = None) -> ModeState:
+        return ModeState(None, (), complete=False)
+
+    @classmethod
+    def mode_label(cls, code: str) -> str:
+        return f"Mode {code}"
 
     async def set_volume(self, raw: int) -> int:
         try:

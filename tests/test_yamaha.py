@@ -16,6 +16,7 @@ from avr_control.drivers.base import (
     MUTE,
     POWER,
     VOLUME,
+    ModeState,
     Refused,
     Unsupported,
 )
@@ -235,7 +236,7 @@ class YamahaDriverTests(unittest.IsolatedAsyncioTestCase):
                 ("hall_in_munich", "Hall in Munich"),
             ],
         )
-        self.assertEqual(self.driver.mode_name("unknown_mode"), "Unknown Mode")
+        self.assertEqual(YamahaDriver.mode_label("unknown_mode"), "Unknown Mode")
 
         self.assertEqual(await self.driver.set_volume(120), 120)
         self.assertTrue(await self.driver.set_mute(True))
@@ -269,6 +270,34 @@ class YamahaDriverTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(await driver.set_volume(120), 120)
 
+    async def test_mode_state_reports_device_list_and_keeps_unknown_current_separate(self):
+        status = await self.driver.status()
+        state = await self.driver.mode_state(status)
+        self.assertEqual(state.current, "straight")
+        self.assertTrue(state.complete)
+
+        self.fake.sound_program = "receiver_only_program"
+        status = await self.driver.status()
+        state = await self.driver.mode_state(status)
+        self.assertEqual(state.current, "receiver_only_program")
+        self.assertNotIn(
+            "receiver_only_program", [mode.code for mode in state.selectable]
+        )
+        self.assertTrue(state.complete)
+
+        async def unexpected_status():
+            raise AssertionError("mode_state must reuse the supplied status")
+
+        self.driver.status = unexpected_status
+        self.assertEqual(
+            (await self.driver.mode_state(status)).current,
+            "receiver_only_program",
+        )
+
+    def test_mode_labels_do_not_require_a_configured_receiver(self):
+        self.assertEqual(YamahaDriver.mode_label("straight"), "Straight")
+        self.assertEqual(YamahaDriver.mode_label("unknown_mode"), "Unknown Mode")
+
     async def test_percent_scale_without_actual_volume_and_response_errors(self):
         self.fake.actual_volume = False
         self.fake.raw_max = 100
@@ -282,14 +311,20 @@ class YamahaDriverTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(Refused, "response_code 5: Guarded"):
             await driver.set_mode("guarded")
+        self.assertEqual(self.fake.sound_program, "straight")
         with self.assertRaisesRegex(Refused, "response_code 4: Invalid Parameter"):
             await driver.set_mode("invalid")
+        self.assertEqual(self.fake.sound_program, "straight")
 
     async def test_common_scale_fallback_and_standby(self):
         self.fake.actual_volume = False
         self.fake.power = "standby"
         status = await self.driver.status()
         self.assertFalse(status.power)
+        self.assertEqual(
+            await self.driver.mode_state(status),
+            ModeState(None, (), complete=False),
+        )
         self.assertEqual(self.driver.scale.unit, "dB")
         self.assertEqual(self.driver.scale.zero, 161)
         self.assertEqual(self.driver.scale.steps_per_unit, 2)

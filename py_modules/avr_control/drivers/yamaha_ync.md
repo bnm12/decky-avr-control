@@ -53,6 +53,13 @@ Content-Type: text/xml; charset=utf-8
 
 [community][1][2] The driver tries `System/Config` and then `Main_Zone/Config` for a `Sound_Program` list and uses it when available; the set varies by model. [assumed] If neither query provides a list, it offers a common Yamaha set including Straight, stereo modes, surround decoder, cinema programs, and concert-hall programs. `Straight` is a distinct mode code. Mode codes are passed through to the receiver unchanged.
 
+`ModeState.complete` is `true` only when a sound-program list was read from one
+of those receiver configuration responses [community][1][2]. The fallback
+common Yamaha set is incomplete (`false`) [assumed]. A current program absent
+from the offered list remains visible but is not added to selectable modes;
+standby returns no current or selectable modes [assumed]. Labels are
+prettified from the code without a configured receiver [assumed].
+
 ## Quirks and gotchas
 
 - [community][1][2] The XML remote-control protocol is not Yamaha YXC/MusicCast's HTTP/JSON API.

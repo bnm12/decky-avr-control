@@ -8,7 +8,15 @@ from urllib.parse import unquote, urlsplit
 
 from tests import PY_MODULES  # noqa: F401
 from avr_control import ssdp
-from avr_control.drivers.base import MODE, MUTE, POWER, VOLUME, DriverError, Refused
+from avr_control.drivers.base import (
+    MODE,
+    MUTE,
+    POWER,
+    VOLUME,
+    DriverError,
+    ModeState,
+    Refused,
+)
 from avr_control.drivers.denon import DenonDriver
 
 
@@ -509,9 +517,32 @@ class DenonDriverTests(unittest.IsolatedAsyncioTestCase):
         self.fake.refused_mode = True
         with self.assertRaisesRegex(Refused, "didn't accept"):
             await self.driver.set_mode("DIRECT")
-        self.assertEqual(self.driver.mode_name("DOLBY D+ +DSUR"), "Dolby D+ +Dsur")
+        self.assertEqual(self.fake.mode, "STEREO")
+        self.assertEqual(
+            DenonDriver.mode_label("DOLBY D+ +DSUR"), "Dolby D+ +Dsur"
+        )
+        self.assertEqual(DenonDriver.mode_label("stereo"), "Stereo")
         modes = await self.driver.list_modes()
         self.assertIn(("PURE DIRECT", "Pure Direct"), [(m.code, m.name) for m in modes])
+
+    async def test_mode_state_keeps_unknown_current_out_of_static_modes(self):
+        self.fake.mode = "CUSTOM MODE"
+        status = await self.driver.status()
+        state = await self.driver.mode_state(status)
+        self.assertEqual(state.current, "CUSTOM MODE")
+        self.assertNotIn("CUSTOM MODE", [mode.code for mode in state.selectable])
+        self.assertFalse(state.complete)
+
+        self.fake.power = False
+        state = await self.driver.mode_state(await self.driver.status())
+        self.assertEqual(state, ModeState(None, (), complete=False))
+
+        async def unexpected_status():
+            raise AssertionError("mode_state must reuse the supplied status")
+
+        self.driver.status = unexpected_status
+        state = await self.driver.mode_state(status)
+        self.assertEqual(state.current, "CUSTOM MODE")
 
     async def test_probe_accepts_denon_and_rejects_refused_or_wrong_protocol(self):
         found = await DenonDriver.probe(self.config)
@@ -610,7 +641,7 @@ class DenonDriverTests(unittest.IsolatedAsyncioTestCase):
                 self.fake.mode = reported
                 status = await self.driver.status()
                 self.assertEqual(status.mode, canonical)
-                self.assertEqual(self.driver.mode_name(status.mode), name)
+                self.assertEqual(DenonDriver.mode_label(status.mode), name)
 
         self.assertEqual(await self.driver.set_mode("DOLBY DIGITAL"), "DOLBY DIGITAL")
         self.assertIn("MSDOLBY DIGITAL", self.fake.commands)

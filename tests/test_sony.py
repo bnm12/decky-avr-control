@@ -16,6 +16,7 @@ from avr_control.drivers.base import (
     POWER,
     VOLUME,
     DriverError,
+    ModeState,
     Refused,
     Unsupported,
 )
@@ -213,6 +214,33 @@ class SonyDriverTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(volume_request["params"], [{"output": ""}])
         self.assertEqual(volume_request["version"], "1.1")
 
+    async def test_mode_state_uses_sound_field_candidates_and_keeps_current_separate(self):
+        status = await self.driver.status()
+        state = await self.driver.mode_state(status)
+        self.assertEqual(state.current, "stereo")
+        self.assertEqual([mode.code for mode in state.selectable], ["stereo", "movie"])
+        self.assertTrue(state.complete)
+
+        self.fake.sound_field = "custom_field"
+        status = await self.driver.status()
+        state = await self.driver.mode_state(status)
+        self.assertEqual(state.current, "custom_field")
+        self.assertNotIn("custom_field", [mode.code for mode in state.selectable])
+        self.assertTrue(state.complete)
+
+        async def unexpected_status():
+            raise AssertionError("mode_state must reuse the supplied status")
+
+        self.driver.status = unexpected_status
+        self.assertEqual(
+            (await self.driver.mode_state(status)).current,
+            "custom_field",
+        )
+
+    def test_mode_labels_do_not_require_a_configured_receiver(self):
+        self.assertEqual(SonyDriver.mode_label("movie"), "Movie")
+        self.assertEqual(SonyDriver.mode_label("custom_field"), "Custom Field")
+
     async def test_percent_scale_requires_exact_zero_to_100_range(self):
         self.fake.minimum = 0
         self.fake.maximum = 100
@@ -263,6 +291,9 @@ class SonyDriverTests(unittest.IsolatedAsyncioTestCase):
             (False, None, None, None),
         )
         self.assertFalse(any(path == "/sony/audio" for path, _ in self.fake.requests))
+        state = await self.driver.mode_state(status)
+        self.assertEqual(state, ModeState(None, (), complete=False))
+        self.assertFalse(any(path == "/sony/audio" for path, _ in self.fake.requests))
 
     async def test_power_off_error_from_audio_is_reported_as_standby(self):
         self.fake.errors["getVolumeInformation"] = (40000, "Power is off")
@@ -277,6 +308,10 @@ class SonyDriverTests(unittest.IsolatedAsyncioTestCase):
         status = await self.driver.status()
         self.assertEqual((status.power, status.volume, status.mode), (True, 30, None))
         self.assertEqual(await self.driver.list_modes(), [])
+        self.assertEqual(
+            await self.driver.mode_state(status),
+            ModeState(None, (), complete=False),
+        )
 
     async def test_standby_refusal_lists_no_modes_and_power_is_still_reported(self):
         self.fake.power = "off"
@@ -293,6 +328,12 @@ class SonyDriverTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(DriverError) as raised:
             await driver.list_modes()
         self.assertNotIsInstance(raised.exception, (Unsupported, Refused))
+
+    async def test_refused_mode_selection_leaves_current_sound_field_unchanged(self):
+        self.fake.errors["setSoundSettings"] = (40000, "Power is off")
+        with self.assertRaises(Refused):
+            await self.driver.set_mode("movie")
+        self.assertEqual(self.fake.sound_field, "stereo")
 
     async def test_api_errors_map_to_unsupported_refused_and_driver_error(self):
         for code in (3, 12):

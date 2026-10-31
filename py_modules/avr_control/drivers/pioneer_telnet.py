@@ -6,7 +6,17 @@ import asyncio
 import re
 from typing import ClassVar
 
-from .base import MUTE, POWER, VOLUME, Driver, DriverError, Found, Status, VolumeScale
+from .base import (
+    MUTE,
+    POWER,
+    VOLUME,
+    Driver,
+    DriverError,
+    Found,
+    ModeState,
+    Status,
+    VolumeScale,
+)
 from .receiver_session import shared_session
 
 TELNET_PORTS = (23, 8102)
@@ -79,6 +89,13 @@ class PioneerTelnetDriver(Driver):
             # The legacy reply flag is inverted: PWR0 means ON, PWR1 means OFF.
             power=power.group(1) == "0",
         )
+
+    async def mode_state(self, status: Status | None = None) -> ModeState:
+        return ModeState(None, (), complete=False)
+
+    @classmethod
+    def mode_label(cls, code: str) -> str:
+        return f"Mode {code}"
 
     async def set_volume(self, raw: int) -> int:
         value = max(self.scale.min, min(self.scale.max, int(raw)))

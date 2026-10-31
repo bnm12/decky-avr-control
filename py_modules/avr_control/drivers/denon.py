@@ -20,6 +20,7 @@ from .base import (
     DriverError,
     Found,
     Mode,
+    ModeState,
     Refused,
     Status,
     VolumeScale,
@@ -633,7 +634,18 @@ class DenonDriver(Driver):
     async def list_modes(self) -> list[Mode]:
         return [Mode(code, name) for code, name in MODE_NAMES]
 
-    def mode_name(self, code: str) -> str:
+    async def mode_state(self, status: Status | None = None) -> ModeState:
+        current_status = status if status is not None else await self.status()
+        if current_status.power is False:
+            return ModeState(None, (), complete=False)
+        return ModeState(
+            current_status.mode,
+            tuple(await self.list_modes()),
+            complete=False,
+        )
+
+    @classmethod
+    def mode_label(cls, code: str) -> str:
         normalized = str(code).strip().upper()
         if normalized in _MODE_NAME_BY_CODE:
             return _MODE_NAME_BY_CODE[normalized]

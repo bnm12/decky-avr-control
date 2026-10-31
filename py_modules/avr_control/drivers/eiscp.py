@@ -19,6 +19,7 @@ from .base import (
     DriverError,
     Found,
     Mode,
+    ModeState,
     Refused,
     Status,
     VolumeScale,
@@ -414,8 +415,19 @@ class EiscpDriver(Driver):
     async def list_modes(self) -> list[Mode]:
         return [Mode(code, name) for code, name in MODE_NAMES]
 
-    def mode_name(self, code: str) -> str:
-        return dict(MODE_NAMES).get(code.upper(), f"Mode {code}")
+    async def mode_state(self, status: Status | None = None) -> ModeState:
+        current_status = status if status is not None else await self.status()
+        if current_status.power is False:
+            return ModeState(None, (), complete=False)
+        return ModeState(
+            current_status.mode,
+            tuple(await self.list_modes()),
+            complete=False,
+        )
+
+    @classmethod
+    def mode_label(cls, code: str) -> str:
+        return dict(MODE_NAMES).get(str(code).strip().upper(), f"Mode {code}")
 
     @classmethod
     async def discover(cls, timeout: float) -> list[Found]:

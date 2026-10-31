@@ -44,6 +44,13 @@
 
 [spec] The driver fetches `sound_mode_list` from the entity and uses each string as both code and display name. The media-player entity documentation says this list is only available for entities supporting `SELECT_SOUND_MODE`; availability and names therefore depend on the integration and device.
 
+When the entity supports `SELECT_SOUND_MODE` and `sound_mode_list` is present
+as a list on its state, `ModeState.complete` is `true`; an absent field is
+incomplete (`false`) [spec]. A current value not in the list remains visible
+but is not added to selectable modes. Standby or an entity without
+`SELECT_SOUND_MODE` returns no current or selectable modes [spec]. Labels are
+the mode codes themselves and do not require a configured receiver [spec].
+
 ## Quirks and gotchas
 
 - [spec] Home Assistant's media-player building block is provided by other integrations; not every integration exposes every capability. Supported feature flags govern which controls are available.

@@ -10,7 +10,7 @@ from urllib.parse import parse_qs
 from tests import PY_MODULES  # noqa: F401
 from tests.fakes import FakeSsdpResponder
 from avr_control import ssdp
-from avr_control.drivers.base import MUTE, VOLUME, DriverError
+from avr_control.drivers.base import MUTE, VOLUME, DriverError, ModeState
 from avr_control.drivers.heos import HEOS_SSDP_ST, HeosDriver
 
 
@@ -176,6 +176,12 @@ class HeosDriverTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(self.fake.commands.count("player/get_volume"), 2)
         self.assertGreaterEqual(self.fake.commands.count("player/get_mute"), 2)
         self.assertNotIn("system/register_for_change_events", self.fake.commands)
+
+    async def test_mode_state_has_no_io_for_driver_without_mode_support(self):
+        driver = HeosDriver({})
+        self.assertEqual(await driver.mode_state(), ModeState(None, (), False))
+        self.assertEqual(self.fake.commands, [])
+        self.assertEqual(HeosDriver.mode_label("custom"), "Mode custom")
 
     async def test_configured_player_name_beats_the_player_at_the_host_ip(self):
         by_name = HeosDriver(

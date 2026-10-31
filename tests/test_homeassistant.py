@@ -14,6 +14,7 @@ from avr_control.drivers.base import (
     POWER,
     VOLUME,
     DriverError,
+    ModeState,
     Refused,
     Unsupported,
 )
@@ -212,11 +213,52 @@ class HomeAssistantDriverTests(unittest.IsolatedAsyncioTestCase):
         modes = await self.driver.list_modes()
         self.assertEqual([(mode.code, mode.name) for mode in modes],
                          [("Stereo", "Stereo"), ("Direct", "Direct"), ("Dolby", "Dolby")])
-        self.assertEqual(self.driver.mode_name("anything"), "anything")
+        self.assertEqual(HomeAssistantDriver.mode_label("anything"), "anything")
+        state = await self.driver.mode_state()
+        self.assertEqual(state.current, "Stereo")
+        self.assertTrue(state.complete)
         before = len(self.fake.services)
         with self.assertRaisesRegex(Refused, "doesn't offer that sound mode"):
             await self.driver.set_mode("Not a mode")
         self.assertEqual(len(self.fake.services), before)
+        self.assertEqual(self.fake.attributes["sound_mode"], "Stereo")
+
+    async def test_mode_state_treats_entity_list_as_complete_and_missing_list_as_partial(self):
+        self.fake.attributes["sound_mode"] = "Receiver Only"
+        status = await self.driver.status()
+        state = await self.driver.mode_state(status)
+        self.assertEqual(state.current, "Receiver Only")
+        self.assertNotIn("Receiver Only", [mode.code for mode in state.selectable])
+        self.assertTrue(state.complete)
+
+        self.fake.attributes.pop("sound_mode_list")
+        status = await self.driver.status()
+        state = await self.driver.mode_state(status)
+        self.assertEqual(state.current, "Receiver Only")
+        self.assertEqual(state.selectable, ())
+        self.assertFalse(state.complete)
+
+        async def unexpected_status():
+            raise AssertionError("mode_state must reuse the supplied status")
+
+        self.driver.status = unexpected_status
+        self.assertEqual(
+            (await self.driver.mode_state(status)).current,
+            "Receiver Only",
+        )
+
+    async def test_mode_state_suppresses_modes_in_standby_or_when_unsupported(self):
+        self.fake.state = "off"
+        state = await self.driver.mode_state()
+        self.assertEqual(state, ModeState(None, (), False))
+
+        self.fake.state = "playing"
+        self.fake.attributes["supported_features"] = VOLUME_SET
+        status = await self.driver.status()
+        self.assertEqual(
+            await self.driver.mode_state(status),
+            ModeState(None, (), False),
+        )
 
     async def test_authentication_and_missing_entity_errors_do_not_leak_token(self):
         bad_token = "do-not-leak-this-token"

@@ -64,6 +64,10 @@ Content-Type: text/xml; charset="utf-8"
 
 [spec][1] Unknown / unsupported; this driver does not expose listening modes.
 
+`mode_state()` returns `current=None`, no selectable modes, and `complete=false`
+without I/O [assumed]. The base `Mode {code}` label is used for any saved
+unknown code [assumed].
+
 ## Quirks and gotchas
 
 - [community][3][4] Sonos RenderingControl is per-player; this driver uses each player's advertised RenderingControl service rather than GroupRenderingControl.

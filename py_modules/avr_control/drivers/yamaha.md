@@ -70,6 +70,15 @@ Host: 192.0.2.20
 
 [assumed][1] Known codes are prettified for display, including `straight` → “Straight”, `7ch_stereo` → “7ch Stereo”, `surr_decoder` → “Surround Decoder”, `all_ch_stereo` → “All-Channel Stereo”, `sci-fi` → “Sci-Fi”, `mono_movie` → “Mono Movie”, and `hall_in_munich` → “Hall in Munich”. Unknown codes are displayed by replacing underscores and hyphens with spaces and title-casing the result.
 
+When `sound_program_list` is present in the receiver's `getFeatures` response
+and the zone supports sound programs, `ModeState.complete` is `true`: Yamaha
+documents the array as the available programs for that zone [spec][1,
+pp.10-11, 14-16, 54]. If the field is missing or not a list, the state is
+incomplete [assumed]. An unknown current program is kept as current but not
+added to selectable modes; standby returns no current or selectable modes
+[assumed]. Labels are resolved from the static prettifier, without a
+configured receiver [assumed][1].
+
 ## Quirks and gotchas
 
 - [community][3][4][6] YXC is not the same protocol as Yamaha's older XML remote-control API. [assumed][1][3][4] Pre-2016 legacy receivers that expose only `/YamahaRemoteControl/ctrl` are not supported by this driver.

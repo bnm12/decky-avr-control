@@ -20,6 +20,7 @@ from .base import (
     DriverError,
     Found,
     Mode,
+    ModeState,
     Refused,
     Status,
     Unsupported,
@@ -211,6 +212,7 @@ class YamahaDriver(Driver):
         )
         self._zone_features: dict = {}
         self._modes: list[Mode] = []
+        self._modes_complete = False
         self._volume_range: tuple[int, int, int] | None = None
 
     @property
@@ -333,6 +335,7 @@ class YamahaDriver(Driver):
             self._zone_features = zone
             functions = _function_names(zone)
             ranges = _range_entries(zone)
+            self._modes_complete = isinstance(zone.get("sound_program_list"), list)
             capabilities: set[str] = set()
             if "volume" in functions or "volume" in ranges:
                 capabilities.add(VOLUME)
@@ -452,7 +455,24 @@ class YamahaDriver(Driver):
         await self._ensure_features()
         return list(self._modes)
 
-    def mode_name(self, code: str) -> str:
+    async def mode_state(self, status: Status | None = None) -> ModeState:
+        current_status = status if status is not None else await self.status()
+        if current_status.power is False:
+            return ModeState(None, (), complete=False)
+        try:
+            await self._ensure_features()
+        except (Unsupported, Refused):
+            return ModeState(None, (), complete=False)
+        if MODE not in self._capabilities:
+            return ModeState(None, (), complete=False)
+        return ModeState(
+            current_status.mode,
+            tuple(self._modes),
+            complete=self._modes_complete,
+        )
+
+    @classmethod
+    def mode_label(cls, code: str) -> str:
         return _pretty_mode(code)
 
     @classmethod

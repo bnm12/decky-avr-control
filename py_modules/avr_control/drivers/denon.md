@@ -58,6 +58,8 @@
 
 [community] Mode availability depends on model, input, and signal. `status()` canonicalizes recognized decoder-specific reports to settable commands: Dolby report variants (such as `DOLBY D+ +DSUR`) to `DOLBY DIGITAL`, DTS variants (such as `DTS HD+DSUR`) to `DTS SURROUND`, decoder reports with Music/Movie/Game suffixes to their matching settable modes, multi-channel stereo reports to `MCH STEREO`, and `AUTO`/`NONE` to `AUTO`. The mode code returned by status can therefore be restored with `set_mode()`. Unrecognized values remain available to display and are sent without a local mode whitelist (after trimming and uppercasing); a refusal is reported only if the receiver does not confirm the command.
 
+The common static set is not guaranteed to enumerate every model's selectable modes, so `ModeState.complete` is always `false` [community]. A current decoder report is canonicalized when a known settable equivalent exists; other unknown current values remain visible but are not added to the selectable list. Standby returns no current or selectable modes [assumed]. Labels use the canonical catalog or prettify unknown codes without a configured receiver [community].
+
 [community] This grouping follows `denonavr`'s `SOUND_MODE_MAPPING`: decoder-specific Dolby and DTS values are grouped under the corresponding settable sound mode, `MCH STEREO` / `MULTI CH STEREO` map to `MCH STEREO`, and `None` maps to `AUTO`. The source is MIT-licensed; see [denonavr `const.py`](https://github.com/ol-iver/denonavr/blob/master/denonavr/const.py) and [LICENSE](https://github.com/ol-iver/denonavr/blob/master/LICENSE).
 
 ## Quirks and gotchas

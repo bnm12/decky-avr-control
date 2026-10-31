@@ -61,6 +61,13 @@ Manual setup can override `volume_steps` (1 or 2), `zero_db` (blank or `absolute
 
 [measured] Picker order and codes collected from a Pioneer VSX-935:
 
+The measured table is intentionally treated as partial, not as the receiver's
+complete selectable-mode list: `ModeState.complete` is always `false` for this
+static catalog [measured]. An unlisted current code remains visible as the
+current code but is not offered for selection; standby reports no current mode
+or selectable modes [assumed]. Labels use the measured table without needing a
+configured receiver, with unknown codes shown as `Mode {code}` [measured].
+
 | Code | Name |
 |---|---|
 | `FF` | Auto Surround |

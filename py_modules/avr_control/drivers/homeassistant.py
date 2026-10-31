@@ -20,6 +20,7 @@ from .base import (
     DriverError,
     Found,
     Mode,
+    ModeState,
     Refused,
     Status,
     Unsupported,
@@ -101,6 +102,7 @@ class HomeAssistantDriver(Driver):
         super().__init__(config)
         self._supported_features: int | None = None
         self._sound_mode_list: list[str] | None = None
+        self._sound_mode_list_complete = False
 
     @property
     def url(self) -> str:
@@ -245,6 +247,7 @@ class HomeAssistantDriver(Driver):
             current_mode = None
 
         modes = attributes.get("sound_mode_list")
+        self._sound_mode_list_complete = isinstance(modes, list)
         self._sound_mode_list = (
             [mode for mode in modes if isinstance(mode, str)]
             if isinstance(modes, list)
@@ -340,7 +343,25 @@ class HomeAssistantDriver(Driver):
         await self.status()
         return [Mode(mode, mode) for mode in (self._sound_mode_list or [])]
 
-    def mode_name(self, code: str) -> str:
+    async def mode_state(self, status: Status | None = None) -> ModeState:
+        current_status = status if status is not None else await self.status()
+        if (
+            current_status.power is False
+            or self._supported_features is None
+            or not self._supported_features & SELECT_SOUND_MODE
+        ):
+            return ModeState(None, (), complete=False)
+        modes = tuple(
+            Mode(mode, mode) for mode in (self._sound_mode_list or [])
+        )
+        return ModeState(
+            current_status.mode,
+            modes,
+            complete=self._sound_mode_list_complete,
+        )
+
+    @classmethod
+    def mode_label(cls, code: str) -> str:
         return code
 
     @classmethod
