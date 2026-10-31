@@ -52,8 +52,12 @@ body:
       options:
         - eiscp
         - yamaha
+        - yamaha_ync
+        - sony
         - denon
+        - heos
         - pioneer_telnet
+        - upnp
         - homeassistant
         - none / unknown
   - type: checkboxes
