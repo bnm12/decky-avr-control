@@ -265,7 +265,7 @@ def _redact_connections(
                 clean = sanitized[position : position + len(raw)]
                 position += len(raw)
                 item["data_b64"] = base64.b64encode(clean).decode("ascii")
-                item["text"] = redact_text(_decode(raw), host, identities)
+                item["text"] = _decode(clean)
         for item in exchanges:
             item.pop("_raw", None)
             item["t"] = round(float(item["t"]), 6)
@@ -614,7 +614,7 @@ async def capture_found(
     write: bool = False,
     power: bool = False,
     include_discovery: bool = False,
-    source: str = "owner-hardware",
+    source: str = "contributor-hardware",
 ) -> dict:
     """Capture a receiver already resolved to a driver, primarily for tests too."""
     driver_class = get_driver_class(found.driver)

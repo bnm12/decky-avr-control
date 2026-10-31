@@ -20,9 +20,16 @@ from tools.avr_probe import (
     read_snapshot,
     redact_bytes,
     redact_text,
+    _redact_connections,
 )
 
 TRANSCRIPTS = Path(__file__).parent / "transcripts"
+ALLOWED_TRANSCRIPT_SOURCES = {
+    "simulator",
+    "owner-hardware",
+    "contributor-hardware",
+    "reconstructed-from-measurements",
+}
 
 
 def _matcher_for(transcript: dict):
@@ -69,46 +76,59 @@ async def generate_simulator_transcripts() -> None:
 
 
 class TranscriptReplayTests(unittest.IsolatedAsyncioTestCase):
+    async def _assert_transcript_replays(self, transcript: dict, name: str):
+        self.assertEqual(transcript["schema_version"], 1)
+        self.assertIn(transcript.get("source"), ALLOWED_TRANSCRIPT_SOURCES)
+        driver_class = get_driver_class(transcript["driver"]["key"])
+        self.assertIsNotNone(driver_class)
+        replay = ReplayServer(
+            transcript["connections"], matcher=_matcher_for(transcript)
+        )
+        port = await replay.start()
+        driver = driver_class({"host": "127.0.0.1", "port": port})
+        driver_error = None
+        try:
+            actual = await asyncio.wait_for(read_snapshot(driver), timeout=15)
+        except Exception as exc:
+            driver_error = exc
+            actual = None
+        finally:
+            await driver.close()
+            await replay.close()
+        try:
+            replay.assert_complete()
+        except AssertionError as exc:
+            if driver_error is not None:
+                raise AssertionError(
+                    f"{exc}\nDriver also failed: {driver_error}"
+                ) from driver_error
+            raise
+        if driver_error is not None:
+            raise driver_error
+        for field in ("status", "capabilities", "scale", "modes", "getters"):
+            self.assertEqual(
+                actual[field],
+                transcript[field],
+                f"{name}: driver {field} differs from fixture",
+            )
+
     async def test_every_transcript_replays_against_its_driver(self):
         files = sorted(TRANSCRIPTS.glob("*.json"))
         self.assertTrue(files, "No transcript fixtures found")
         for path in files:
             with self.subTest(transcript=path.name):
                 transcript = json.loads(path.read_text(encoding="utf-8"))
-                self.assertEqual(transcript["schema_version"], 1)
-                self.assertEqual(transcript.get("source"), "simulator")
-                driver_class = get_driver_class(transcript["driver"]["key"])
-                self.assertIsNotNone(driver_class)
-                replay = ReplayServer(
-                    transcript["connections"], matcher=_matcher_for(transcript)
-                )
-                port = await replay.start()
-                driver = driver_class({"host": "127.0.0.1", "port": port})
-                driver_error = None
-                try:
-                    actual = await asyncio.wait_for(read_snapshot(driver), timeout=15)
-                except Exception as exc:
-                    driver_error = exc
-                    actual = None
-                finally:
-                    await driver.close()
-                    await replay.close()
-                try:
-                    replay.assert_complete()
-                except AssertionError as exc:
-                    if driver_error is not None:
-                        raise AssertionError(
-                            f"{exc}\nDriver also failed: {driver_error}"
-                        ) from driver_error
-                    raise
-                if driver_error is not None:
-                    raise driver_error
-                for field in ("status", "capabilities", "scale", "modes", "getters"):
-                    self.assertEqual(
-                        actual[field],
-                        transcript[field],
-                        f"{path.name}: driver {field} differs from fixture",
-                    )
+                await self._assert_transcript_replays(transcript, path.name)
+
+    async def test_hardware_labelled_fixture_is_replayed(self):
+        transcript = json.loads(
+            (TRANSCRIPTS / "denon-simulator.json").read_text(encoding="utf-8")
+        )
+        # Exercise hardware provenance in memory; keep the saved fixture unchanged.
+        transcript["source"] = "contributor-hardware"
+        await self._assert_transcript_replays(
+            transcript, "synthetic-contributor-hardware.json"
+        )
 
     def test_redaction_masks_ids_without_changing_eiscp_frame_length(self):
         host = "192.168.10.22"
@@ -128,6 +148,50 @@ class TranscriptReplayTests(unittest.IsolatedAsyncioTestCase):
         visible = redact_text(packet.decode("latin-1"), host, [receiver_id])
         self.assertIn("RECEIVER_IP", visible)
         self.assertNotIn(host, visible)
+
+    def test_redaction_hides_identifiers_split_across_exchange_chunks(self):
+        host = "192.168.10.22"
+        receiver_id = "0009B0617D30"
+        transcript = {
+            "connections": [
+                {
+                    "exchanges": [
+                        {"dir": "rx", "t": 0.1, "_raw": b"host=192.168."},
+                        {"dir": "rx", "t": 0.2, "_raw": b"10.22; id=0009B0"},
+                        {"dir": "rx", "t": 0.3, "_raw": b"617D30"},
+                    ]
+                }
+            ]
+        }
+
+        _redact_connections(transcript["connections"], host, [receiver_id])
+        output = json.loads(json.dumps(transcript))
+        exchanges = output["connections"][0]["exchanges"]
+        encoded_bytes = b"".join(
+            base64.b64decode(exchange["data_b64"]) for exchange in exchanges
+        )
+        text = "".join(exchange["text"] for exchange in exchanges)
+        self.assertNotIn(host.encode("ascii"), encoded_bytes)
+        self.assertNotIn(receiver_id.encode("ascii"), encoded_bytes)
+        self.assertNotIn(host, text)
+        self.assertNotIn(receiver_id, text)
+
+    async def test_capture_defaults_to_contributor_hardware_provenance(self):
+        receiver = FakeDenon()
+        port = await receiver.start()
+        found = Found(
+            driver="denon",
+            model="AVR-X3800H simulator",
+            id="simulator-denon-receiver",
+            host="127.0.0.1",
+            config={"host": "127.0.0.1", "port": port},
+        )
+        try:
+            transcript = await capture_found(found)
+        finally:
+            await receiver.close()
+
+        self.assertEqual(transcript["source"], "contributor-hardware")
 
     async def test_recording_proxy_captures_both_directions(self):
         async def echo(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
