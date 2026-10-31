@@ -272,6 +272,28 @@ class SonyDriverTests(unittest.IsolatedAsyncioTestCase):
             (False, None, None, None),
         )
 
+    async def test_unsupported_sound_field_keeps_status_and_lists_no_modes(self):
+        self.fake.errors["getSoundSettings"] = (12, "not supported")
+        status = await self.driver.status()
+        self.assertEqual((status.power, status.volume, status.mode), (True, 30, None))
+        self.assertEqual(await self.driver.list_modes(), [])
+
+    async def test_standby_refusal_lists_no_modes_and_power_is_still_reported(self):
+        self.fake.power = "off"
+        self.fake.errors["getSoundSettings"] = (40000, "Power is off")
+        status = await self.driver.status()
+        self.assertFalse(status.power)
+        self.assertEqual(await self.driver.list_modes(), [])
+        self.assertEqual(await self.driver.list_modes(), [])
+
+    async def test_list_modes_still_raises_when_receiver_is_unreachable(self):
+        port = self.port
+        await self.fake.close()
+        driver = SonyDriver({"host": "127.0.0.1", "port": port})
+        with self.assertRaises(DriverError) as raised:
+            await driver.list_modes()
+        self.assertNotIsInstance(raised.exception, (Unsupported, Refused))
+
     async def test_api_errors_map_to_unsupported_refused_and_driver_error(self):
         for code in (3, 12):
             self.fake.errors["setAudioMute"] = (code, "not supported")

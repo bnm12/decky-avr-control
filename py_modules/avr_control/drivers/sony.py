@@ -422,7 +422,12 @@ class SonyDriver(Driver):
         return str(confirmed)
 
     async def list_modes(self) -> list[Mode]:
-        return _modes(await self._get_sound_setting())
+        if MODE not in self._capabilities:
+            return []
+        try:
+            return _modes(await self._get_sound_setting())
+        except (Unsupported, Refused):
+            return []
 
     def mode_name(self, code: str) -> str:
         return _pretty_mode(code)
