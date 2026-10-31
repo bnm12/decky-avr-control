@@ -1,0 +1,88 @@
+name: Receiver report
+description: Report protocol support or attach an AVR probe transcript
+title: "[Receiver] "
+body:
+  - type: input
+    id: brand
+    attributes:
+      label: Brand
+      placeholder: Pioneer
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Model
+      placeholder: VSX-935
+    validations:
+      required: true
+  - type: input
+    id: model-year
+    attributes:
+      label: Model year
+      placeholder: "2021"
+  - type: input
+    id: firmware
+    attributes:
+      label: Firmware version
+      placeholder: "e.g. 1.080"
+  - type: dropdown
+    id: connection
+    attributes:
+      label: Network connection
+      options:
+        - Wired Ethernet
+        - Wi-Fi
+        - Other / unknown
+    validations:
+      required: true
+  - type: dropdown
+    id: network-standby
+    attributes:
+      label: Is network standby enabled?
+      options:
+        - "Yes"
+        - "No"
+        - Unknown
+  - type: dropdown
+    id: driver
+    attributes:
+      label: Driver that answered
+      description: Choose the driver shown by `avr_probe`; choose unknown if none answered.
+      options:
+        - eiscp
+        - yamaha
+        - denon
+        - pioneer_telnet
+        - homeassistant
+        - none / unknown
+  - type: checkboxes
+    id: behavior
+    attributes:
+      label: What works?
+      options:
+        - label: Discovered
+        - label: Connects
+        - label: Volume
+        - label: Mute
+        - label: Power
+        - label: Listening modes
+        - label: Mode list is complete
+  - type: textarea
+    id: db-scale
+    attributes:
+      label: Receiver display versus slider
+      description: What dB value does the receiver display at a given slider/raw value?
+      placeholder: "At slider value 48 (raw), the receiver displays -58.0 dB."
+  - type: textarea
+    id: probe-json
+    attributes:
+      label: Probe JSON
+      description: Attach the JSON file produced by `python tools/avr_probe.py capture <ip>`, or paste its contents here. Review redaction before submitting.
+      placeholder: Paste or attach avr_probe JSON
+      render: json
+  - type: textarea
+    id: notes
+    attributes:
+      label: What does not work? Anything else?
+      description: Include the input/source and any on-screen error, but no credentials or tokens.

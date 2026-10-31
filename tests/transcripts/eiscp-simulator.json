@@ -1,0 +1,250 @@
+{
+  "schema_version": 1,
+  "source": "simulator",
+  "tool": {
+    "name": "avr_probe",
+    "version": "1.0"
+  },
+  "timestamp": "2026-10-31T14:28:56.586485+00:00",
+  "runtime": {
+    "python": "3.15.2",
+    "os": "Windows-11-10.0.22631-SP0"
+  },
+  "driver": {
+    "key": "eiscp",
+    "label": "Onkyo / Pioneer / Integra (eISCP)"
+  },
+  "found": {
+    "model": "VSX-935 simulator",
+    "id": "RECEIVER_ID_1",
+    "host": "RECEIVER_IP"
+  },
+  "status": {
+    "volume": 48,
+    "muted": false,
+    "power": true,
+    "mode": "00"
+  },
+  "capabilities": [
+    "mode",
+    "mute",
+    "power",
+    "volume"
+  ],
+  "scale": {
+    "min": 0,
+    "max": 185,
+    "unit": "dB",
+    "zero": 164,
+    "steps_per_unit": 2,
+    "default_cap": 100
+  },
+  "modes": [
+    {
+      "code": "FF",
+      "name": "Auto Surround"
+    },
+    {
+      "code": "00",
+      "name": "Stereo"
+    },
+    {
+      "code": "01",
+      "name": "Direct"
+    },
+    {
+      "code": "11",
+      "name": "Pure Direct"
+    },
+    {
+      "code": "0F",
+      "name": "Mono"
+    },
+    {
+      "code": "13",
+      "name": "Mono Music"
+    },
+    {
+      "code": "0C",
+      "name": "Extended Stereo"
+    },
+    {
+      "code": "0D",
+      "name": "Front Stage Surround"
+    },
+    {
+      "code": "80",
+      "name": "Dolby Audio - Surround"
+    },
+    {
+      "code": "82",
+      "name": "DTS Neural:X"
+    },
+    {
+      "code": "17",
+      "name": "DTS Virtual:X"
+    },
+    {
+      "code": "03",
+      "name": "Advanced Game"
+    },
+    {
+      "code": "05",
+      "name": "Action"
+    },
+    {
+      "code": "06",
+      "name": "Rock/Pop"
+    },
+    {
+      "code": "08",
+      "name": "Classical"
+    },
+    {
+      "code": "09",
+      "name": "Unplugged"
+    },
+    {
+      "code": "0A",
+      "name": "Entertainment Show"
+    },
+    {
+      "code": "0B",
+      "name": "Drama"
+    },
+    {
+      "code": "0E",
+      "name": "Sports"
+    }
+  ],
+  "modes_error": null,
+  "getters": {
+    "volume": 48,
+    "mute": false,
+    "power": true,
+    "mode": "00"
+  },
+  "write_restore_errors": [],
+  "proxy_errors": [],
+  "connections": [
+    {
+      "port": 51446,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.000958,
+          "data_b64": "SVNDUAAAABAAAAAKAQAAACExTVZMUVNUTg1JU0NQAAAAEAAAAAoBAAAAITFBTVRRU1RODUlTQ1AAAAAQAAAACgEAAAAhMUxNRFFTVE4NSVNDUAAAABAAAAAKAQAAACExUFdSUVNUTg0=",
+          "text": "ISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\n\u0001\u0000\u0000\u0000!1MVLQSTN\rISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\n\u0001\u0000\u0000\u0000!1AMTQSTN\rISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\n\u0001\u0000\u0000\u0000!1LMDQSTN\rISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\n\u0001\u0000\u0000\u0000!1PWRQSTN\r"
+        },
+        {
+          "dir": "rx",
+          "t": 0.000988,
+          "data_b64": "SVNDUAAAABAAAAAlAQAAACExTkpBMi1odHRwOi8vSVBYWFhYWFhYL2FsYnVtX2FydC5jZ2k=",
+          "text": "ISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000%\u0001\u0000\u0000\u0000!1NJA2-http://RECEIVER_IP/album_art.cgi"
+        },
+        {
+          "dir": "rx",
+          "t": 0.001129,
+          "data_b64": "SVNDUAAAABAAAAAFAQAAAE1WTDMwSVNDUAAAABAAAAAFAQAAAEFNVDAwSVNDUAAAABAAAAAFAQAAAExNRDAwSVNDUAAAABAAAAAFAQAAAFBXUjAx",
+          "text": "ISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\u0005\u0001\u0000\u0000\u0000MVL30ISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\u0005\u0001\u0000\u0000\u0000AMT00ISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\u0005\u0001\u0000\u0000\u0000LMD00ISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\u0005\u0001\u0000\u0000\u0000PWR01"
+        }
+      ]
+    },
+    {
+      "port": 51446,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.001939,
+          "data_b64": "SVNDUAAAABAAAAAKAQAAACExTVZMUVNUTg1JU0NQAAAAEAAAAAoBAAAAITFBTVRRU1RODUlTQ1AAAAAQAAAACgEAAAAhMUxNRFFTVE4NSVNDUAAAABAAAAAKAQAAACExUFdSUVNUTg0=",
+          "text": "ISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\n\u0001\u0000\u0000\u0000!1MVLQSTN\rISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\n\u0001\u0000\u0000\u0000!1AMTQSTN\rISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\n\u0001\u0000\u0000\u0000!1LMDQSTN\rISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\n\u0001\u0000\u0000\u0000!1PWRQSTN\r"
+        },
+        {
+          "dir": "rx",
+          "t": 0.001978,
+          "data_b64": "SVNDUAAAABAAAAAlAQAAACExTkpBMi1odHRwOi8vSVBYWFhYWFhYL2FsYnVtX2FydC5jZ2k=",
+          "text": "ISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000%\u0001\u0000\u0000\u0000!1NJA2-http://RECEIVER_IP/album_art.cgi"
+        },
+        {
+          "dir": "rx",
+          "t": 0.002137,
+          "data_b64": "SVNDUAAAABAAAAAFAQAAAE1WTDMwSVNDUAAAABAAAAAFAQAAAEFNVDAwSVNDUAAAABAAAAAFAQAAAExNRDAwSVNDUAAAABAAAAAFAQAAAFBXUjAx",
+          "text": "ISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\u0005\u0001\u0000\u0000\u0000MVL30ISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\u0005\u0001\u0000\u0000\u0000AMT00ISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\u0005\u0001\u0000\u0000\u0000LMD00ISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\u0005\u0001\u0000\u0000\u0000PWR01"
+        }
+      ]
+    },
+    {
+      "port": 51446,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.00284,
+          "data_b64": "SVNDUAAAABAAAAAKAQAAACExTVZMUVNUTg1JU0NQAAAAEAAAAAoBAAAAITFBTVRRU1RODUlTQ1AAAAAQAAAACgEAAAAhMUxNRFFTVE4NSVNDUAAAABAAAAAKAQAAACExUFdSUVNUTg0=",
+          "text": "ISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\n\u0001\u0000\u0000\u0000!1MVLQSTN\rISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\n\u0001\u0000\u0000\u0000!1AMTQSTN\rISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\n\u0001\u0000\u0000\u0000!1LMDQSTN\rISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\n\u0001\u0000\u0000\u0000!1PWRQSTN\r"
+        },
+        {
+          "dir": "rx",
+          "t": 0.002873,
+          "data_b64": "SVNDUAAAABAAAAAlAQAAACExTkpBMi1odHRwOi8vSVBYWFhYWFhYL2FsYnVtX2FydC5jZ2k=",
+          "text": "ISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000%\u0001\u0000\u0000\u0000!1NJA2-http://RECEIVER_IP/album_art.cgi"
+        },
+        {
+          "dir": "rx",
+          "t": 0.003015,
+          "data_b64": "SVNDUAAAABAAAAAFAQAAAE1WTDMwSVNDUAAAABAAAAAFAQAAAEFNVDAwSVNDUAAAABAAAAAFAQAAAExNRDAwSVNDUAAAABAAAAAFAQAAAFBXUjAx",
+          "text": "ISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\u0005\u0001\u0000\u0000\u0000MVL30ISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\u0005\u0001\u0000\u0000\u0000AMT00ISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\u0005\u0001\u0000\u0000\u0000LMD00ISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\u0005\u0001\u0000\u0000\u0000PWR01"
+        }
+      ]
+    },
+    {
+      "port": 51446,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.003663,
+          "data_b64": "SVNDUAAAABAAAAAKAQAAACExTVZMUVNUTg1JU0NQAAAAEAAAAAoBAAAAITFBTVRRU1RODUlTQ1AAAAAQAAAACgEAAAAhMUxNRFFTVE4NSVNDUAAAABAAAAAKAQAAACExUFdSUVNUTg0=",
+          "text": "ISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\n\u0001\u0000\u0000\u0000!1MVLQSTN\rISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\n\u0001\u0000\u0000\u0000!1AMTQSTN\rISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\n\u0001\u0000\u0000\u0000!1LMDQSTN\rISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\n\u0001\u0000\u0000\u0000!1PWRQSTN\r"
+        },
+        {
+          "dir": "rx",
+          "t": 0.003699,
+          "data_b64": "SVNDUAAAABAAAAAlAQAAACExTkpBMi1odHRwOi8vSVBYWFhYWFhYL2FsYnVtX2FydC5jZ2k=",
+          "text": "ISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000%\u0001\u0000\u0000\u0000!1NJA2-http://RECEIVER_IP/album_art.cgi"
+        },
+        {
+          "dir": "rx",
+          "t": 0.003832,
+          "data_b64": "SVNDUAAAABAAAAAFAQAAAE1WTDMwSVNDUAAAABAAAAAFAQAAAEFNVDAwSVNDUAAAABAAAAAFAQAAAExNRDAwSVNDUAAAABAAAAAFAQAAAFBXUjAx",
+          "text": "ISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\u0005\u0001\u0000\u0000\u0000MVL30ISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\u0005\u0001\u0000\u0000\u0000AMT00ISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\u0005\u0001\u0000\u0000\u0000LMD00ISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\u0005\u0001\u0000\u0000\u0000PWR01"
+        }
+      ]
+    },
+    {
+      "port": 51446,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.004588,
+          "data_b64": "SVNDUAAAABAAAAAKAQAAACExTVZMUVNUTg1JU0NQAAAAEAAAAAoBAAAAITFBTVRRU1RODUlTQ1AAAAAQAAAACgEAAAAhMUxNRFFTVE4NSVNDUAAAABAAAAAKAQAAACExUFdSUVNUTg0=",
+          "text": "ISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\n\u0001\u0000\u0000\u0000!1MVLQSTN\rISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\n\u0001\u0000\u0000\u0000!1AMTQSTN\rISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\n\u0001\u0000\u0000\u0000!1LMDQSTN\rISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\n\u0001\u0000\u0000\u0000!1PWRQSTN\r"
+        },
+        {
+          "dir": "rx",
+          "t": 0.004638,
+          "data_b64": "SVNDUAAAABAAAAAlAQAAACExTkpBMi1odHRwOi8vSVBYWFhYWFhYL2FsYnVtX2FydC5jZ2k=",
+          "text": "ISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000%\u0001\u0000\u0000\u0000!1NJA2-http://RECEIVER_IP/album_art.cgi"
+        },
+        {
+          "dir": "rx",
+          "t": 0.004886,
+          "data_b64": "SVNDUAAAABAAAAAFAQAAAE1WTDMwSVNDUAAAABAAAAAFAQAAAEFNVDAwSVNDUAAAABAAAAAFAQAAAExNRDAwSVNDUAAAABAAAAAFAQAAAFBXUjAx",
+          "text": "ISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\u0005\u0001\u0000\u0000\u0000MVL30ISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\u0005\u0001\u0000\u0000\u0000AMT00ISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\u0005\u0001\u0000\u0000\u0000LMD00ISCP\u0000\u0000\u0000\u0010\u0000\u0000\u0000\u0005\u0001\u0000\u0000\u0000PWR01"
+        }
+      ]
+    }
+  ],
+  "notes": [
+    "The driver connects to RECEIVER_IP through the proxy; an HTTP driver would therefore send that address in its Host header."
+  ],
+  "raw_discovery": {}
+}

@@ -16,6 +16,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Test Python backend
+        run: python -m unittest discover -s tests -t . -v
+
       - uses: pnpm/action-setup@v4
         with:
           version: 10
@@ -46,18 +53,18 @@ jobs:
 
       - name: Package
         run: |
-          mkdir -p out/pioneer-volume
-          cp -r dist main.py plugin.json package.json LICENSE README.md out/pioneer-volume/
-          cd out && zip -r ../pioneer-volume.zip pioneer-volume
+          mkdir -p out/avr-control
+          cp -r dist main.py py_modules plugin.json package.json LICENSE README.md out/avr-control/
+          cd out && zip -r ../avr-control.zip avr-control
 
       - uses: actions/upload-artifact@v4
         with:
-          name: pioneer-volume
-          path: pioneer-volume.zip
+          name: avr-control
+          path: avr-control.zip
 
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: pioneer-volume.zip
+          files: avr-control.zip
           generate_release_notes: true
