@@ -43,8 +43,10 @@ async def discover_all(timeout: float) -> list[Found]:
     """Every driver's discovery at once.
 
     One receiver often answers several protocols (a Denon AVR also speaks HEOS
-    and UPnP), so results are de-duplicated by id and by host, keeping the
-    first driver in REGISTRY order: brand drivers before generic ones.
+    and UPnP), so a host claimed by an earlier driver in REGISTRY order is
+    skipped by later ones: brand drivers win over generic ones. One driver may
+    still report several devices on one host (embedded UPnP renderers), and
+    duplicate ids are always dropped.
     """
     results = await asyncio.gather(
         *(driver.discover(timeout) for driver in REGISTRY),
@@ -52,16 +54,17 @@ async def discover_all(timeout: float) -> list[Found]:
     )
     found: list[Found] = []
     seen_ids: set[str] = set()
-    seen_hosts: set[str] = set()
+    host_owner: dict[str, str] = {}
     for result in results:
         if isinstance(result, BaseException):
             continue
         for item in result:
-            if item.id in seen_ids or (item.host and item.host in seen_hosts):
+            owner = host_owner.get(item.host) if item.host else None
+            if item.id in seen_ids or (owner is not None and owner != item.driver):
                 continue
             seen_ids.add(item.id)
             if item.host:
-                seen_hosts.add(item.host)
+                host_owner.setdefault(item.host, item.driver)
             found.append(item)
     return found
 

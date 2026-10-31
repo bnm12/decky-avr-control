@@ -35,6 +35,18 @@ class DiscoverAllTests(unittest.TestCase):
             found = asyncio.run(drivers.discover_all(0.1))
         self.assertEqual([(f.driver, f.host) for f in found], [("denon", "10.0.0.5"), ("upnp", "10.0.0.9")])
 
+    def test_one_driver_keeps_several_devices_on_one_host(self):
+        generic = _driver(
+            "upnp",
+            [
+                Found("upnp", "Living Room", "uuid:lr", "10.0.0.7"),
+                Found("upnp", "Kitchen", "uuid:k", "10.0.0.7"),
+            ],
+        )
+        with mock.patch.object(drivers, "REGISTRY", [generic]):
+            found = asyncio.run(drivers.discover_all(0.1))
+        self.assertEqual([f.id for f in found], ["uuid:lr", "uuid:k"])
+
     def test_failing_driver_discovery_is_ignored(self):
         class Broken:
             key = "broken"
