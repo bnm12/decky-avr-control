@@ -12,6 +12,7 @@
 | Transport | [community] HTTP POST with JSON-RPC-style JSON bodies to `/sony/<service>`, normally port 10000. |
 | Discovery | [community] SSDP service type `urn:schemas-sony-com:service:ScalarWebAPI:1`; the UPnP description advertises `X_ScalarWebAPI_BaseURL`. [assumed] The driver uses its port and prefers system MAC/serial for its receiver ID, falling back to the UDN. |
 | Connections | [assumed] Each request is an independent bounded HTTP request; no persistent session is held. A model-wide concurrent-client limit is unknown. |
+| State updates | [assumed] Polling only; the HTTP driver does not subscribe to receiver events. |
 
 ## Transport and framing
 
@@ -81,6 +82,7 @@ static prettifier without a configured receiver [assumed].
 - [assumed] Confirm whether every supported model accepts the empty `output` parameter, the string volume value, and `off` as the power setter's off-state.
 - [assumed] Confirm which non-100 volume ranges are raw steps versus percent-like values, and whether API `step` values larger than one need special handling.
 - [assumed] Confirm how accurately the UPnP description identifies TV-only devices and whether receivers report `macAddr` consistently.
+- [assumed, not yet measured] Tester checklist: change volume with the remote while the panel is open; does the slider follow within 1 s?
 
 ## Sources
 

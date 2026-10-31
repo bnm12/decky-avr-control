@@ -8,7 +8,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
-from typing import ClassVar
+from typing import Awaitable, Callable, ClassVar
 
 from .. import ssdp
 from .base import (
@@ -504,6 +504,37 @@ class DenonDriver(Driver):
         raise DriverError(
             f"Can't reach Denon/Marantz receiver at {self.host} via Telnet or HTTP"
         )
+
+    async def watch(
+        self, on_change: Callable[[Status], None]
+    ) -> Callable[[], Awaitable[None]] | None:
+        transport = await self._get_transport()
+        if not isinstance(transport, TelnetTransport):
+            return None
+
+        def receive(line: str) -> None:
+            power = _POWER_LINE.fullmatch(line)
+            volume = _VOLUME_TOKEN.fullmatch(line)
+            mute = _MUTE_LINE.fullmatch(line)
+            mode = _MODE_LINE.fullmatch(line)
+            if power:
+                on_change(Status(power=power.group(1) == "ON"))
+            elif volume:
+                try:
+                    on_change(Status(volume=_decode_volume(volume.group(1))))
+                except ValueError:
+                    return
+            elif mute:
+                on_change(Status(muted=mute.group(1) == "ON"))
+            elif mode and mode.group(1) != "?":
+                on_change(Status(mode=_canonical_mode(mode.group(1))))
+
+        transport.session.subscribe(receive)
+
+        async def unsubscribe() -> None:
+            await transport.session.unsubscribe(receive)
+
+        return unsubscribe
 
     def _parse_telnet_status(self, lines: list[str]) -> Status:
         power: bool | None = None

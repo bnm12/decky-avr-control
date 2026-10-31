@@ -12,6 +12,7 @@
 | Transport | [spec] Home Assistant REST API over HTTP or HTTPS; JSON; frontend port (8123 by default) |
 | Discovery | [assumed] None. mDNS discovery of Home Assistant servers may be added later; the access token and entity still require user input |
 | Connections | [assumed] Independent HTTP requests; no persistent session is managed |
+| State updates | [assumed] Polling only; the REST driver does not subscribe to entity state events. |
 
 ## Transport and framing
 
@@ -77,6 +78,7 @@ the mode codes themselves and do not require a configured receiver [spec].
 - [assumed] No real Home Assistant instance or receiver integration has been measured. Test volume rounding, power states, and mode availability against several AVR integrations.
 - [assumed] Integrations may represent receiver standby using states other than `off` or `standby`; those are treated as powered on unless Home Assistant reports `unknown` or `unavailable`.
 - [assumed] Confirm how HA permissions behave for long-lived tokens created by non-administrator users.
+- [assumed, not yet measured] Tester checklist: change volume with the remote while the panel is open; does the slider follow within 1 s?
 
 ## Sources
 

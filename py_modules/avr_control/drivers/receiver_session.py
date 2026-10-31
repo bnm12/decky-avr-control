@@ -15,6 +15,7 @@ ReadFrame = Callable[[Any], Awaitable[Frame]]
 Connect = Callable[[], Awaitable[tuple[Any, Any]]]
 Classify = Callable[[Frame], str | None]
 Handler = Callable[[Frame], None]
+ConnectionHandler = Callable[[int], None]
 
 
 class ReceiverSessionError(DriverError):
@@ -65,6 +66,8 @@ class ReceiverSession(Generic[Frame]):
         self._reader_task: asyncio.Task | None = None
         self._active: _Transaction[Frame] | None = None
         self._subscribers: set[Handler[Frame]] = set()
+        self._connection_handlers: set[ConnectionHandler] = set()
+        self._connection_generation = 0
         self._lock = asyncio.Lock()
         self._group_owner: asyncio.Task | None = None
         self._group_depth = 0
@@ -169,11 +172,31 @@ class ReceiverSession(Generic[Frame]):
             raise
 
         def unsubscribe() -> None:
-            self._subscribers.discard(handler)
             try:
-                asyncio.get_running_loop().create_task(self._finish_transaction())
+                asyncio.get_running_loop().create_task(self.unsubscribe(handler))
             except RuntimeError:
-                pass
+                self._subscribers.discard(handler)
+
+        return unsubscribe
+
+    async def unsubscribe(self, handler: Handler[Frame]) -> None:
+        """Remove a subscriber and finish closing its now-unowned stream."""
+        self._subscribers.discard(handler)
+        await self._finish_transaction()
+
+    @property
+    def connection_generation(self) -> int:
+        """A monotonically increasing number for each established stream."""
+        return self._connection_generation
+
+    def on_connect(
+        self, handler: ConnectionHandler
+    ) -> Callable[[], None]:
+        """Observe future stream connections without owning a frame subscription."""
+        self._connection_handlers.add(handler)
+
+        def unsubscribe() -> None:
+            self._connection_handlers.discard(handler)
 
         return unsubscribe
 
@@ -232,6 +255,12 @@ class ReceiverSession(Generic[Frame]):
             ) from exc
         self._reader, self._writer = reader, writer
         self._reader_task = asyncio.create_task(self._read_loop(reader, writer))
+        self._connection_generation += 1
+        for handler in tuple(self._connection_handlers):
+            try:
+                handler(self._connection_generation)
+            except Exception:
+                continue
 
     async def _write(self, data: bytes) -> None:
         writer = self._writer

@@ -306,27 +306,32 @@ snapshot perform receiver I/O and provides at best two-second remote-change
 latency. An event channel would have to define initial snapshot, event ordering,
 lost-event recovery, receiver changes, and unload.
 
-**Deeper module and seam.** Extend the application interface only if a driver
-can provide genuine state events: `subscribe() -> AsyncIterator[Snapshot]`,
-with an immediate snapshot, monotonic revisions, serialized command/event
-ordering, and a documented resync after disconnect. Drivers without push
-support return “no subscription”; the application retains bounded polling.
-Do not equate NJA album-art pushes with volume/mode changes.
+**Deeper module and seam.** The initial implementation extends the driver
+contract with `watch(on_change: Callable[[Status], None])`, returning an async
+unsubscribe function or `None`. Each callback carries a partial `Status`;
+`ControlApplication` merges it into its cached status, increments a monotonic
+revision, and publishes a full snapshot only while the panel is open. Drivers
+without push support retain polling. A 15-second safety resync polls full
+status while push is active; reconnecting TCP sessions keep their subscribers,
+and HEOS re-registers events on the next connection. Do not equate NJA
+album-art pushes with volume/mode changes.
 
-**Moves, adapters, tests.** Move remote-change reconciliation from React into
-the application; React renders snapshots and sends intents. The receiver
-protocol adapter and an in-memory event adapter are two adapters only after at
-least one driver can produce real state events. Test ordering, reconnect,
-missed updates, and fallback polling through the subscription interface; keep
-transcript replay for wire claims. At present this is a **conditional M/L**
-effort, not an implementation shortcut.
+**Moves, adapters, tests.** Remote-change reconciliation is in the application;
+React subscribes to snapshots, sends `PanelOpened`/`PanelClosed`, and polls
+every two seconds when push is inactive. It keeps a 15-second full-status
+resync while push is active. Tests exercise driver watches with in-memory TCP
+streams and test application revisions, receiver changes, unsubscribe, and
+polling fallback. Keep transcript replay for wire claims. The initial path is
+implemented, but receiver event behavior remains unmeasured on hardware.
 
 **Risks / payoff.** High responsiveness and fewer repeated status queries if
-the receiver really pushes state. eISCP’s measured push is album metadata,
-not state; Denon event behavior is community-sourced, and Yamaha YXC/HA paths
-currently use HTTP polling. First capture state changes from real receivers.
-**the deletion test**: a good subscription module makes event ordering disappear
-from React and drivers; a wrapper around a timer just adds a shallow interface.
+the receiver really pushes state. eISCP’s measured push is album metadata;
+the additional eISCP state, Denon and HEOS event claims are community/spec
+evidence, not measured for this project. Legacy Pioneer push is assumed.
+Yamaha, Sony, UPnP and Home Assistant currently use polling. Capture state
+changes from real receivers before reducing fallback polling. **the deletion
+test**: a good subscription module makes event ordering disappear from React
+and drivers; a wrapper around a timer just adds a shallow interface.
 
 ### 6. Listening-mode tables and selectable-mode semantics
 

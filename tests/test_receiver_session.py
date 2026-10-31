@@ -278,6 +278,31 @@ class ReceiverSessionTests(unittest.IsolatedAsyncioTestCase):
         await session.close()
         await duplex.close()
 
+    async def test_unsubscribe_closes_only_after_last_subscriber_leaves(self):
+        async def handle(reader, _writer):
+            while await reader.readline():
+                pass
+
+        duplex = InMemoryDuplex(handle)
+        session = ReceiverSession(duplex.connect, _read_line)
+        first_handler = lambda _frame: None
+        second_handler = lambda _frame: None
+        session.subscribe(first_handler)
+        session.subscribe(second_handler)
+        for _ in range(10):
+            if duplex.connections:
+                break
+            await asyncio.sleep(0)
+        writer = duplex.connections[0][1]
+
+        await session.unsubscribe(first_handler)
+        self.assertFalse(writer.is_closing())
+        await session.unsubscribe(second_handler)
+        self.assertTrue(writer.is_closing())
+
+        await session.close()
+        await duplex.close()
+
 
 if __name__ == "__main__":
     unittest.main()

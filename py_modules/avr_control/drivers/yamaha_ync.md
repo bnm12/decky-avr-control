@@ -12,6 +12,7 @@
 | Transport | [community][1][2] HTTP POST with XML to `/YamahaRemoteControl/ctrl`, normally port 80; the driver honours `config["port"]` for alternate endpoints and tests. |
 | Discovery | [community][1][3] SSDP `MediaRenderer` and `upnp:rootdevice`, then the Yamaha UPnP `X_device` block. Legacy XML needs `X_controlURL` and must not advertise `X_yxcControlURL`; UDN is the receiver ID. |
 | Connections | [assumed] Independent, bounded HTTP requests; no concurrent-client limit has been verified. |
+| State updates | [assumed] Polling only; this HTTP driver does not subscribe to receiver events. |
 
 ## Transport and framing
 
@@ -75,6 +76,7 @@ prettified from the code without a configured receiver [assumed].
 - [assumed] Confirm the raw volume mapping, cap behavior, and whether every firmware accepts the `Val`/`Exp` write format at half-dB increments.
 - [assumed] Confirm SSDP description variants and whether YXC-capable receivers always advertise `X_yxcControlURL`.
 - [assumed] No real receiver has been tested. The `rxv` project is BSD-3-Clause licensed, not MIT; no third-party implementation code is copied into this driver.
+- [assumed, not yet measured] Tester checklist: change volume with the remote while the panel is open; does the slider follow within 1 s?
 
 ## Sources
 

@@ -34,6 +34,12 @@ class MainSmokeTests(unittest.TestCase):
             decky_stub = types.ModuleType("decky")
             decky_stub.DECKY_PLUGIN_SETTINGS_DIR = settings_dir
             decky_stub.logger = Logger()
+            emitted = []
+
+            async def emit(event, *args):
+                emitted.append((event, args))
+
+            decky_stub.emit = emit
             old_decky = sys.modules.get("decky")
             old_main = sys.modules.pop("avr_control_main_smoke", None)
             sys.modules["decky"] = decky_stub
@@ -44,6 +50,11 @@ class MainSmokeTests(unittest.TestCase):
                 module = importlib.util.module_from_spec(spec)
                 sys.modules[spec.name] = module
                 spec.loader.exec_module(module)
+                smoke_snapshot = {"revision": 3, "push": True}
+                asyncio.run(module._publish_snapshot(smoke_snapshot))
+                self.assertEqual(
+                    emitted, [("avr_snapshot", (smoke_snapshot,))]
+                )
                 plugin = module.Plugin()
                 public_rpcs = {
                     name
@@ -67,6 +78,15 @@ class MainSmokeTests(unittest.TestCase):
                 )
                 self.assertEqual(snapshot["schedule"]["enabled"], False)
                 self.assertEqual(snapshot["sleep_wake"]["supports_power"], False)
+                self.assertFalse(snapshot["push"])
+                panel_opened = asyncio.run(
+                    plugin.dispatch({"type": "panel_opened"})
+                )
+                self.assertTrue(panel_opened["ok"])
+                panel_closed = asyncio.run(
+                    plugin.dispatch({"type": "panel_closed"})
+                )
+                self.assertTrue(panel_closed["ok"])
                 from avr_control.drivers import REGISTRY
 
                 drivers = asyncio.run(plugin.list_drivers())
@@ -153,6 +173,7 @@ class MainSmokeTests(unittest.TestCase):
                     module = importlib.util.module_from_spec(spec)
                     sys.modules[spec.name] = module
                     spec.loader.exec_module(module)
+                    self.assertIsNone(module.application.publish)
                     plugin = module.Plugin()
                     snapshot = asyncio.run(plugin.snapshot())
                     self.assertEqual(snapshot["connection"]["summary"], "192.0.2.7")

@@ -11,13 +11,14 @@
 | Verified on | [assumed] None; the tested VSX-935 does not speak this protocol |
 | Transport | [community] TCP text commands; port 8102 documented for the VSX-529, CRLF terminated; [assumed] port 23 is also probed |
 | Discovery | [assumed] None implemented; enter the receiver host manually |
-| Connections | [assumed] One transaction per TCP connection; the shared session serializes transactions for the same host and port |
+| Connections | [assumed] One transaction per TCP connection by default; the shared session keeps the connection open while a watch is subscribed. |
+| State updates | [community][2][assumed, not yet measured] The driver watches unsolicited VOL, MUT and PWR lines on a subscribed connection. |
 
 ## Transport and framing
 
-[community] Commands are ASCII text terminated by `\r\n`; responses are read as lines until the expected reply arrives. The driver tests port 23 then 8102 and remembers the working port in the receiver config. A typical volume exchange is `?V\r\n` → `VOL###`, where `###` is decimal. The shared `ReceiverSession` owns each transaction's TCP stream, serializes concurrent calls, and closes the stream after the reply or failure.
+[community] Commands are ASCII text terminated by `\r\n`; responses are read as lines until the expected reply arrives. The driver tests port 23 then 8102 and remembers the working port in the receiver config. A typical volume exchange is `?V\r\n` → `VOL###`, where `###` is decimal. The shared `ReceiverSession` owns the TCP stream and serializes concurrent calls; it closes after a transaction unless a watch is subscribed.
 
-[assumed] This framing and the per-request connection behavior have not been verified on hardware for this project.
+[assumed] This framing and the per-request connection behavior have not been verified on hardware for this project. [community][2][assumed, not yet measured] An open connection may also report `VOL###`, `MUT0|1` and `PWR0|1|2` after remote-control changes; this driver treats these as partial updates, but this push behavior is unverified.
 
 ## Discovery
 
@@ -57,6 +58,7 @@ without contacting the receiver [assumed]. Unknown display codes use the base
 - [assumed] No real hardware has validated command spelling, line framing, volume scale, mute, power, or the two ports for this implementation.
 - [assumed] Confirm whether the PWR flag mapping and the `PO`/`PF` commands are consistent across supported legacy models.
 - [assumed] Determine whether any legacy model supports listening-mode control and stable-ID discovery.
+- [community/assumed, not yet measured] Tester checklist: change volume with the remote while the panel is open; does the slider follow within 1 s?
 
 ## Sources
 

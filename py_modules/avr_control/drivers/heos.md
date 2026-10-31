@@ -11,11 +11,12 @@
 | Verified on | None (simulator only) |
 | Transport | TCP 1255; ASCII commands and JSON responses, CRLF-delimited [spec, 1, pp. 4, 7] |
 | Discovery | SSDP `urn:schemas-denon-com:device:ACT-Denon:1`, then UPnP description; receiver ID is `heos:<serial>` or `heos:<UDN>` [spec, 1, p. 4; assumed stable identity policy] |
-| Connections | A connection to one HEOS device controls the HEOS system; the spec recommends not connecting separately to every speaker and allows up to 32 simultaneous sockets [spec, 1, p. 5]. This driver uses one short-lived connection per operation. |
+| Connections | A connection to one HEOS device controls the HEOS system; the spec recommends not connecting separately to every speaker and allows up to 32 simultaneous sockets [spec, 1, p. 5]. The driver keeps one connection only while the panel subscribes to events. |
+| State updates | [spec][1, p. 8][3, not yet measured] The driver registers for HEOS change events while subscribed and handles `event/player_volume_changed` for the resolved player PID. |
 
 ## Transport and framing
 
-Send an ASCII command terminated by `\r\n`, for example `heos://player/get_volume?pid=123\r\n`. A response is one JSON object per CRLF-delimited line. The `heos` object carries `command`, `result` (`success` or `fail`) and `message`; optional command data is in `payload` [spec, 1, p. 7]. The shared `ReceiverSession` owns TCP stream setup, reply deadlines, serialization and cleanup. Since later HEOS requests depend on the player-list reply, a logical operation holds a session transaction group across its ordered request/reply steps; the stream closes when that group ends.
+Send an ASCII command terminated by `\r\n`, for example `heos://player/get_volume?pid=123\r\n`. A response is one JSON object per CRLF-delimited line. The `heos` object carries `command`, `result` (`success` or `fail`) and `message`; optional command data is in `payload` [spec, 1, p. 7]. The shared `ReceiverSession` owns TCP stream setup, reply deadlines, serialization and cleanup. Since later HEOS requests depend on the player-list reply, a logical operation holds a session transaction group across its ordered request/reply steps; the stream closes when the group ends unless a watch is subscribed.
 
 For example, `player/get_volume` returns its level in the response message:
 
@@ -23,7 +24,7 @@ For example, `player/get_volume` returns its level in the response message:
 {"heos":{"command":"player/get_volume","result":"success","message":"pid='123'&level='42'"}}
 ```
 
-Skip replies whose message is `command under process`; the final response may arrive later [spec, 1, p. 7]. A shared session keyed by `(host, port)` serializes operations across driver instances. It does not register for change events; HEOS does not send them by default [spec, 1, pp. 5, 8].
+Skip replies whose message is `command under process`; the final response may arrive later [spec, 1, p. 7]. A shared session keyed by `(host, port)` serializes operations across driver instances. When the panel subscribes, the driver sends `heos://system/register_for_change_events?enable=on` and handles `event/player_volume_changed` only for the resolved player PID [spec, 1, p. 8; 3]. After a dropped connection, the next transaction reconnects and the driver registers for events again [spec, 1, p. 8]. HEOS does not send these events by default; this event path has not been measured on hardware.
 
 ## Discovery
 
@@ -74,8 +75,10 @@ unknown code [assumed].
 - No real HEOS device has been tested. Confirm player IP and serial availability, response variations and whether HEOS-built-in AVR volume tracks main-zone volume.
 - The v1.7 `get_players` example shows name, PID, group ID, model and version, but not IP or serial [spec, 1, p. 10]. Whether the UPnP `serialNumber` matches a player's `serial` is unverified.
 - Confirm that pids can change after device reconfiguration; the spec describes them as discovered at connection time but does not state their persistence [spec, 1, p. 5; assumed volatility].
+- [spec, not yet measured] Tester checklist: change volume with the remote while the panel is open; does the slider follow within 1 s?
 
 ## Sources
 
 1. HEOS, [HEOS CLI Protocol Specification v1.7 (2016)](http://rn.dmglobal.com/euheos/HEOS_CLI_ProtocolSpecification.pdf): connection, TCP port and SSDP target (p. 4); socket and initialization guidance, including the 32-socket limit (p. 5); JSON format, CRLF framing and interim replies (p. 7); heartbeat and event registration (p. 8); player list (p. 10); volume (p. 13); mute (p. 14).
 2. HEOS, [HEOS CLI Protocol Specification v1.14](https://www.marantz.com/on/demandware.static/-/Library-Sites-marantz_northamerica_shared/default/dw04da2b25/archive-downloads/heos_cli_protocolspecification-version-114.pdf): cited for player entries that may omit `ip` and for `serial` in `get_players`. The page numbers were not checked against the PDF.
+3. [spec] [HEOS CLI Protocol Specification](https://rn.dmglobal.com/eu/en/online/HEOS_CLI_Protocol_Specification.pdf): change-event registration and player event messages; not measured for this project.

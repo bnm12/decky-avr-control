@@ -12,6 +12,8 @@ from avr_control.application import (
     ForgetGame,
     GameStarted,
     GameStopped,
+    PanelClosed,
+    PanelOpened,
     RememberForGame,
     SelectReceiver,
     SetCaps,
@@ -152,6 +154,19 @@ class MemoryDriver(Driver):
             host=config["host"],
             config={**config, "port": 1234},
         )
+
+
+class PushMemoryDriver(MemoryDriver):
+    watch_callbacks = []
+    unsubscribe_count = 0
+
+    async def watch(self, on_change):
+        self.watch_callbacks.append(on_change)
+
+        async def unsubscribe():
+            type(self).unsubscribe_count += 1
+
+        return unsubscribe
 
 
 class ApplicationClient:
@@ -432,6 +447,57 @@ class ApplicationTests(unittest.IsolatedAsyncioTestCase):
                 "games": {},
             }
         )
+
+    async def test_panel_watch_publishes_revisions_and_restarts_on_receiver_change(self):
+        self.save_settings()
+        PushMemoryDriver.watch_callbacks = []
+        PushMemoryDriver.unsubscribe_count = 0
+        published = []
+        published_queue = asyncio.Queue()
+
+        async def publish(snapshot):
+            published.append(snapshot)
+            published_queue.put_nowait(snapshot)
+
+        self.application.registry = [PushMemoryDriver]
+        self.application.publish = publish
+
+        opened = await self.application.dispatch(PanelOpened())
+        self.assertTrue(opened["snapshot"]["push"])
+        self.assertEqual(len(PushMemoryDriver.watch_callbacks), 1)
+
+        PushMemoryDriver.watch_callbacks[-1](Status(volume=111))
+        first_push = await asyncio.wait_for(published_queue.get(), 1)
+        self.assertEqual(first_push["revision"], 1)
+        self.assertEqual(first_push["receiver"]["volume"]["raw"], 111)
+        PushMemoryDriver.watch_callbacks[-1](Status(muted=True))
+        second_push = await asyncio.wait_for(published_queue.get(), 1)
+        self.assertEqual(second_push["revision"], 2)
+        self.assertEqual(second_push["receiver"]["muted"], True)
+
+        changed = await self.application.dispatch(
+            ConfigureReceiver("memory", {"host": "other-receiver"})
+        )
+        self.assertTrue(changed["ok"])
+        self.assertEqual(PushMemoryDriver.unsubscribe_count, 1)
+        self.assertEqual(len(PushMemoryDriver.watch_callbacks), 2)
+        self.assertTrue(changed["snapshot"]["push"])
+
+        closed = await self.application.dispatch(PanelClosed())
+        self.assertFalse(closed["snapshot"]["push"])
+        self.assertEqual(PushMemoryDriver.unsubscribe_count, 2)
+
+    async def test_panel_watch_stays_on_polling_for_driver_without_push(self):
+        self.save_settings()
+        published = []
+        self.application.publish = published.append
+
+        opened = await self.application.dispatch(PanelOpened())
+
+        self.assertFalse(opened["snapshot"]["push"])
+        self.assertEqual(published, [])
+        closed = await self.application.dispatch(PanelClosed())
+        self.assertFalse(closed["snapshot"]["push"])
 
     async def test_snapshot_and_display_intents_cross_the_application_interface(self):
         self.save_settings()

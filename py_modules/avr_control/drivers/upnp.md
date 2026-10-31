@@ -12,6 +12,7 @@
 | Transport | [spec][1] SOAP 1.1 over HTTP to the service's advertised control URL; [community][3] Sonos normally listens on TCP 1400 |
 | Discovery | [spec][2] SSDP `LOCATION` and device UDN; search target is RenderingControl:1 |
 | Connections | [assumed] One HTTP request per action; no persistent session or push subscription |
+| State updates | [assumed] Polling only; the HTTP/SOAP driver does not subscribe to renderer events. |
 
 This is deliberately a partial receiver driver: only volume and mute are offered. [spec][1] The generic RenderingControl service does not define receiver power or listening-mode controls.
 
@@ -81,6 +82,7 @@ unknown code [assumed].
 - [assumed] No physical renderer has verified behavior, SOAP fault variants, or response timing.
 - [assumed] Confirm whether non-Sonos renderers consistently implement `InstanceID=0` and `Channel=Master`, and whether their SCPDs accurately describe the volume step.
 - [assumed] The non-0–100 `%` display is a documented compatibility choice, not a standardized UPnP scale.
+- [assumed, not yet measured] Tester checklist: change volume with the remote while the panel is open; does the slider follow within 1 s?
 
 ## Sources
 

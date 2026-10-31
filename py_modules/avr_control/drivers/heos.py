@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import xml.etree.ElementTree as ET
-from typing import ClassVar
+from typing import Awaitable, Callable, ClassVar
 from urllib.parse import parse_qs, urlencode
 
 from .. import ssdp
@@ -293,6 +293,101 @@ class HeosDriver(Driver):
             return Status(volume=volume, muted=muted)
 
         return await self._transaction(read)
+
+    async def watch(
+        self, on_change: Callable[[Status], None]
+    ) -> Callable[[], Awaitable[None]] | None:
+        session = self._receiver_session()
+        target: dict[str, str | None] = {"pid": None}
+
+        def receive(response: dict) -> None:
+            metadata = response.get("heos", {})
+            command = "".join(str(metadata.get("command", "")).split())
+            if command != "event/player_volume_changed":
+                return
+            values = _response_values(response)
+            if str(values.get("pid", "")) != target["pid"]:
+                return
+
+            volume = None
+            raw_volume = values.get("level", values.get("volume"))
+            if raw_volume is not None:
+                try:
+                    parsed = int(raw_volume)
+                except (TypeError, ValueError):
+                    return
+                if not self.scale.min <= parsed <= self.scale.max:
+                    return
+                volume = parsed
+
+            muted = None
+            raw_mute = values.get("mute", values.get("state"))
+            if isinstance(raw_mute, bool):
+                muted = raw_mute
+            elif str(raw_mute).strip().casefold() in {"on", "off"}:
+                muted = str(raw_mute).strip().casefold() == "on"
+            if volume is not None or muted is not None:
+                on_change(Status(volume=volume, muted=muted))
+
+        session.subscribe(receive)
+        try:
+            async def register() -> None:
+                target["pid"] = await self._target_pid()
+                await self._request(
+                    "system/register_for_change_events", {"enable": "on"}
+                )
+
+            await self._transaction(register)
+        except asyncio.CancelledError:
+            await session.unsubscribe(receive)
+            raise
+        except DriverError:
+            await session.unsubscribe(receive)
+            return None
+
+        registration = {"generation": session.connection_generation, "active": True}
+        registration_lock = asyncio.Lock()
+        reconnect_tasks: set[asyncio.Task] = set()
+
+        async def register_after_reconnect(generation: int) -> None:
+            async with registration_lock:
+                if (
+                    not registration["active"]
+                    or generation <= registration["generation"]
+                ):
+                    return
+
+                async def register_again() -> None:
+                    target["pid"] = await self._target_pid()
+                    await self._request(
+                        "system/register_for_change_events", {"enable": "on"}
+                    )
+
+                try:
+                    await self._transaction(register_again)
+                    registration["generation"] = session.connection_generation
+                except DriverError:
+                    return
+
+        def connected(generation: int) -> None:
+            task = asyncio.create_task(register_after_reconnect(generation))
+            reconnect_tasks.add(task)
+            task.add_done_callback(reconnect_tasks.discard)
+
+        unsubscribe_connect = session.on_connect(connected)
+
+        async def unsubscribe() -> None:
+            registration["active"] = False
+            unsubscribe_connect()
+            pending = tuple(reconnect_tasks)
+            for task in pending:
+                if not task.done():
+                    task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+            await session.unsubscribe(receive)
+
+        return unsubscribe
 
     async def mode_state(self, status: Status | None = None) -> ModeState:
         return ModeState(None, (), complete=False)

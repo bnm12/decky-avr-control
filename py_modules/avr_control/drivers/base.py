@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import ClassVar, Literal
+from typing import Awaitable, Callable, ClassVar, Literal
 
 VOLUME = "volume"
 MUTE = "mute"
@@ -169,6 +169,17 @@ class Driver(ABC):
     @abstractmethod
     async def status(self) -> Status:
         """Everything at once, in as few round trips as the protocol allows."""
+
+    async def watch(
+        self, on_change: Callable[[Status], None]
+    ) -> Callable[[], Awaitable[None]] | None:
+        """Watch for receiver-originated state changes while the panel is open.
+
+        ``on_change`` receives a partial ``Status``: only fields carried by the
+        event are set; every other field is ``None``. Return an async
+        unsubscribe function, or ``None`` when this driver cannot push updates.
+        """
+        return None
 
     async def get_volume(self) -> int:
         return _require((await self.status()).volume, VOLUME)

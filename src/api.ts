@@ -59,10 +59,14 @@ export type Snapshot = {
     same_receiver: boolean;
   }[];
   capabilities: string[];
+  revision: number;
+  push: boolean;
   error?: string;
 };
 
 export type ControlIntent =
+  | { type: "panel_opened" }
+  | { type: "panel_closed" }
   | { type: "set_volume"; display: number }
   | { type: "set_mute"; muted: boolean }
   | { type: "set_power"; on: boolean }

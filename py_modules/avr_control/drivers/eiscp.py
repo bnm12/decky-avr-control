@@ -7,7 +7,7 @@ import re
 import socket
 import struct
 import time
-from typing import Callable, ClassVar
+from typing import Awaitable, Callable, ClassVar
 
 from .base import (
     MODE,
@@ -378,6 +378,38 @@ class EiscpDriver(Driver):
             power=(power.group(1) == "01") if power else None,
             mode=mode.group(1).upper() if mode else None,
         )
+
+    async def watch(
+        self, on_change: Callable[[Status], None]
+    ) -> Callable[[], Awaitable[None]]:
+        session = shared_session(self.host, self.port, _read_packet)
+
+        def receive(payload: str) -> None:
+            if _NJAPUSH.search(payload):
+                return
+            payload = payload.rstrip("\r\n\x1a")
+            match = re.fullmatch(
+                r"!1(?:MVL([0-9A-Fa-f]{2})|AMT(00|01)|PWR(00|01)|LMD([0-9A-Fa-f]{2,4}))",
+                payload,
+            )
+            if match is None:
+                return
+            volume, mute, power, mode = match.groups()
+            on_change(
+                Status(
+                    volume=int(volume, 16) if volume is not None else None,
+                    muted=(mute == "01") if mute is not None else None,
+                    power=(power == "01") if power is not None else None,
+                    mode=mode.upper() if mode is not None else None,
+                )
+            )
+
+        session.subscribe(receive)
+
+        async def unsubscribe() -> None:
+            await session.unsubscribe(receive)
+
+        return unsubscribe
 
     async def _set(self, command: str, pattern: str) -> re.Match[str]:
         try:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from typing import ClassVar
+from typing import Awaitable, Callable, ClassVar
 
 from .base import (
     MUTE,
@@ -89,6 +89,31 @@ class PioneerTelnetDriver(Driver):
             # The legacy reply flag is inverted: PWR0 means ON, PWR1 means OFF.
             power=power.group(1) == "0",
         )
+
+    async def watch(
+        self, on_change: Callable[[Status], None]
+    ) -> Callable[[], Awaitable[None]]:
+        port = int(self.config.get("port", TELNET_PORTS[0]))
+        session = shared_session(self.host, port, _read_line)
+
+        def receive(line: str) -> None:
+            line = line.strip()
+            volume = re.fullmatch(r"VOL(\d+)", line)
+            mute = re.fullmatch(r"MUT([01])", line)
+            power = re.fullmatch(r"PWR([012])", line)
+            if volume:
+                on_change(Status(volume=max(0, min(185, int(volume.group(1))))))
+            elif mute:
+                on_change(Status(muted=mute.group(1) == "0"))
+            elif power:
+                on_change(Status(power=power.group(1) == "0"))
+
+        session.subscribe(receive)
+
+        async def unsubscribe() -> None:
+            await session.unsubscribe(receive)
+
+        return unsubscribe
 
     async def mode_state(self, status: Status | None = None) -> ModeState:
         return ModeState(None, (), complete=False)

@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json
 import time
 from datetime import date, timedelta
 from dataclasses import dataclass
-from typing import Any, Callable, TypeAlias
+from typing import Any, Awaitable, Callable, TypeAlias
 
 from .drivers import REGISTRY, discover_all, get_driver_class, probe_all
 from .drivers.base import (
@@ -81,6 +82,16 @@ class SystemSuspending:
 
 
 @dataclass(frozen=True)
+class PanelOpened:
+    pass
+
+
+@dataclass(frozen=True)
+class PanelClosed:
+    pass
+
+
+@dataclass(frozen=True)
 class SetCaps:
     cap_display: float
     late_cap_display: float
@@ -135,6 +146,8 @@ ControlIntent: TypeAlias = (
     | SetSleepWake
     | SystemResumed
     | SystemSuspending
+    | PanelOpened
+    | PanelClosed
     | SetCaps
     | ConfigureReceiver
     | SelectReceiver
@@ -162,6 +175,7 @@ class ControlApplication:
         resume_window: float = 20.0,
         resume_retry_interval: float = 5.0,
         suspend_timeout: float = 1.5,
+        publish: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
     ):
         self.store = store
         self.registry = registry if registry is not None else REGISTRY
@@ -176,6 +190,7 @@ class ControlApplication:
         self.resume_window = resume_window
         self.resume_retry_interval = resume_retry_interval
         self.suspend_timeout = suspend_timeout
+        self.publish = publish
         self._active_driver: Driver | None = None
         self._receiver_generation = 0
         self._initialized_driver: Driver | None = None
@@ -192,11 +207,148 @@ class ControlApplication:
         self._schedule_window_key: str | None = None
         self._schedule_late_done = False
         self._schedule_mode_done = False
+        self._panel_open = False
+        self._watch_unsubscribe: Callable[[], Awaitable[None]] | None = None
+        self._watch_driver: Driver | None = None
+        self._watch_generation: int | None = None
+        self._push_active = False
+        self._revision = 0
+        self._watch_lock = asyncio.Lock()
+        self._push_tasks: set[asyncio.Task] = set()
 
     def _log(self, level: str, message: str) -> None:
         log = getattr(self.logger, level, None)
         if log:
             log(message)
+
+    async def _stop_watch_locked(self) -> None:
+        self._push_active = False
+        self._watch_driver = None
+        self._watch_generation = None
+        unsubscribe = self._watch_unsubscribe
+        self._watch_unsubscribe = None
+        if unsubscribe is not None:
+            try:
+                await unsubscribe()
+            except Exception as exc:
+                self._log("debug", f"Receiver watch unsubscribe failed: {exc}")
+
+    async def _stop_watch(self) -> None:
+        async with self._watch_lock:
+            await self._stop_watch_locked()
+
+    async def _start_watch(self) -> None:
+        if not self._panel_open or self.publish is None:
+            return
+        generation = self._receiver_generation
+        try:
+            driver = await self._get_driver(generation)
+            async with self._watch_lock:
+                if not self._panel_open or not self._is_current(generation, driver):
+                    return
+                if self._watch_generation == generation and self._watch_driver is driver:
+                    return
+                await self._stop_watch_locked()
+                self._watch_generation = generation
+                self._watch_driver = driver
+
+            await self._run("status", generation=generation, driver=driver)
+            if not self._panel_open or not self._is_current(generation, driver):
+                return
+
+            def on_change(partial: Status) -> None:
+                if (
+                    not self._panel_open
+                    or not self._push_active
+                    or self._watch_driver is not driver
+                    or self._watch_generation != generation
+                    or not self._is_current(generation, driver)
+                ):
+                    return
+                cached = self._last_status
+                status = (
+                    Status(
+                        cached[2].volume,
+                        cached[2].muted,
+                        cached[2].power,
+                        cached[2].mode,
+                    )
+                    if cached is not None
+                    and cached[0] == generation
+                    and cached[1] is driver
+                    else Status()
+                )
+                for field in ("volume", "muted", "power", "mode"):
+                    value = getattr(partial, field)
+                    if value is not None:
+                        setattr(status, field, value)
+                self._last_status = (generation, driver, status)
+                self._revision += 1
+                revision = self._revision
+                task = asyncio.create_task(
+                    self._publish_push_snapshot(revision, generation, driver)
+                )
+                self._push_tasks.add(task)
+                task.add_done_callback(self._push_tasks.discard)
+
+            self._push_active = True
+            unsubscribe = await driver.watch(on_change)
+            if unsubscribe is None:
+                async with self._watch_lock:
+                    if self._watch_generation == generation:
+                        self._push_active = False
+                        self._watch_driver = None
+                        self._watch_generation = None
+                return
+            async with self._watch_lock:
+                if (
+                    not self._panel_open
+                    or not self._is_current(generation, driver)
+                    or self._watch_driver is not driver
+                    or self._watch_generation != generation
+                ):
+                    await unsubscribe()
+                    return
+                self._watch_unsubscribe = unsubscribe
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._log("debug", f"Receiver push watch unavailable: {exc}")
+            async with self._watch_lock:
+                if self._watch_generation == generation:
+                    await self._stop_watch_locked()
+
+    async def _publish_push_snapshot(
+        self, revision: int, generation: int, driver: Driver
+    ) -> None:
+        if (
+            not self._push_active
+            or not self._is_current(generation, driver)
+            or self._watch_generation != generation
+        ):
+            return
+        try:
+            snapshot = await self._snapshot(refresh=False)
+            if (
+                not self._push_active
+                or not self._is_current(generation, driver)
+                or self._watch_generation != generation
+            ):
+                return
+            snapshot["revision"] = revision
+            snapshot["push"] = True
+            callback = self.publish
+            if callback is not None:
+                result = callback(snapshot)
+                if inspect.isawaitable(result):
+                    await result
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._log("error", f"Push snapshot publish failed: {exc}")
+            async with self._watch_lock:
+                if self._watch_generation == generation:
+                    await self._stop_watch_locked()
 
     def _cancel_reapply(self) -> None:
         task = self._reapply_task
@@ -873,6 +1025,7 @@ class ControlApplication:
         if found.host == current_host:
             return None
         self._log("info", f"AVR moved {current_host} -> {found.host}")
+        await self._stop_watch()
         data = self._settings()
         data.receiver.driver = found.driver
         data.receiver.config = dict(found.config)
@@ -886,6 +1039,7 @@ class ControlApplication:
         self._active_driver = driver_class(dict(found.config))
         self._initialized_driver = None
         self._last_status = None
+        await self._start_watch()
         return self._active_driver
 
     async def _run(
@@ -1021,6 +1175,7 @@ class ControlApplication:
         if not self._is_current(starting_generation, starting_driver):
             return {"ok": False, "error": str(self._stale_receiver_error())}
         self._cancel_reapply()
+        await self._stop_watch()
         self._bind_receiver_state(data)
         if driver_key == "auto":
             same_host = self._host(data) == str(config.get("host") or "").strip()
@@ -1066,6 +1221,7 @@ class ControlApplication:
                             current.receiver.id = resolved_id
                             self._bind_receiver_state(current)
                             self._save(current)
+                    await self._start_watch()
                     return {"ok": True}
                 return {"ok": False, "error": str(self._stale_receiver_error())}
             if found is None:
@@ -1086,6 +1242,7 @@ class ControlApplication:
             self._active_driver = active_driver
             self._initialized_driver = None
             self._last_status = None
+            await self._start_watch()
             return {"ok": True}
 
         candidate, config = self._normalized_driver_config(driver_class, config)
@@ -1110,6 +1267,7 @@ class ControlApplication:
         self._last_status = None
         self._receiver_generation += 1
         self._save(data)
+        await self._start_watch()
         return {"ok": True}
 
     async def discover(self) -> list[dict]:
@@ -1175,6 +1333,7 @@ class ControlApplication:
                 config={"host": ip, "port": 60128},
             )
         self._cancel_reapply()
+        await self._stop_watch()
         data.receiver = type(data.receiver)(
             driver=found.driver,
             config=dict(found.config),
@@ -1188,6 +1347,7 @@ class ControlApplication:
         self._initialized_driver = None
         self._last_status = None
         self._receiver_generation += 1
+        await self._start_watch()
 
     def _mode_label(self, driver: Driver, code: str | None) -> str | None:
         if not code:
@@ -1896,6 +2056,8 @@ class ControlApplication:
                 "off_on_suspend": data.sleep_wake.off_on_suspend,
                 "supports_power": power_supported,
             },
+            "revision": self._revision,
+            "push": self._push_active,
         }
         if error:
             result["error"] = error
@@ -1987,6 +2149,14 @@ class ControlApplication:
                 if data.sleep_wake.off_on_suspend:
                     self._start_suspend_task()
                 result = {"ok": True}
+            elif isinstance(intent, PanelOpened):
+                self._panel_open = True
+                await self._start_watch()
+                result = {"ok": True}
+            elif isinstance(intent, PanelClosed):
+                self._panel_open = False
+                await self._stop_watch()
+                result = {"ok": True}
             elif isinstance(intent, SetCaps):
                 generation = self._receiver_generation
                 driver = await self._get_driver(generation)
@@ -2057,6 +2227,8 @@ class ControlApplication:
                     SetSleepWake,
                     SystemResumed,
                     SystemSuspending,
+                    PanelOpened,
+                    PanelClosed,
                 ),
             )
             current_snapshot = await self._snapshot(
@@ -2086,6 +2258,8 @@ class ControlApplication:
                     "off_on_suspend": False,
                     "supports_power": False,
                 },
+                "revision": self._revision,
+                "push": self._push_active,
                 "error": str(exc),
             }
         outcome: dict[str, Any] = {
@@ -2124,6 +2298,8 @@ class ControlApplication:
         return outcome
 
     async def close(self) -> None:
+        self._panel_open = False
+        await self._stop_watch()
         tasks = (
             self._schedule_task,
             self._resume_task,
@@ -2140,5 +2316,11 @@ class ControlApplication:
         pending = [task for task in tasks if task is not None]
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
+        push_tasks = tuple(self._push_tasks)
+        for task in push_tasks:
+            if not task.done():
+                task.cancel()
+        if push_tasks:
+            await asyncio.gather(*push_tasks, return_exceptions=True)
         if self._active_driver is not None:
             await self._active_driver.close()

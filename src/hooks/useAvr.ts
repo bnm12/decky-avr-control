@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { addEventListener, removeEventListener } from "@decky/api";
 import {
   ControlIntent,
   dispatchIntent,
@@ -56,6 +57,9 @@ export function useAvr() {
   const lastLocal = useRef(0);
   const snapshotRef = useRef<Snapshot | null>(null);
   const chooseRef = useRef<(receiver: Receiver) => Promise<void>>(async () => {});
+  const revision = useRef(-1);
+  const pushActive = useRef(false);
+  const receiverChangeInProgress = useRef(false);
 
   const clearSliderTimer = useCallback(() => {
     if (timer.current !== null) clearTimeout(timer.current);
@@ -69,6 +73,8 @@ export function useAvr() {
       canApply: ControlFlags,
     ) => {
       if (token !== selectionToken.current) return;
+      revision.current = Math.max(revision.current, next.revision);
+      pushActive.current = next.push;
       setSnapshot((previous) => {
         if (token !== selectionToken.current) return previous;
         const merged: Snapshot = {
@@ -107,6 +113,8 @@ export function useAvr() {
       const startInFlight = { ...controlInFlight.current };
       const value = await getSnapshot();
       if (token !== selectionToken.current) return;
+      if (value.revision < revision.current) return;
+      revision.current = value.revision;
       const canApply = Object.fromEntries(
         controls.map((control) => [
           control,
@@ -126,6 +134,7 @@ export function useAvr() {
 
   const beginReceiverChange = useCallback(() => {
     selectionToken.current += 1;
+    receiverChangeInProgress.current = true;
     setSwitching(true);
     sequence.current = requestState();
     controlInFlight.current = requestState();
@@ -135,7 +144,10 @@ export function useAvr() {
   }, [clearSliderTimer]);
 
   const finishReceiverChange = useCallback((token: number) => {
-    if (token === selectionToken.current) setSwitching(false);
+    if (token === selectionToken.current) {
+      receiverChangeInProgress.current = false;
+      setSwitching(false);
+    }
   }, []);
 
   const invoke = useCallback(
@@ -373,6 +385,41 @@ export function useAvr() {
     let stopped = false;
     let pollTimer: ReturnType<typeof setTimeout> | null = null;
     const token = selectionToken.current;
+    const onAvrSnapshot = (value: Snapshot) => {
+      if (
+        stopped ||
+        receiverChangeInProgress.current ||
+        value.revision <= revision.current
+      ) {
+        return;
+      }
+      const currentConnection = snapshotRef.current?.connection;
+      if (
+        currentConnection &&
+        (currentConnection.driver !== value.connection.driver ||
+          currentConnection.summary !== value.connection.summary ||
+          JSON.stringify(currentConnection.fields) !==
+            JSON.stringify(value.connection.fields))
+      ) {
+        return;
+      }
+      revision.current = value.revision;
+      const eventToken = selectionToken.current;
+      const startSequence = { ...sequence.current };
+      const startInFlight = { ...controlInFlight.current };
+      const canApply = Object.fromEntries(
+        controls.map((control) => [
+          control,
+          startSequence[control] === sequence.current[control] &&
+            startInFlight[control] === 0 &&
+            controlInFlight.current[control] === 0,
+        ]),
+      ) as ControlFlags;
+      updateSnapshot(value, eventToken, canApply);
+      fullSnapshot(value);
+    };
+    addEventListener<[Snapshot]>("avr_snapshot", onAvrSnapshot);
+    void dispatchIntent({ type: "panel_opened" }).catch(() => {});
     const initialize = async () => {
       try {
         const [availableDrivers, firstSnapshot] = await Promise.all([
@@ -381,14 +428,19 @@ export function useAvr() {
         ]);
         if (stopped || token !== selectionToken.current) return;
         setDrivers(availableDrivers);
-        snapshotRef.current = firstSnapshot;
-        setSnapshot(firstSnapshot);
-        fullSnapshot(firstSnapshot);
-        setHost(firstSnapshot.connection.fields.host ?? "");
-        setManualConfig(firstSnapshot.connection.fields);
+        if (firstSnapshot.revision >= revision.current) {
+          revision.current = firstSnapshot.revision;
+          pushActive.current = firstSnapshot.push;
+          snapshotRef.current = firstSnapshot;
+          setSnapshot(firstSnapshot);
+          fullSnapshot(firstSnapshot);
+        }
+        const initialSnapshot = snapshotRef.current ?? firstSnapshot;
+        setHost(initialSnapshot.connection.fields.host ?? "");
+        setManualConfig(initialSnapshot.connection.fields);
         setSelectedDriver(
-          firstSnapshot.connection.configured
-            ? firstSnapshot.connection.driver ?? "auto"
+          initialSnapshot.connection.configured
+            ? initialSnapshot.connection.driver ?? "auto"
             : "auto",
         );
         try {
@@ -410,7 +462,7 @@ export function useAvr() {
           // Game lifetime notifications still keep the backend synchronized.
         }
         if (stopped || token !== selectionToken.current) return;
-        if (firstSnapshot.connection.configured) {
+        if (initialSnapshot.connection.configured) {
           await readSnapshot(true, token);
         } else {
           await search(true, token);
@@ -424,9 +476,17 @@ export function useAvr() {
           ) {
             await readSnapshot(false);
           }
-          if (!stopped) pollTimer = setTimeout(poll, 2000);
+          if (!stopped) {
+            pollTimer = setTimeout(
+              poll,
+              pushActive.current ? 15000 : 2000,
+            );
+          }
         };
-        pollTimer = setTimeout(poll, 2000);
+        pollTimer = setTimeout(
+          poll,
+          pushActive.current ? 15000 : 2000,
+        );
       } catch (reason) {
         if (!stopped) setError(String(reason));
       }
@@ -434,10 +494,12 @@ export function useAvr() {
     void initialize();
     return () => {
       stopped = true;
+      removeEventListener("avr_snapshot", onAvrSnapshot);
       if (pollTimer !== null) clearTimeout(pollTimer);
       clearSliderTimer();
+      void dispatchIntent({ type: "panel_closed" }).catch(() => {});
     };
-  }, [clearSliderTimer, readSnapshot, search]);
+  }, [clearSliderTimer, readSnapshot, search, updateSnapshot]);
 
   return {
     snapshot,

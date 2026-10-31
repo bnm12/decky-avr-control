@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import math
 import os
 from typing import Any
@@ -11,6 +12,8 @@ from avr_control.application import (
     ForgetGame,
     GameStarted,
     GameStopped,
+    PanelClosed,
+    PanelOpened,
     RememberForGame,
     SelectReceiver,
     SetCaps,
@@ -46,7 +49,22 @@ settings_repository = SettingsRepository(
     logger=decky.logger,
     secret_keys=secret_keys,
 )
-application = ControlApplication(settings_repository, logger=decky.logger)
+
+
+async def _publish_snapshot(snapshot: dict) -> None:
+    emit = getattr(decky, "emit", None)
+    if not callable(emit):
+        raise RuntimeError("Decky event publishing is unavailable")
+    result = emit("avr_snapshot", snapshot)
+    if inspect.isawaitable(result):
+        await result
+
+
+application = ControlApplication(
+    settings_repository,
+    logger=decky.logger,
+    publish=_publish_snapshot if callable(getattr(decky, "emit", None)) else None,
+)
 
 
 def _intent(value: Any):
@@ -74,6 +92,8 @@ def _intent(value: Any):
         ),
         "system_resumed": (SystemResumed, {}),
         "system_suspending": (SystemSuspending, {}),
+        "panel_opened": (PanelOpened, {}),
+        "panel_closed": (PanelClosed, {}),
         "set_caps": (
             SetCaps,
             {"cap_display": "number", "late_cap_display": "number"},

@@ -11,13 +11,14 @@
 | Verified on | none (simulator only) |
 | Transport | [spec] Telnet-compatible TCP port 23; [community] HTTP/XML status and control, normally port 80 or 8080 depending on model year. Telnet is preferred when it answers; HTTP is the fallback. |
 | Discovery | [assumed] SSDP M-SEARCH for MediaRenderer and root-device advertisements; description UDN is the preferred stable ID. |
-| Connections | [community] Receivers commonly allow one active Telnet client; a shared TCP session serializes drivers for the same host and port and closes after each transaction. |
+| Connections | [community] Receivers commonly allow one active Telnet client; a shared TCP session serializes drivers for the same host and port and closes after each transaction except while a push subscriber is active. |
+| State updates | [spec][11, not yet measured] The Telnet protocol reports unsolicited status-change lines; this driver watches MV, MU, PW and MS lines. HTTP transport remains polling-only. |
 
 ## Transport and framing
 
 [spec] Send plain ASCII commands terminated by carriage return (`\r`, byte `0x0d`) to TCP port 23. Replies are CR-terminated ASCII lines; a line-feed, if present, is ignored. For example, send `PW?\r` and expect `PWON\r` or `PWSTANDBY\r`.
 
-[community] The receiver can also push unsolicited event lines on an open Telnet connection. The shared `ReceiverSession` routes lines that do not match a transaction to subscribers; this driver does not currently subscribe. It uses a fresh connection for each transaction rather than keeping a subscription open.
+[spec][11, not yet measured] Denon AVR control protocol documents status-change event lines on Telnet connections, including `MV`, `MU`, `PW` and `MS` reports. The driver maps these to partial status updates when using Telnet. This behavior has not been measured on a real receiver. The shared `ReceiverSession` routes unclaimed lines to subscribers; the HTTP transport has no push subscription and remains polling-only.
 
 [community] The driver first checks Telnet TCP 23 and prefers it if it returns a Denon power reply. When Telnet is unavailable, busy, or disabled, it tries HTTP on the configured `http_port`, then ports 80 and 8080. The selected transport and HTTP port are retained in receiver config.
 
@@ -79,6 +80,7 @@ The common static set is not guaranteed to enumerate every model's selectable mo
 - [assumed] Confirm the 0 dB reference, volume range, and relative-versus-absolute display for older models and each firmware family; the documented modern decimal mapping may not apply to every receiver.
 - [assumed] Confirm which `MS` codes can be set for each input/signal and how unsupported modes are reported.
 - [assumed] Confirm which Denon/Marantz models advertise a usable SSDP description and expose manufacturer, model, and UDN fields.
+- [spec, not yet measured] Tester checklist: change volume with the remote while the panel is open; does the slider follow within 1 s?
 
 ## Sources
 
@@ -92,3 +94,4 @@ The common static set is not guaranteed to enumerate every model's selectable mo
 8. [community] [ol-iver/denonavr XML status example (`tests/xml/AVR-3311CI-formMainZone_MainZoneXml.xml`)](https://github.com/ol-iver/denonavr/blob/12b5cf70efe843a81276cfab56311de88c7fe489/tests/xml/AVR-3311CI-formMainZone_MainZoneXml.xml); MIT.
 9. [community] [ol-iver/denonavr AVR-X2100W status XML recording (`tests/xml/AVR-X2100W-2-formMainZone_MainZoneXmlStatus.xml`)](https://github.com/ol-iver/denonavr/blob/12b5cf70efe843a81276cfab56311de88c7fe489/tests/xml/AVR-X2100W-2-formMainZone_MainZoneXmlStatus.xml); MIT.
 10. [community] [ol-iver/denonavr AVR-1912 fallback XML recording (`tests/xml/AVR-1912-formMainZone_MainZoneXml.xml`)](https://github.com/ol-iver/denonavr/blob/12b5cf70efe843a81276cfab56311de88c7fe489/tests/xml/AVR-1912-formMainZone_MainZoneXml.xml); MIT.
+11. [spec] [Denon 2018 AVR Control Protocol](https://assets.denon.com/documentmaster/us/denon-avr-2018-avr-control-protocol-v01.pdf): Telnet status-change event reports; not measured for this project.
