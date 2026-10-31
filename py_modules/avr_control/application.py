@@ -249,20 +249,20 @@ class ControlApplication:
     async def _start_watch(self) -> None:
         if not self._panel_open or self.publish is None:
             return
-        self._watch_start_token += 1
-        start_token = self._watch_start_token
         generation = self._receiver_generation
+        start_token: int | None = None
         try:
             driver = await self._get_driver(generation)
             async with self._watch_lock:
                 if (
-                    start_token != self._watch_start_token
-                    or not self._panel_open
+                    not self._panel_open
                     or not self._is_current(generation, driver)
                 ):
                     return
                 if self._watch_generation == generation and self._watch_driver is driver:
                     return
+                self._watch_start_token += 1
+                start_token = self._watch_start_token
                 await self._stop_watch_locked(invalidate_start=False)
                 self._watch_generation = generation
                 self._watch_driver = driver
@@ -347,7 +347,8 @@ class ControlApplication:
             self._log("debug", f"Receiver push watch unavailable: {exc}")
             async with self._watch_lock:
                 if (
-                    start_token == self._watch_start_token
+                    start_token is not None
+                    and start_token == self._watch_start_token
                     and self._watch_generation == generation
                 ):
                     await self._stop_watch_locked()
@@ -545,14 +546,14 @@ class ControlApplication:
                     f"{_SCHEDULE_MAX_ATTEMPTS} attempts for {window_key}",
                 )
             return False
-        self._schedule_attempts[key] = attempts + 1
         return True
 
     def _log_schedule_unconfirmed(
         self, window_key: str, operation: str, observed: Any, requested: Any
     ) -> None:
         key = (window_key, operation)
-        attempts = self._schedule_attempts.get(key, 0)
+        attempts = self._schedule_attempts.get(key, 0) + 1
+        self._schedule_attempts[key] = attempts
         if attempts >= _SCHEDULE_MAX_ATTEMPTS:
             message = (
                 f"Scheduled {operation} boundary remains pending after "
@@ -2336,6 +2337,7 @@ class ControlApplication:
         result: dict[str, Any] | None
         result_generation: int | None = None
         result_driver: Driver | None = None
+        result_receiver_id: str | None = None
         try:
             if isinstance(intent, SetVolume):
                 generation = self._receiver_generation
@@ -2343,10 +2345,16 @@ class ControlApplication:
                 driver = await self._ensure_initialized(driver, generation)
                 if not self._is_current(generation, driver):
                     raise self._stale_receiver_error()
+                selected_receiver_id = self._settings().receiver.id
                 raw = VolumePolicy.to_raw(intent.display, driver.scale)
                 result = await self._set_volume(raw)
                 result_generation = generation
-                result_driver = driver
+                result_driver = self._active_driver
+                result_receiver_id = (
+                    str(selected_receiver_id).upper()
+                    if selected_receiver_id is not None
+                    else None
+                )
             elif isinstance(intent, SetMute):
                 result = await self._set_mute(intent.muted)
                 result_generation = self._receiver_generation
@@ -2505,7 +2513,14 @@ class ControlApplication:
             outcome["ok"]
             and has_command_state
             and result_generation is not None
-            and not self._is_current(result_generation, result_driver)
+            and (
+                not self._is_current(result_generation, result_driver)
+                or (
+                    result_receiver_id is not None
+                    and str(self._settings().receiver.id or "").upper()
+                    != result_receiver_id
+                )
+            )
         ):
             outcome["ok"] = False
             outcome["error"] = str(self._stale_receiver_error())

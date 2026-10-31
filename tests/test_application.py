@@ -488,6 +488,24 @@ class ApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(closed["snapshot"]["push"])
         self.assertEqual(PushMemoryDriver.unsubscribe_count, 2)
 
+    async def test_reopening_active_panel_keeps_push_watch_updates_live(self):
+        self.save_settings()
+        PushMemoryDriver.watch_callbacks = []
+        PushMemoryDriver.unsubscribe_count = 0
+        published = asyncio.Queue()
+        self.application.registry = [PushMemoryDriver]
+        self.application.publish = published.put_nowait
+
+        first_open = await self.application.dispatch(PanelOpened())
+        second_open = await self.application.dispatch(PanelOpened())
+        PushMemoryDriver.watch_callbacks[-1](Status(volume=111))
+        pushed_snapshot = await asyncio.wait_for(published.get(), 1)
+
+        self.assertTrue(first_open["snapshot"]["push"])
+        self.assertTrue(second_open["snapshot"]["push"])
+        self.assertEqual(pushed_snapshot["receiver"]["volume"]["raw"], 111)
+        await self.application.close()
+
     async def test_reopening_panel_supersedes_a_pending_watch_startup(self):
         self.save_settings()
 
@@ -1576,6 +1594,40 @@ class ApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(state["ok"])
         self.assertEqual(MemoryDriver.discovery_calls, 2)
 
+    async def test_command_result_from_rediscovered_same_receiver_is_not_stale(self):
+        class FailingSetVolumeDriver(MemoryDriver):
+            async def set_volume(self, raw):
+                if self.config.get("host") in self.fail_hosts:
+                    raise DriverError("receiver unreachable")
+                return await super().set_volume(raw)
+
+        self.save_settings()
+        data = self.store.load()
+        data["receiver"]["config"]["host"] = "old"
+        self.store.save(data)
+        self.application.registry = [FailingSetVolumeDriver]
+        await self.application.snapshot()
+        FailingSetVolumeDriver.fail_hosts = {"old"}
+        FailingSetVolumeDriver.discovered = [
+            Found(
+                driver="memory",
+                model="Memory Receiver",
+                id="stable-id",
+                host="new",
+                config={"host": "new"},
+            )
+        ]
+
+        outcome = await self.application.dispatch(SetVolume(-22))
+
+        self.assertTrue(outcome["ok"], outcome)
+        self.assertNotEqual(FailingSetVolumeDriver.state.volume, 100)
+        self.assertEqual(
+            outcome["snapshot"]["receiver"]["volume"]["raw"],
+            FailingSetVolumeDriver.state.volume,
+        )
+        self.assertEqual(self.store.load()["receiver"]["config"]["host"], "new")
+
     async def test_unresolved_driver_rediscovery_runs_on_initial_state_lookup(self):
         class UnresolvedMemoryDriver(MemoryDriver):
             @classmethod
@@ -2566,6 +2618,33 @@ class ApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(
             any("remains pending after 3 attempts" in item
                 for item in WarningLogger.warnings)
+        )
+
+    async def test_schedule_retries_transient_setter_failures_past_mismatch_limit(self):
+        self.save_settings()
+
+        class TransientScheduleDriver(MemoryDriver):
+            volume_attempts = 0
+
+            async def set_volume(self, raw):
+                type(self).volume_attempts += 1
+                if type(self).volume_attempts <= 3:
+                    raise DriverError("temporary connection failure")
+                self.state.volume = raw
+                return raw
+
+        TransientScheduleDriver.volume_attempts = 0
+        self.application.registry = [TransientScheduleDriver]
+        self.local_time.set(2026, 10, 31, 22, 0)
+        await self.application.dispatch(SetSchedule(True, "22:00", "23:00", None))
+
+        for _ in range(4):
+            await self.application.tick()
+
+        self.assertEqual(TransientScheduleDriver.volume_attempts, 4)
+        self.assertEqual(TransientScheduleDriver.state.volume, 64)
+        self.assertEqual(
+            self.store.load()["schedule"]["last_late_window"], "2026-10-31"
         )
 
     async def test_game_mode_profile_overrides_schedule_mode_and_late_volume_is_not_saved(self):
