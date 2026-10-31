@@ -31,8 +31,8 @@ type VolumeScale = {
 };
 type State = {
   ok: boolean;
-  volume?: number;
-  muted?: boolean;
+  volume?: number | null;
+  muted?: boolean | null;
   power?: boolean | null;
   max?: number;
   cap?: number;
@@ -63,11 +63,18 @@ type ConfigField = {
 };
 type DriverOption = { key: string; label: string; fields: ConfigField[] };
 type Result = { ok: boolean; error?: string };
+type Connection = {
+  configured: boolean;
+  driver: string | null;
+  label: string | null;
+  summary: string;
+  fields: Record<string, string>;
+};
 
 const getState = callable<[], State>("get_state");
 const setVolume = callable<[number], State>("set_volume");
 const setMute = callable<[boolean], Result>("set_mute");
-const getHost = callable<[], string>("get_host");
+const getConnection = callable<[], Connection>("get_connection");
 const setMax = callable<[number], void>("set_max");
 const setLateMax = callable<[number], void>("set_late_max");
 const setMode = callable<[string], Result>("set_mode");
@@ -129,11 +136,11 @@ const syncRunningGame = async () => {
 };
 
 function Content() {
-  const [vol, setVol] = useState(0);
+  const [vol, setVol] = useState<number | null>(null);
   const [max, setMaxState] = useState(100);
   const [maxText, setMaxText] = useState("");
   const [lateText, setLateText] = useState("");
-  const [muted, setMuted] = useState(false);
+  const [muted, setMuted] = useState<boolean | null>(null);
   const [power, setPowerState] = useState<boolean | null>(null);
   const [lateOn, setLateOn] = useState(false);
   const [mode, setModeLabel] = useState<string | null>(null);
@@ -143,6 +150,7 @@ function Content() {
   const [profiles, setProfiles] = useState<GameProfile[]>([]);
   const [receiverState, setReceiverState] = useState<State | null>(null);
   const [host, setHostState] = useState("");
+  const [connection, setConnection] = useState<Connection | null>(null);
   const [drivers, setDrivers] = useState<DriverOption[]>([]);
   const [selectedDriver, setSelectedDriver] = useState("auto");
   const [manualConfig, setManualConfig] = useState<Record<string, string>>({});
@@ -153,20 +161,41 @@ function Content() {
   const [saving, setSaving] = useState(false);
   const timer = useRef<number | undefined>(undefined);
   const lastLocal = useRef(0); // time of the last change made in this panel
-  const savedHost = useRef("");
+  const selectionGeneration = useRef(0);
+  const switchingReceiver = useRef(false);
+  const connectionRef = useRef<Connection | null>(null);
+
+  const isCurrent = (generation: number) =>
+    generation === selectionGeneration.current;
+  const updateConnection = (value: Connection) => {
+    connectionRef.current = value;
+    setConnection(value);
+  };
+  const beginReceiverChange = () => {
+    selectionGeneration.current += 1;
+    switchingReceiver.current = true;
+    window.clearTimeout(timer.current);
+    timer.current = undefined;
+    return selectionGeneration.current;
+  };
+  const finishReceiverChange = (generation: number) => {
+    if (isCurrent(generation)) switchingReceiver.current = false;
+  };
 
   // full=true also (re)fills the settings fields; polling must not clobber typing.
-  const refresh = async (full: boolean) => {
+  const refresh = async (full: boolean, generation = selectionGeneration.current) => {
     const r = await getState();
+    if (!isCurrent(generation)) return;
     if (!r.ok) {
-      if (savedHost.current) setErr(r.error ?? "Unknown error");
+      if (connectionRef.current?.configured) setErr(r.error ?? "Unknown error");
+      else setErr(null);
       setReceiverState(null);
       return;
     }
     setErr(null);
     setReceiverState(r);
-    setVol(r.volume ?? 0);
-    setMuted(!!r.muted);
+    setVol(r.volume ?? null);
+    setMuted(r.muted ?? null);
     setMaxState(r.max ?? r.scale?.max ?? 100);
     setPowerState(r.power ?? null);
     setModeLabel(r.mode ?? null);
@@ -180,53 +209,77 @@ function Content() {
         setMaxText(displayInput(r.cap ?? r.scale.default_cap, r.scale));
         setLateText(displayInput(r.late_cap ?? r.scale.default_cap, r.scale));
       }
-      setProfiles(await listGames());
+      const currentProfiles = await listGames();
+      if (!isCurrent(generation)) return;
+      setProfiles(currentProfiles);
     }
   };
 
   const choose = async (r: Receiver) => {
-    await selectReceiver(r.ip, r.id);
-    savedHost.current = r.ip;
-    setHostState(r.ip);
-    setManualConfig({ host: r.ip });
-    setSelectedDriver(r.driver);
-    setNote(`Using ${r.model} at ${r.ip}`);
-    await refresh(true);
+    const generation = beginReceiverChange();
+    setSaving(false);
+    setSearching(false);
+    try {
+      await selectReceiver(r.ip, r.id);
+      if (!isCurrent(generation)) return;
+      const selected = await getConnection();
+      if (!isCurrent(generation)) return;
+      updateConnection(selected);
+      const fields = selected.fields ?? {};
+      setHostState(fields.host ?? r.ip);
+      setManualConfig(fields);
+      setSelectedDriver(selected.driver ?? r.driver);
+      setNote(`Using ${selected.summary || r.model} at ${fields.host ?? r.ip}`);
+      finishReceiverChange(generation);
+      await refresh(true, generation);
+    } catch (error) {
+      if (isCurrent(generation)) setErr(String(error));
+    } finally {
+      finishReceiverChange(generation);
+    }
   };
 
-  const search = async (auto: boolean) => {
+  const search = async (auto: boolean, generation = selectionGeneration.current) => {
     setSearching(true);
     setNote(null);
     try {
       const list = await discover();
+      if (!isCurrent(generation)) return;
       setFound(list);
       if (list.length === 0) {
         setNote("No receiver found. Enter its IP address manually.");
-      } else if (auto && list.length === 1) {
+      } else if (auto && !connectionRef.current?.configured && list.length === 1) {
         await choose(list[0]);
       }
     } finally {
-      setSearching(false);
+      if (isCurrent(generation)) setSearching(false);
     }
   };
 
   useEffect(() => {
     let stop = false;
     let t: number | undefined;
+    const generation = selectionGeneration.current;
     (async () => {
-      const [h, availableDrivers] = await Promise.all([getHost(), listDrivers()]);
-      if (stop) return;
-      savedHost.current = h;
-      setHostState(h);
-      setManualConfig({ host: h });
+      const [savedConnection, availableDrivers] = await Promise.all([
+        getConnection(),
+        listDrivers(),
+      ]);
+      if (stop || !isCurrent(generation)) return;
+      updateConnection(savedConnection);
+      const fields = savedConnection.fields ?? {};
+      setHostState(fields.host ?? "");
+      setManualConfig(fields);
       setDrivers(availableDrivers);
+      setSelectedDriver(savedConnection.configured ? savedConnection.driver ?? "auto" : "auto");
       await syncRunningGame();
-      if (h) await refresh(true);
-      else search(true); // first run: look for the receiver automatically
+      if (stop || !isCurrent(generation)) return;
+      if (savedConnection.configured) await refresh(true, generation);
+      else await search(true, generation); // first run: look for the receiver automatically
       // Live sync: follow changes made with the remote or the receiver app.
       const loop = async () => {
         if (stop) return;
-        if (savedHost.current && Date.now() - lastLocal.current > 2000) {
+        if (connectionRef.current?.configured && Date.now() - lastLocal.current > 2000) {
           await refresh(false);
         }
         if (!stop) t = window.setTimeout(loop, 2000);
@@ -242,21 +295,29 @@ function Content() {
 
   const toggleRemember = async (what: "volume" | "mode", c: boolean) => {
     if (!game) return;
+    const generation = selectionGeneration.current;
     setGame({ ...game, [what]: c });
+    if (!isCurrent(generation)) return;
     const r = await setGameRemember(what, c);
+    if (!isCurrent(generation)) return;
     if (!r.ok) {
       setErr(r.error ?? "Unknown error");
       setGame({ ...game, [what]: !c });
     }
-    setProfiles(await listGames());
+    const currentProfiles = await listGames();
+    if (isCurrent(generation)) setProfiles(currentProfiles);
   };
 
   const onSlide = (v: number) => {
+    if (vol === null || switchingReceiver.current) return;
+    const generation = selectionGeneration.current;
     lastLocal.current = Date.now();
     setVol(v);
     window.clearTimeout(timer.current);
     timer.current = window.setTimeout(async () => {
+      if (!isCurrent(generation) || switchingReceiver.current) return;
       const r = await setVolume(v);
+      if (!isCurrent(generation)) return;
       lastLocal.current = Date.now();
       if (!r.ok) setErr(r.error ?? "Unknown error");
       else setErr(null);
@@ -264,6 +325,7 @@ function Content() {
   };
 
   const saveReceiver = async () => {
+    const generation = beginReceiverChange();
     setSaving(true);
     setErr(null);
     const enteredCap = maxText;
@@ -278,7 +340,9 @@ function Content() {
       for (const field of driver?.fields ?? []) {
         const value = field.key === "host" ? host : manualConfig[field.key] ?? "";
         const savedSecret =
-          field.secret && receiverState?.driver === selectedDriver;
+          field.secret &&
+          connection?.configured &&
+          connection.driver === selectedDriver;
         if (field.required && !value.trim() && !savedSecret) {
           validationError = `${field.label} is required.`;
           break;
@@ -292,17 +356,26 @@ function Content() {
     if (validationError) {
       setErr(validationError);
       setSaving(false);
+      finishReceiverChange(generation);
       return;
     }
     try {
       const result = await configure(selectedDriver, config);
+      if (!isCurrent(generation)) return;
       if (!result.ok) {
         setErr(result.error ?? "Unknown error");
         return;
       }
-      savedHost.current = host.trim();
+      const savedConnection = await getConnection();
+      if (!isCurrent(generation)) return;
+      updateConnection(savedConnection);
+      const fields = savedConnection.fields ?? {};
+      setHostState(fields.host ?? "");
+      setManualConfig(fields);
+      setSelectedDriver(savedConnection.driver ?? selectedDriver);
       setNote("Receiver settings saved.");
       const connected = await getState();
+      if (!isCurrent(generation)) return;
       let capError: string | null = null;
       let capNote: string | null = null;
       if (
@@ -317,7 +390,9 @@ function Content() {
         if (cap === null || lateCap === null) {
           capError = `Enter valid volume caps in ${connected.scale.unit}.`;
         } else {
+          if (!isCurrent(generation)) return;
           await setMax(cap);
+          if (!isCurrent(generation)) return;
           await setLateMax(lateCap);
         }
       } else if (
@@ -329,11 +404,17 @@ function Content() {
       ) {
         capNote = `Receiver settings saved. Set volume caps in ${connected.scale.unit}.`;
       }
-      await refresh(true);
+      await refresh(true, generation);
+      if (!isCurrent(generation)) return;
       if (capError) setErr(capError);
       if (capNote) setNote(capNote);
+    } catch (error) {
+      if (isCurrent(generation)) setErr(String(error));
     } finally {
-      setSaving(false);
+      if (isCurrent(generation)) {
+        setSaving(false);
+        finishReceiverChange(generation);
+      }
     }
   };
 
@@ -349,25 +430,36 @@ function Content() {
   return (
     <>
       <PanelSection title="Receiver">
-        {receiverState?.driver_label && (
+        {connection?.configured ? (
           <PanelSectionRow>
             <div>
-              {receiverState.driver_label}: {host || receiverState.driver_label}
+              {connection.label ??
+                receiverState?.driver_label ??
+                connection.driver ??
+                "Receiver"}: {connection.summary}
             </div>
           </PanelSectionRow>
-        )}
+        ) : receiverState?.driver_label ? (
+          <PanelSectionRow>
+            <div>{receiverState.driver_label}</div>
+          </PanelSectionRow>
+        ) : null}
         {hasCapability("power") && (
           <PanelSectionRow>
             <ToggleField
-              label="Power"
-              checked={!!power}
+              label={power === null ? "Power (unknown)" : "Power"}
+              checked={power ?? false}
               onChange={async (on: boolean) => {
+                const generation = selectionGeneration.current;
+                if (switchingReceiver.current) return;
                 lastLocal.current = Date.now();
                 setPowerState(on);
+                if (!isCurrent(generation) || switchingReceiver.current) return;
                 const result = await setPower(on);
+                if (!isCurrent(generation)) return;
                 if (!result.ok) {
                   setErr(result.error ?? "Unknown error");
-                  await refresh(false);
+                  await refresh(false, generation);
                 } else {
                   setErr(null);
                 }
@@ -383,11 +475,12 @@ function Content() {
         {!standby && hasCapability("volume") && scale && (
           <PanelSectionRow>
             <SliderField
-              label={`Volume (${displayText(vol, scale)})`}
-              value={vol}
+              label={vol === null ? "Volume unknown" : `Volume (${displayText(vol, scale)})`}
+              value={vol ?? scale.min}
               min={scale.min}
               max={max}
               step={1}
+              disabled={vol === null}
               showValue={false}
               onChange={onSlide}
             />
@@ -396,15 +489,19 @@ function Content() {
         {!standby && hasCapability("mute") && (
           <PanelSectionRow>
             <ToggleField
-              label="Mute"
-              checked={muted}
+              label={muted === null ? "Mute (unknown)" : "Mute"}
+              checked={muted ?? false}
               onChange={async (c: boolean) => {
+                const generation = selectionGeneration.current;
+                if (switchingReceiver.current) return;
                 lastLocal.current = Date.now();
                 setMuted(c);
+                if (!isCurrent(generation) || switchingReceiver.current) return;
                 const r = await setMute(c);
+                if (!isCurrent(generation)) return;
                 if (!r.ok) {
                   setErr(r.error ?? "Unknown error");
-                  await refresh(false);
+                  await refresh(false, generation);
                 } else setErr(null);
               }}
             />
@@ -421,11 +518,15 @@ function Content() {
               }
               checked={lateOn}
               onChange={async (c: boolean) => {
+                const generation = selectionGeneration.current;
+                if (switchingReceiver.current) return;
                 lastLocal.current = Date.now();
                 setLateOn(c);
+                if (!isCurrent(generation) || switchingReceiver.current) return;
                 const r = await setLateNight(c);
+                if (!isCurrent(generation)) return;
                 if (!r.ok) setErr(r.error ?? "Unknown error");
-                await refresh(false);
+                await refresh(false, generation);
               }}
             />
           </PanelSectionRow>
@@ -443,13 +544,17 @@ function Content() {
               ]}
               selectedOption={modeCode}
               onChange={async (opt: { data: string }) => {
+                const generation = selectionGeneration.current;
+                if (switchingReceiver.current) return;
                 lastLocal.current = Date.now();
                 setModeCode(opt.data);
+                if (!isCurrent(generation) || switchingReceiver.current) return;
                 const r = await setMode(opt.data);
+                if (!isCurrent(generation)) return;
                 if (!r.ok) setErr(r.error ?? "Unknown error");
                 else setErr(null);
                 lastLocal.current = Date.now();
-                if (!r.ok) await refresh(false); // snap back to the real mode
+                if (!r.ok) await refresh(false, generation); // snap back to the real mode
               }}
             />
           </PanelSectionRow>
@@ -462,7 +567,7 @@ function Content() {
         <PanelSectionRow>
           <ButtonItem
             layout="below"
-            disabled={searching}
+            disabled={searching || saving}
             onClick={() => search(false)}
           >
             {searching ? "Searching…" : "Search network"}
@@ -507,7 +612,8 @@ function Content() {
           </PanelSectionRow>
         ) : (
           selectedFields.map((field) => {
-            const isCurrentDriver = receiverState?.driver === selectedDriver;
+            const isCurrentDriver =
+              connection?.configured && connection.driver === selectedDriver;
             const value = field.key === "host" ? host : manualConfig[field.key] ?? "";
             return (
               <PanelSectionRow key={field.key}>
@@ -559,13 +665,18 @@ function Content() {
               onClick={async () => {
                 const cap = inputToRaw(maxText, scale);
                 const lateCap = inputToRaw(lateText, scale);
+                const generation = selectionGeneration.current;
+                if (switchingReceiver.current) return;
                 if (cap === null || lateCap === null) {
                   setErr(`Enter valid volume caps in ${scale.unit}.`);
                   return;
                 }
+                if (!isCurrent(generation)) return;
                 await setMax(cap);
+                if (!isCurrent(generation)) return;
                 await setLateMax(lateCap);
-                await refresh(true);
+                if (!isCurrent(generation)) return;
+                await refresh(true, generation);
               }}
             >
               Save volume caps

@@ -30,7 +30,8 @@ CI (`.github/workflows/build.yml`) runs the tests on Python 3.10 and builds with
 
 - **Stdlib only** in Python, including drivers and `tools/` (ADR-0008). Hand-write protocols.
 - **Python 3.10 compatible**: Decky bundles an older Python than a dev machine. Use `from __future__ import annotations`. 3.11+ APIs such as `asyncio.timeout`, `TaskGroup` and `except*` break on device.
-- **Drivers never import `decky`** and keep no module-level state, so tests run them against fakes. Every driver error is a `DriverError` subclass with a user-facing message.
+- **Drivers never import `decky`** and keep no module-level state, so tests run them against fakes. One exception: single-client protocols (Denon) share a per-receiver `asyncio.Lock` so overlapping polls and commands don't open two connections. Every driver error is a `DriverError` subclass with a user-facing message.
+- **Receiver changes invalidate in-flight work.** The controller tags operations with a selection generation and drops stale results; the panel does the same for its debounced writes. Keep that when adding operations.
 - **RPC contract:** renaming or reshaping a `Plugin` method breaks `src/index.tsx`. Change both in the same commit.
 - **Hardware:** only a Pioneer VSX-935 (eISCP) has been tested on real hardware, by the owner (bnm12). Agents can't reach a receiver or Steam, so everything else is simulator-verified. Say so in protocol specs (source tags) and in summaries.
 

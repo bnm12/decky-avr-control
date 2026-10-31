@@ -168,6 +168,51 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(MemoryDriver.state.volume, 100)
         self.assertEqual(self.store.load()["late"], {"active": False})
 
+    async def test_caps_and_late_night_do_not_carry_to_a_different_receiver(self):
+        class PercentDriver(Driver):
+            key = "percent"
+            label = "Percent Receiver"
+            scale = VolumeScale(
+                min=0, max=100, unit="%", zero=0, steps_per_unit=1, default_cap=60
+            )
+            capabilities = frozenset({VOLUME})
+
+            def __init__(self, config):
+                super().__init__(config)
+                self.volume = 10
+
+            async def status(self):
+                return Status(volume=self.volume)
+
+            async def set_volume(self, raw):
+                self.volume = raw
+                return raw
+
+        self.controller.registry = [MemoryDriver, PercentDriver]
+        self.save_settings(
+            {
+                "version": 2,
+                "receiver": {
+                    "driver": "memory",
+                    "config": {"host": "old-receiver"},
+                    "id": "old-id",
+                },
+                "cap": 100,
+                "late_cap": 70,
+                "late": {"active": True, "prev_volume": 50},
+                "games": {},
+            }
+        )
+
+        result = await self.controller.configure("percent", {"host": "new-receiver"})
+        self.assertTrue(result["ok"])
+        state = await self.controller.get_state()
+
+        self.assertEqual(state["cap"], 60)
+        self.assertEqual(state["late_cap"], 20)
+        self.assertFalse(state["late"])
+        self.assertEqual((await self.controller.set_volume(100))["volume"], 60)
+
     async def test_late_night_requires_a_known_volume(self):
         self.save_settings()
         MemoryDriver.state = Status(volume=None, muted=None, power=False, mode=None)
@@ -217,6 +262,144 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["applied"])
         self.assertEqual(MemoryDriver.state.volume, 70)
         self.assertEqual(self.store.load()["games"]["14"]["driver"], "memory")
+
+    async def test_game_profile_volume_uses_scale_learned_from_initial_status(self):
+        class LearningDriver(Driver):
+            key = "learning"
+            label = "Learning Receiver"
+            capabilities = frozenset({VOLUME})
+            scale = VolumeScale(
+                min=0, max=100, unit="%", zero=0, steps_per_unit=1, default_cap=100
+            )
+            status_calls = 0
+            sent_volumes = []
+
+            async def status(self):
+                type(self).status_calls += 1
+                type(self).scale = VolumeScale(
+                    min=0,
+                    max=100,
+                    unit="%",
+                    zero=0,
+                    steps_per_unit=1,
+                    default_cap=70,
+                )
+                return Status(volume=40)
+
+            async def set_volume(self, raw):
+                type(self).sent_volumes.append(raw)
+                return raw
+
+        LearningDriver.status_calls = 0
+        LearningDriver.sent_volumes = []
+        self.controller.registry = [LearningDriver]
+        self.save_settings(
+            {
+                "version": 2,
+                "receiver": {"driver": "learning", "config": {"host": "receiver"}},
+                "cap": None,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "81": {
+                        "name": "Percent profile",
+                        "driver": "learning",
+                        "volume": 90,
+                    }
+                },
+            }
+        )
+
+        result = await self.controller.game_started(81, "Percent profile")
+
+        self.assertTrue(result["applied"])
+        self.assertEqual(LearningDriver.sent_volumes, [70])
+        self.assertEqual(LearningDriver.status_calls, 1)
+
+    async def test_game_profile_mode_waits_for_discovered_capabilities(self):
+        class LearningDriver(Driver):
+            key = "learning"
+            label = "Learning Receiver"
+            scale = VolumeScale(min=0, max=100, unit="%", default_cap=60)
+            status_calls = 0
+            sent_modes = []
+
+            def __init__(self, config):
+                super().__init__(config)
+                self._capabilities = frozenset({VOLUME})
+
+            @property
+            def capabilities(self):
+                return self._capabilities
+
+            async def status(self):
+                type(self).status_calls += 1
+                self._capabilities = frozenset({VOLUME, MODE})
+                return Status(volume=40, mode="Movie")
+
+            async def set_mode(self, code):
+                type(self).sent_modes.append(code)
+                return code
+
+        LearningDriver.status_calls = 0
+        LearningDriver.sent_modes = []
+        self.controller.registry = [LearningDriver]
+        self.save_settings(
+            {
+                "version": 2,
+                "receiver": {"driver": "learning", "config": {"host": "receiver"}},
+                "cap": None,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "82": {
+                        "name": "Mode profile",
+                        "driver": "learning",
+                        "mode": "Movie",
+                    }
+                },
+            }
+        )
+
+        result = await self.controller.game_started(82, "Mode profile")
+
+        self.assertTrue(result["applied"])
+        self.assertEqual(LearningDriver.sent_modes, ["Movie"])
+        self.assertEqual(LearningDriver.status_calls, 1)
+
+    async def test_game_profile_reports_not_applied_when_no_action_is_supported(self):
+        class NoModeDriver(Driver):
+            key = "no_mode"
+            label = "Volume Receiver"
+            capabilities = frozenset({VOLUME})
+            scale = VolumeScale(min=0, max=100, unit="%", default_cap=60)
+
+            async def status(self):
+                return Status(volume=40)
+
+        self.controller.registry = [NoModeDriver]
+        self.save_settings(
+            {
+                "version": 2,
+                "receiver": {"driver": "no_mode", "config": {"host": "receiver"}},
+                "cap": None,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "83": {
+                        "name": "Unsupported mode profile",
+                        "driver": "no_mode",
+                        "mode": "Direct",
+                    }
+                },
+            }
+        )
+
+        result = await self.controller.game_started(
+            83, "Unsupported mode profile"
+        )
+
+        self.assertEqual(result, {"applied": False})
 
     async def test_running_profile_tracks_changes_and_late_night_does_not_leak(self):
         self.save_settings(
@@ -385,6 +568,20 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(result["ok"])
                 self.assertEqual(NonConnectivityMemoryDriver.discovery_calls, 0)
 
+    async def test_mode_codes_are_opaque_to_the_controller(self):
+        class OpaqueModeDriver(MemoryDriver):
+            async def set_mode(self, code):
+                self.actions.append(("mode", code))
+                return code
+
+        self.controller.registry = [OpaqueModeDriver]
+        self.save_settings()
+
+        result = await self.controller.set_mode("  stereoX  ")
+
+        self.assertEqual(result["code"], "stereoX")
+        self.assertEqual(OpaqueModeDriver.actions[-1], ("mode", "stereoX"))
+
     async def test_auto_probe_on_manual_host_replaces_old_id(self):
         self.save_settings()
         data = self.store.load()
@@ -511,10 +708,192 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         await self.controller.select_receiver("receiver-b", "new-id")
         release.set()
 
-        self.assertTrue((await command)["ok"])
+        result = await command
+        self.assertFalse(result["ok"])
+        self.assertIn("Receiver changed", result["error"])
         receiver = self.store.load()["receiver"]
         self.assertEqual(receiver["config"]["host"], "receiver-b")
         self.assertEqual(receiver["id"], "NEW-ID")
+
+    async def test_stale_status_cannot_update_new_receivers_game_profile(self):
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        class OldDriver(Driver):
+            key = "old"
+            label = "Old Receiver"
+            capabilities = frozenset({VOLUME})
+            scale = VolumeScale(min=0, max=185, unit="dB", default_cap=100)
+
+            async def status(self):
+                started.set()
+                await release.wait()
+                return Status(volume=100)
+
+        class NewDriver(Driver):
+            key = "new"
+            label = "New Receiver"
+            capabilities = frozenset({VOLUME})
+            scale = VolumeScale(min=0, max=100, unit="%", default_cap=60)
+
+            async def status(self):
+                return Status(volume=15)
+
+        self.controller.registry = [OldDriver, NewDriver]
+        self.save_settings(
+            {
+                "version": 2,
+                "receiver": {"driver": "old", "config": {"host": "receiver-a"}},
+                "cap": None,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "91": {
+                        "name": "New receiver profile",
+                        "driver": "new",
+                        "volume": 15,
+                    }
+                },
+            }
+        )
+        await self.controller.set_current_game(91, "New receiver profile")
+        lookup = asyncio.create_task(self.controller.get_state())
+        await started.wait()
+
+        self.controller._last_found = [
+            Found(
+                driver="new",
+                model="New Receiver",
+                id="new-id",
+                host="receiver-b",
+                config={"host": "receiver-b"},
+            )
+        ]
+        await self.controller.select_receiver("receiver-b", "new-id")
+        release.set()
+        await lookup
+
+        self.assertEqual(self.store.load()["games"]["91"]["volume"], 15)
+
+    async def test_stale_auto_probe_cannot_replace_a_new_receiver_selection(self):
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        class ProbeDriver(Driver):
+            key = "probe"
+            label = "Probe Receiver"
+            capabilities = frozenset({VOLUME})
+            scale = VolumeScale(min=0, max=100, unit="%", default_cap=60)
+
+            async def status(self):
+                return Status(volume=10)
+
+            @classmethod
+            async def probe(cls, config):
+                started.set()
+                await release.wait()
+                return Found(
+                    driver=cls.key,
+                    model="Probe Receiver",
+                    id="receiver-a-id",
+                    host=config["host"],
+                    config=dict(config),
+                )
+
+        self.controller.registry = [ProbeDriver]
+        self.save_settings()
+        self.controller._last_found = [
+            Found(
+                driver="probe",
+                model="Probe Receiver",
+                id="receiver-b-id",
+                host="receiver-b",
+                config={"host": "receiver-b"},
+            )
+        ]
+        probing = asyncio.create_task(
+            self.controller.configure("auto", {"host": "receiver-a"})
+        )
+        await started.wait()
+
+        await self.controller.select_receiver("receiver-b", "receiver-b-id")
+        release.set()
+        await probing
+
+        receiver = self.store.load()["receiver"]
+        self.assertEqual(receiver["config"]["host"], "receiver-b")
+        self.assertEqual(receiver["id"], "RECEIVER-B-ID")
+
+    async def test_delayed_profile_mode_does_not_run_on_a_new_receiver(self):
+        delay_started = asyncio.Event()
+        release_delay = asyncio.Event()
+        new_receiver_mode = asyncio.Event()
+
+        class ProfileDriver(Driver):
+            key = "profile"
+            label = "Profile Receiver"
+            capabilities = frozenset({MODE})
+            scale = VolumeScale(min=0, max=100, unit="%", default_cap=60)
+
+            async def status(self):
+                return Status(mode="Other")
+
+            async def set_mode(self, code):
+                return code
+
+        class NewReceiverDriver(Driver):
+            key = "denon_fake"
+            label = "Denon Receiver"
+            capabilities = frozenset({MODE})
+            scale = VolumeScale(min=0, max=100, unit="%", default_cap=60)
+
+            async def status(self):
+                return Status(mode="Stereo")
+
+            async def set_mode(self, code):
+                new_receiver_mode.set()
+                return code
+
+        async def hold_reapply(_seconds):
+            delay_started.set()
+            await release_delay.wait()
+
+        self.controller.registry = [ProfileDriver, NewReceiverDriver]
+        self.controller.sleep = hold_reapply
+        self.save_settings(
+            {
+                "version": 2,
+                "receiver": {"driver": "profile", "config": {"host": "receiver-a"}},
+                "cap": None,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "92": {
+                        "name": "Mode profile",
+                        "driver": "profile",
+                        "mode": "Direct",
+                    }
+                },
+            }
+        )
+
+        result = await self.controller.game_started(92, "Mode profile")
+        self.assertTrue(result["applied"])
+        await delay_started.wait()
+        self.controller._last_found = [
+            Found(
+                driver="denon_fake",
+                model="Denon Receiver",
+                id="denon-id",
+                host="receiver-b",
+                config={"host": "receiver-b"},
+            )
+        ]
+        await self.controller.select_receiver("receiver-b", "denon-id")
+        release_delay.set()
+        await asyncio.sleep(0.02)
+
+        self.assertFalse(new_receiver_mode.is_set())
 
     async def test_command_does_not_save_unchanged_driver_config(self):
         self.save_settings()
@@ -546,6 +925,39 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         profiles = await self.controller.list_games()
 
         self.assertEqual(profiles[0]["driver"], "memory")
+
+    async def test_connection_summary_supports_home_assistant_without_exposing_token(self):
+        controller = Controller(self.store, registry=[HomeAssistantDriver])
+        self.store.save(
+            {
+                "version": 2,
+                "receiver": {
+                    "driver": "homeassistant",
+                    "config": {
+                        "url": "http://ha.local:8123",
+                        "token": "never-return-this",
+                        "entity_id": ENTITY_ID,
+                    },
+                },
+                "games": {},
+            }
+        )
+
+        connection = await controller.get_connection()
+
+        self.assertEqual(
+            connection,
+            {
+                "configured": True,
+                "driver": "homeassistant",
+                "label": "Home Assistant",
+                "summary": ENTITY_ID,
+                "fields": {
+                    "url": "http://ha.local:8123",
+                    "entity_id": ENTITY_ID,
+                },
+            },
+        )
 
 
 if __name__ == "__main__":

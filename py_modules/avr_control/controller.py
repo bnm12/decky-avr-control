@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import time
 from typing import Callable
 
@@ -44,6 +46,7 @@ class Controller:
         self.rediscover_interval = rediscover_interval
         self._active_driver: Driver | None = None
         self._receiver_generation = 0
+        self._initialized_driver: Driver | None = None
         self._last_rediscover: float | None = None
         self._last_found: list[Found] = []
         self._current_game: dict | None = None
@@ -89,6 +92,53 @@ class Controller:
             return "Enter the receiver IP address"
         return f"Enter {field.label}"
 
+    @staticmethod
+    def _receiver_binding(data: dict) -> dict:
+        receiver = data.get("receiver", {})
+        driver = receiver.get("driver")
+        ident = receiver.get("id")
+        if ident:
+            return {"driver": driver, "id": str(ident).upper()}
+        encoded = json.dumps(
+            receiver.get("config") or {},
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+        return {
+            "driver": driver,
+            "config_hash": hashlib.sha256(encoded).hexdigest(),
+        }
+
+    def _bind_receiver_state(self, data: dict) -> bool:
+        binding = self._receiver_binding(data)
+        changed = False
+        for value_key, binding_key in (
+            ("cap", "cap_receiver"),
+            ("late_cap", "late_cap_receiver"),
+        ):
+            previous = data.get(binding_key)
+            if previous is None:
+                if data.get(value_key) is not None:
+                    data[binding_key] = binding
+                    changed = True
+            elif previous != binding:
+                data[value_key] = None
+                data[binding_key] = binding
+                changed = True
+
+        late = data.get("late", {})
+        previous = data.get("late_receiver")
+        if previous is None:
+            if late.get("active") or late.get("prev_volume") is not None:
+                data["late_receiver"] = binding
+                changed = True
+        elif previous != binding:
+            data["late"] = {"active": False}
+            data["late_receiver"] = binding
+            changed = True
+        return changed
+
     def _scale_for(self, data: dict):
         if self._active_driver is not None:
             return self._active_driver.scale
@@ -122,7 +172,21 @@ class Controller:
             cap = min(cap, self._late_cap(data, scale))
         return max(scale.min, min(scale.max, cap))
 
-    async def _get_driver(self) -> Driver:
+    def _is_current(self, generation: int, driver: Driver | None = None) -> bool:
+        return generation == self._receiver_generation and (
+            driver is None or self._active_driver is driver
+        )
+
+    @staticmethod
+    def _stale_receiver_error() -> DriverError:
+        return DriverError("Receiver changed while the operation was in progress")
+
+    async def _get_driver(self, generation: int | None = None) -> Driver:
+        if generation is None:
+            generation = self._receiver_generation
+        if not self._is_current(generation):
+            raise self._stale_receiver_error()
+        starting_driver = self._active_driver
         data = self._settings()
         receiver = data["receiver"]
         key = receiver.get("driver")
@@ -134,13 +198,20 @@ class Controller:
             if not config.get("host"):
                 raise DriverError("Set the AVR IP address first, or tap Search network")
             found = await self._probe(config)
+            if not self._is_current(generation, starting_driver):
+                raise self._stale_receiver_error()
             if found is None:
-                replacement = await self._rediscover(data)
+                replacement = await self._rediscover(
+                    data, generation, starting_driver
+                )
                 if replacement is not None:
                     return replacement
+                if not self._is_current(generation, starting_driver):
+                    raise self._stale_receiver_error()
                 raise DriverError("No supported receiver answered at that address")
             receiver["driver"] = found.driver
             receiver["config"] = dict(found.config)
+            self._bind_receiver_state(data)
             self._save(data)
             driver_class = self._class_for(found.driver)
             config = dict(found.config)
@@ -149,13 +220,15 @@ class Controller:
         missing_field = self._missing_config_field(driver_class, config)
         if missing_field is not None:
             raise DriverError(self._config_error(missing_field))
+        if self._bind_receiver_state(data):
+            self._save(data)
         if (
             self._active_driver is None
             or self._active_driver.key != driver_class.key
             or self._active_driver.config != config
         ):
             self._active_driver = driver_class(config)
-            self._receiver_generation += 1
+            self._initialized_driver = None
         self._bind_unbound_profiles(data, self._active_driver.key)
         return self._active_driver
 
@@ -195,7 +268,16 @@ class Controller:
         if changed:
             self._save(data)
 
-    async def _rediscover(self, data: dict) -> Driver | None:
+    async def _rediscover(
+        self,
+        data: dict,
+        generation: int | None = None,
+        starting_driver: Driver | None = None,
+    ) -> Driver | None:
+        if generation is None:
+            generation = self._receiver_generation
+        if starting_driver is None:
+            starting_driver = self._active_driver
         ident = data.get("receiver", {}).get("id")
         now = self.clock()
         if not ident:
@@ -211,6 +293,8 @@ class Controller:
         except Exception as exc:
             self._log("error", f"Rediscovery failed: {exc}")
             return None
+        if not self._is_current(generation, starting_driver):
+            return None
         found = next((item for item in found_list if item.id.upper() == str(ident).upper()), None)
         if found is None:
             return None
@@ -222,38 +306,104 @@ class Controller:
         data["receiver"]["driver"] = found.driver
         data["receiver"]["config"] = dict(found.config)
         data["receiver"]["id"] = found.id
+        self._bind_receiver_state(data)
         self._save(data)
         driver_class = self._class_for(found.driver)
-        self._receiver_generation += 1
         if driver_class is None:
             return None
         self._active_driver = driver_class(dict(found.config))
+        self._initialized_driver = None
         return self._active_driver
 
-    async def _run(self, method: str, *args, expected_driver: str | None = None):
-        driver = await self._get_driver()
-        generation = self._receiver_generation
+    async def _run(
+        self,
+        method: str,
+        *args,
+        expected_driver: str | None = None,
+        generation: int | None = None,
+        driver: Driver | None = None,
+    ):
+        if generation is None:
+            generation = self._receiver_generation
+        if not self._is_current(generation, driver):
+            raise self._stale_receiver_error()
+        active_driver = await self._get_driver(generation)
+        if not self._is_current(generation):
+            raise self._stale_receiver_error()
+        if driver is not None and active_driver is not driver:
+            raise self._stale_receiver_error()
+        driver = active_driver
         try:
             result = await getattr(driver, method)(*args)
         except (Refused, Unsupported):
+            if not self._is_current(generation, driver):
+                raise self._stale_receiver_error()
             raise
         except DriverError:
+            if not self._is_current(generation, driver):
+                raise self._stale_receiver_error()
             data = self._settings()
-            replacement = await self._rediscover(data)
+            replacement = await self._rediscover(data, generation, driver)
             if replacement is None:
+                if not self._is_current(generation, driver):
+                    raise self._stale_receiver_error()
                 raise
+            if not self._is_current(generation, replacement):
+                raise self._stale_receiver_error()
             if expected_driver is not None and replacement.key != expected_driver:
                 raise DriverError("The saved game profile belongs to another receiver driver")
             result = await getattr(replacement, method)(*args)
             driver = replacement
-            generation = self._receiver_generation
+        except Exception:
+            if not self._is_current(generation, driver):
+                raise self._stale_receiver_error()
+            raise
+        if not self._is_current(generation, driver):
+            raise self._stale_receiver_error()
+        if method == "status":
+            self._initialized_driver = driver
         self._persist_driver_config(driver, generation)
         return result
 
     async def get_host(self) -> str:
         return self._host(self._settings())
 
+    async def get_connection(self) -> dict:
+        receiver = self._settings()["receiver"]
+        driver_key = receiver.get("driver")
+        config = dict(receiver.get("config") or {})
+        driver_class = self._class_for(driver_key)
+        if driver_class is None:
+            fields = {"host": config["host"]} if config.get("host") else {}
+            return {
+                "configured": bool(config.get("host")) if driver_key is None else False,
+                "driver": driver_key,
+                "label": None,
+                "summary": str(config.get("host") or ""),
+                "fields": fields,
+            }
+
+        fields = {
+            field.key: config[field.key]
+            for field in driver_class.config_fields
+            if not field.secret and config.get(field.key) is not None
+        }
+        missing_field = self._missing_config_field(driver_class, config)
+        if driver_class.key == "homeassistant":
+            summary = config.get("entity_id") or config.get("model") or ""
+        else:
+            summary = config.get("host") or config.get("model") or ""
+        return {
+            "configured": missing_field is None,
+            "driver": driver_class.key,
+            "label": driver_class.label,
+            "summary": str(summary),
+            "fields": fields,
+        }
+
     async def configure(self, driver_key: str, config: dict) -> dict:
+        starting_generation = self._receiver_generation
+        starting_driver = self._active_driver
         data = self._settings()
         config = dict(config)
         receiver = data["receiver"]
@@ -280,46 +430,61 @@ class Controller:
         if missing_field is not None:
             return {"ok": False, "error": self._config_error(missing_field)}
 
+        if not self._is_current(starting_generation, starting_driver):
+            return {"ok": False, "error": str(self._stale_receiver_error())}
+        self._bind_receiver_state(data)
         receiver["config"] = config
         receiver["id"] = None
         receiver["driver"] = None
+        self._bind_receiver_state(data)
         self._active_driver = None
+        self._initialized_driver = None
         self._receiver_generation += 1
+        generation = self._receiver_generation
         if driver_key == "auto":
             self._save(data)
             found = await self._probe(config)
+            if not self._is_current(generation) or self._active_driver is not None:
+                return {"ok": False, "error": str(self._stale_receiver_error())}
             if found is None:
                 return {"ok": False, "error": "No supported receiver answered at that address"}
             data = self._settings()
             data["receiver"].update(
                 {"driver": found.driver, "config": dict(found.config)}
             )
+            self._bind_receiver_state(data)
             self._save(data)
             self._active_driver = self._class_for(found.driver)(dict(found.config))
-            self._receiver_generation += 1
             return {"ok": True}
 
         receiver["driver"] = driver_key
+        self._bind_receiver_state(data)
         self._save(data)
         self._active_driver = driver_class(config)
+        self._initialized_driver = None
         return {"ok": True}
 
     async def set_host(self, host: str) -> None:
         await self.configure("auto", {"host": host})
 
     async def discover(self) -> list[dict]:
+        generation = self._receiver_generation
+        starting_driver = self._active_driver
         try:
-            self._last_found = await self._discover_found(2.5)
+            found = await self._discover_found(2.5)
+            if not self._is_current(generation, starting_driver):
+                return []
+            self._last_found = found
             results = []
-            for found in self._last_found:
-                driver_class = self._class_for(found.driver)
+            for item in self._last_found:
+                driver_class = self._class_for(item.driver)
                 results.append(
                     {
-                        "ip": found.host,
-                        "model": found.model,
-                        "id": found.id,
-                        "driver": found.driver,
-                        "label": driver_class.label if driver_class else found.driver,
+                        "ip": item.host,
+                        "model": item.model,
+                        "id": item.id,
+                        "driver": item.driver,
+                        "label": driver_class.label if driver_class else item.driver,
                     }
                 )
             return results
@@ -355,6 +520,7 @@ class Controller:
             None,
         )
         data = self._settings()
+        self._bind_receiver_state(data)
         if found is None:
             found = Found(
                 driver="eiscp",
@@ -368,9 +534,11 @@ class Controller:
             "config": dict(found.config),
             "id": ident.upper(),
         }
+        self._bind_receiver_state(data)
         self._save(data)
         driver_class = self._class_for(found.driver)
         self._active_driver = driver_class(dict(found.config)) if driver_class else None
+        self._initialized_driver = None
         self._receiver_generation += 1
 
     def _mode_label(self, driver: Driver, code: str | None) -> str | None:
@@ -378,13 +546,33 @@ class Controller:
             return None
         return driver.mode_name(code)
 
+    async def _ensure_initialized(
+        self, driver: Driver, generation: int
+    ) -> Status:
+        if not self._is_current(generation, driver):
+            raise self._stale_receiver_error()
+        if self._initialized_driver is driver:
+            return Status()
+        status = await driver.status()
+        if not self._is_current(generation, driver):
+            raise self._stale_receiver_error()
+        self._initialized_driver = driver
+        return status
+
     async def get_state(self) -> dict:
+        generation = self._receiver_generation
         try:
-            driver = await self._get_driver()
-            status = await self._run("status")
-            driver = self._active_driver or driver
+            driver = await self._get_driver(generation)
+            if not self._is_current(generation, driver):
+                raise self._stale_receiver_error()
+            status = await self._run("status", generation=generation, driver=driver)
+            driver = self._active_driver
+            if driver is None or not self._is_current(generation, driver):
+                raise self._stale_receiver_error()
             data = self._settings()
-            await self._remember(status.volume, status.mode)
+            await self._remember(
+                status.volume, status.mode, generation=generation, driver=driver
+            )
             data = self._settings()
             game = None
             if self._current_game:
@@ -395,6 +583,8 @@ class Controller:
                     "mode": profile.get("mode") is not None,
                 }
             modes = await driver.list_modes()
+            if not self._is_current(generation, driver):
+                raise self._stale_receiver_error()
             scale = driver.scale
             return {
                 "ok": True,
@@ -423,54 +613,97 @@ class Controller:
             return {"ok": False, "error": str(exc)}
 
     async def set_volume(self, value: int) -> dict:
+        generation = self._receiver_generation
         try:
             data = self._settings()
-            driver = await self._get_driver()
+            driver = await self._get_driver(generation)
+            if not self._is_current(generation, driver):
+                raise self._stale_receiver_error()
+            await self._ensure_initialized(driver, generation)
             scale = driver.scale
             volume = max(scale.min, min(self._effective_cap(data, scale), int(value)))
-            confirmed = await self._run("set_volume", volume)
-            await self._remember(volume=confirmed)
+            confirmed = await self._run(
+                "set_volume", volume, generation=generation, driver=driver
+            )
+            current_driver = self._active_driver
+            if current_driver is None or not self._is_current(
+                generation, current_driver
+            ):
+                raise self._stale_receiver_error()
+            await self._remember(
+                volume=confirmed, generation=generation, driver=current_driver
+            )
             return {"ok": True, "volume": confirmed}
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
     async def set_mute(self, muted: bool) -> dict:
+        generation = self._receiver_generation
+        driver = self._active_driver
         try:
-            return {"ok": True, "muted": await self._run("set_mute", bool(muted))}
+            result = await self._run(
+                "set_mute", bool(muted), generation=generation, driver=driver
+            )
+            return {"ok": True, "muted": result}
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
     async def set_power(self, on: bool) -> dict:
+        generation = self._receiver_generation
+        driver = self._active_driver
         try:
-            return {"ok": True, "power": await self._run("set_power", bool(on))}
+            result = await self._run(
+                "set_power", bool(on), generation=generation, driver=driver
+            )
+            return {"ok": True, "power": result}
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
     async def set_max(self, value: int) -> None:
+        generation = self._receiver_generation
+        driver = await self._get_driver(generation)
+        await self._ensure_initialized(driver, generation)
+        if not self._is_current(generation, driver):
+            raise self._stale_receiver_error()
         data = self._settings()
-        scale = self._scale_for(data)
+        scale = driver.scale
         data["cap"] = max(1, min(scale.max, int(value)))
+        data["cap_receiver"] = self._receiver_binding(data)
         self._save(data)
 
     async def set_late_max(self, value: int) -> None:
+        generation = self._receiver_generation
+        driver = await self._get_driver(generation)
+        await self._ensure_initialized(driver, generation)
+        if not self._is_current(generation, driver):
+            raise self._stale_receiver_error()
         data = self._settings()
-        scale = self._scale_for(data)
+        scale = driver.scale
         data["late_cap"] = max(1, min(scale.max, int(value)))
+        data["late_cap_receiver"] = self._receiver_binding(data)
         self._save(data)
 
     async def set_mode(self, code: str) -> dict:
-        code = str(code).upper()
-        import re
-
-        if not re.fullmatch(r"[0-9A-F]{2,4}", code):
+        generation = self._receiver_generation
+        code = str(code).strip()
+        if not code:
             return {"ok": False, "error": f"Invalid mode code: {code}"}
         try:
-            driver = await self._get_driver()
+            driver = await self._get_driver(generation)
+            if not self._is_current(generation, driver):
+                raise self._stale_receiver_error()
+            await self._ensure_initialized(driver, generation)
             if MODE not in driver.capabilities:
                 return {"ok": False, "error": "Listening modes need the eISCP protocol"}
-            confirmed = await self._run("set_mode", code)
-            await self._remember(mode=confirmed)
-            driver = self._active_driver or driver
+            confirmed = await self._run(
+                "set_mode", code, generation=generation, driver=driver
+            )
+            driver = self._active_driver
+            if driver is None or not self._is_current(generation, driver):
+                raise self._stale_receiver_error()
+            await self._remember(
+                mode=confirmed, generation=generation, driver=driver
+            )
             return {
                 "ok": True,
                 "mode": self._mode_label(driver, confirmed),
@@ -481,7 +714,19 @@ class Controller:
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
-    async def _remember(self, volume: int | None = None, mode: str | None = None) -> None:
+    async def _remember(
+        self,
+        volume: int | None = None,
+        mode: str | None = None,
+        generation: int | None = None,
+        driver: Driver | None = None,
+    ) -> None:
+        if generation is None:
+            generation = self._receiver_generation
+        if driver is None:
+            driver = self._active_driver
+        if not self._is_current(generation, driver):
+            return
         if not self._current_game or self.clock() < self._suppress_save_until:
             return
         data = self._settings()
@@ -500,59 +745,121 @@ class Controller:
             profile["mode"] = mode
             changed = True
         if changed:
-            self._save(data)
+            if self._is_current(generation, driver):
+                self._save(data)
 
     async def set_current_game(self, appid: int, name: str) -> None:
         self._current_game = {"appid": int(appid), "name": name} if appid else None
 
     async def game_started(self, appid: int, name: str) -> dict:
+        generation = self._receiver_generation
         self._current_game = {"appid": int(appid), "name": name}
         data = self._settings()
         profile = data.get("games", {}).get(str(int(appid)))
         if not profile:
             return {"applied": False}
         try:
-            driver = await self._get_driver()
+            driver = await self._get_driver(generation)
+            if not self._is_current(generation, driver):
+                raise self._stale_receiver_error()
+            if not self._current_game or self._current_game["appid"] != int(appid):
+                return {"applied": False}
             data = self._settings()
             profile = data.get("games", {}).get(str(int(appid)))
             if not profile:
                 return {"applied": False}
             if profile.get("driver") != driver.key:
                 return {"applied": False}
+            await self._ensure_initialized(driver, generation)
+            data = self._settings()
+            profile = data.get("games", {}).get(str(int(appid)))
+            if not profile or profile.get("driver") != driver.key:
+                return {"applied": False}
             self._suppress_save_until = self.clock() + 6.0
+            applied = False
             volume = profile.get("volume")
             if volume is not None:
                 volume = max(
                     driver.scale.min,
                     min(self._effective_cap(data, driver.scale), int(volume)),
                 )
-                await self._run("set_volume", volume, expected_driver=driver.key)
+                await self._run(
+                    "set_volume",
+                    volume,
+                    expected_driver=driver.key,
+                    generation=generation,
+                    driver=driver,
+                )
+                if not self._is_current(generation):
+                    raise self._stale_receiver_error()
+                driver = self._active_driver
+                applied = True
             mode = profile.get("mode")
             if mode and MODE in driver.capabilities:
+                mode_applied = False
                 try:
-                    await self._run("set_mode", mode, expected_driver=driver.key)
+                    await self._run(
+                        "set_mode",
+                        mode,
+                        expected_driver=driver.key,
+                        generation=generation,
+                        driver=driver,
+                    )
+                    if not self._is_current(generation):
+                        raise self._stale_receiver_error()
+                    driver = self._active_driver
+                    applied = True
+                    mode_applied = True
                 except Exception as exc:
                     self._log("error", f"Setting listening mode failed: {exc}")
-            if mode and MODE in driver.capabilities:
-                asyncio.create_task(self._reapply_mode(int(appid), mode))
-            return {"applied": True}
+                if mode_applied:
+                    asyncio.create_task(
+                        self._reapply_mode(
+                            int(appid), mode, generation, driver
+                        )
+                    )
+            return {"applied": applied}
         except Exception as exc:
             self._log("error", f"Applying game profile failed: {exc}")
             return {"applied": False, "error": str(exc)}
 
-    async def _reapply_mode(self, appid: int, mode: str | None) -> None:
+    async def _reapply_mode(
+        self,
+        appid: int,
+        mode: str | None,
+        generation: int | None = None,
+        driver: Driver | None = None,
+    ) -> None:
         if not mode:
+            return
+        if generation is None:
+            generation = self._receiver_generation
+        if driver is None:
+            driver = self._active_driver
+        if not self._is_current(generation, driver):
             return
         result = self.sleep(self.reapply_delay)
         if asyncio.iscoroutine(result):
             await result
-        if not self._current_game or self._current_game["appid"] != appid:
+        if (
+            not self._is_current(generation, driver)
+            or not self._current_game
+            or self._current_game["appid"] != appid
+        ):
             return
         try:
-            status: Status = await self._run("status")
+            status: Status = await self._run(
+                "status", generation=generation, driver=driver
+            )
+            if not self._is_current(generation, driver):
+                return
             if status.mode and status.mode != mode:
                 await self._run(
-                    "set_mode", mode, expected_driver=self._active_driver.key
+                    "set_mode",
+                    mode,
+                    expected_driver=driver.key,
+                    generation=generation,
+                    driver=driver,
                 )
         except Exception as exc:
             self._log("error", f"Re-applying listening mode failed: {exc}")
@@ -562,19 +869,31 @@ class Controller:
             self._current_game = None
 
     async def set_game_remember(self, what: str, enabled: bool) -> dict:
+        generation = self._receiver_generation
+        current_game = dict(self._current_game) if self._current_game else None
         if what not in ("volume", "mode"):
             return {"ok": False, "error": f"Unknown setting: {what}"}
-        if not self._current_game:
+        if not current_game:
             return {"ok": False, "error": "No game is running"}
-        key = str(self._current_game["appid"])
+        key = str(current_game["appid"])
         data = self._settings()
         if enabled:
             try:
-                driver = await self._get_driver()
-                status: Status = await self._run("status")
+                driver = await self._get_driver(generation)
+                if not self._is_current(generation, driver):
+                    raise self._stale_receiver_error()
+                status: Status = await self._run(
+                    "status", generation=generation, driver=driver
+                )
             except Exception as exc:
                 return {"ok": False, "error": str(exc)}
-            driver = self._active_driver or driver
+            driver = self._active_driver
+            if (
+                driver is None
+                or not self._is_current(generation, driver)
+                or self._current_game != current_game
+            ):
+                return {"ok": False, "error": str(self._stale_receiver_error())}
             data = self._settings()
             if what == "volume":
                 value = status.volume
@@ -590,7 +909,7 @@ class Controller:
             if profile.get("driver") not in (None, driver.key):
                 profile.pop("volume", None)
                 profile.pop("mode", None)
-            profile["name"] = self._current_game["name"]
+            profile["name"] = current_game["name"]
             profile["driver"] = driver.key
             profile[what] = value
         else:
@@ -600,6 +919,8 @@ class Controller:
                 profile.pop(what, None)
                 if profile.get("volume") is None and profile.get("mode") is None:
                     games.pop(key, None)
+        if not self._is_current(generation) or self._current_game != current_game:
+            return {"ok": False, "error": str(self._stale_receiver_error())}
         self._save(data)
         return {"ok": True}
 
@@ -632,25 +953,64 @@ class Controller:
         self._save(data)
 
     async def set_late_night(self, on: bool) -> dict:
+        generation = self._receiver_generation
         try:
             data = self._settings()
+            driver = await self._get_driver(generation)
+            if not self._is_current(generation, driver):
+                raise self._stale_receiver_error()
             active = bool(data.get("late", {}).get("active"))
             if on and not active:
-                status: Status = await self._run("status")
+                status: Status = await self._run(
+                    "status", generation=generation, driver=driver
+                )
+                if not self._is_current(generation, driver):
+                    raise self._stale_receiver_error()
                 if status.volume is None:
                     return {"ok": False, "error": "Turn the receiver on first"}
                 data = self._settings()
                 data["late"] = {"active": True, "prev_volume": status.volume}
+                data["late_receiver"] = self._receiver_binding(data)
                 self._save(data)
-                cap = self._effective_cap(data)
+                cap = self._effective_cap(data, driver.scale)
                 if status.volume > cap:
-                    await self.set_volume(cap)
+                    confirmed = await self._run(
+                        "set_volume",
+                        cap,
+                        generation=generation,
+                        driver=driver,
+                    )
+                    if not self._is_current(generation):
+                        raise self._stale_receiver_error()
+                    current_driver = self._active_driver
+                    if current_driver is not None:
+                        await self._remember(
+                            volume=confirmed,
+                            generation=generation,
+                            driver=current_driver,
+                        )
             elif not on and active:
                 previous = data.get("late", {}).get("prev_volume")
+                if not self._is_current(generation, driver):
+                    raise self._stale_receiver_error()
                 data["late"] = {"active": False}
                 self._save(data)
                 if previous is not None:
-                    await self.set_volume(previous)
+                    confirmed = await self._run(
+                        "set_volume",
+                        int(previous),
+                        generation=generation,
+                        driver=driver,
+                    )
+                    if not self._is_current(generation):
+                        raise self._stale_receiver_error()
+                    current_driver = self._active_driver
+                    if current_driver is not None:
+                        await self._remember(
+                            volume=confirmed,
+                            generation=generation,
+                            driver=current_driver,
+                        )
             return {"ok": True}
         except Exception as exc:
             return {"ok": False, "error": str(exc)}

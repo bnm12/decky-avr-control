@@ -71,6 +71,10 @@ class EiscpDriverTests(unittest.IsolatedAsyncioTestCase):
             await EiscpDriver.probe({"host": "127.0.0.1", "port": self.port + 1})
         )
 
+    async def test_mode_validation_rejects_non_hex_codes_in_the_driver(self):
+        with self.assertRaisesRegex(Refused, "Invalid mode code: STEREO"):
+            await self.driver.set_mode("stereo")
+
     async def test_discovery_parses_and_deduplicates_by_receiver_id(self):
         loop = asyncio.get_running_loop()
         transport, responder = await loop.create_datagram_endpoint(

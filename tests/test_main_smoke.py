@@ -45,6 +45,16 @@ class MainSmokeTests(unittest.TestCase):
                 sys.modules[spec.name] = module
                 spec.loader.exec_module(module)
                 plugin = module.Plugin()
+                self.assertEqual(
+                    asyncio.run(plugin.get_connection()),
+                    {
+                        "configured": False,
+                        "driver": None,
+                        "label": None,
+                        "summary": "",
+                        "fields": {},
+                    },
+                )
                 state = asyncio.run(plugin.get_state())
                 self.assertFalse(state["ok"])
                 from avr_control.drivers import REGISTRY

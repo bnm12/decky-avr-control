@@ -313,6 +313,9 @@ class EiscpDriver(Driver):
         return match.group(1) == "01"
 
     async def set_mode(self, code: str) -> str:
+        code = str(code).strip().upper()
+        if not re.fullmatch(r"[0-9A-F]{2,4}", code):
+            raise Refused(f"Invalid mode code: {code}")
         try:
             match = await _query(
                 self.host, self.port, f"LMD{code}", r"LMD([0-9A-F]{2,4})"

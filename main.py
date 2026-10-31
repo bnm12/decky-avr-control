@@ -39,6 +39,9 @@ class Plugin:
     async def get_host(self) -> str:
         return await self._delegate("get_host")
 
+    async def get_connection(self) -> dict:
+        return await self._delegate("get_connection")
+
     async def set_host(self, host: str):
         return await self._delegate("set_host", host)
 
