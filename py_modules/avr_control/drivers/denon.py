@@ -491,13 +491,9 @@ class DenonDriver(Driver):
 
         volume: int | None = None
         try:
-            volume_value = float(values["mastervolume"])
-            display = values.get("volumedisplay", "relative").lower()
-            raw = (
-                round(volume_value * 2)
-                if display == "absolute"
-                else round((volume_value + 80) * 2)
-            )
+            volume_text = values["mastervolume"]
+            volume_db = -80.0 if volume_text == "--" else float(volume_text)
+            raw = round((volume_db + 80) * 2)
             volume = max(0, min(self.scale.max, raw))
         except (KeyError, TypeError, ValueError):
             pass
@@ -513,7 +509,12 @@ class DenonDriver(Driver):
         mode_value = next(
             (
                 values[name]
-                for name in ("surrmode", "surroundmode", "soundmode")
+                for name in (
+                    "surrmode",
+                    "surroundmode",
+                    "soundmode",
+                    "selectsurround",
+                )
                 if values.get(name)
             ),
             None,

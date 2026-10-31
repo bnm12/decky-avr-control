@@ -23,6 +23,31 @@ def decode_volume(value: str) -> int:
     return int(value[:2]) * 2 + (value[-1] == "5")
 
 
+# Excerpt from the MIT-licensed denonavr test recording:
+# https://github.com/ol-iver/denonavr/blob/12b5cf70efe843a81276cfab56311de88c7fe489/tests/xml/AVR-X2100W-2-formMainZone_MainZoneXmlStatus.xml
+RECORDED_X2100W_STATUS_XML = """\
+<item>
+<Power><value>ON</value></Power>
+<VolumeDisplay><value>Absolute</value></VolumeDisplay>
+<SurrMode><value>PLII Cinema                    </value></SurrMode>
+<MasterVolume><value>-28.0</value></MasterVolume>
+<Mute><value>off</value></Mute>
+</item>
+"""
+
+# Excerpt from the MIT-licensed denonavr fallback-page recording:
+# https://github.com/ol-iver/denonavr/blob/12b5cf70efe843a81276cfab56311de88c7fe489/tests/xml/AVR-1912-formMainZone_MainZoneXml.xml
+RECORDED_AVR1912_FALLBACK_XML = """\
+<item>
+<Power><value>ON</value></Power>
+<selectSurround><value>STEREO                         </value></selectSurround>
+<VolumeDisplay><value>Relative</value></VolumeDisplay>
+<MasterVolume><value>-60.0</value></MasterVolume>
+<Mute><value>off</value></Mute>
+</item>
+"""
+
+
 class FakeDenon:
     def __init__(self, *, strict_single_client: bool = False):
         self.volume = 91
@@ -265,6 +290,51 @@ class FakeHttpDenon:
         self.thread.join(timeout=2)
 
 
+class RecordedHttpDenon:
+    def __init__(
+        self, *, status_xml: str | None = None, fallback_xml: str | None = None
+    ):
+        self.paths: list[str] = []
+        owner = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                owner.paths.append(self.path)
+                if self.path == "/goform/formMainZone_MainZoneXmlStatus.xml":
+                    if status_xml is None:
+                        self.send_error(404)
+                        return
+                    body = status_xml.encode("utf-8")
+                elif self.path == "/goform/formMainZone_MainZoneXml.xml":
+                    if fallback_xml is None:
+                        self.send_error(404)
+                        return
+                    body = fallback_xml.encode("utf-8")
+                elif self.path.startswith("/goform/formiPhoneAppDirect.xml?"):
+                    body = b"OK"
+                else:
+                    self.send_error(404)
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "text/xml")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, _format, *args):
+                pass
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.port = self.server.server_port
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=2)
+
+
 class DenonDriverTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.fake = FakeDenon()
@@ -327,6 +397,57 @@ class DenonDriverTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("MSDTS SURROUND", http.commands)
             self.assertEqual(driver.config["transport"], "http")
             self.assertEqual(driver.config["http_port"], http.port)
+        finally:
+            http.close()
+
+    async def test_http_absolute_volume_uses_db_scale_and_decodes_minimum(self):
+        recorded_xml = RecordedHttpDenon(status_xml=RECORDED_X2100W_STATUS_XML)
+        minimum_xml = RECORDED_X2100W_STATUS_XML.replace(
+            "<value>-28.0</value>", "<value>--</value>"
+        )
+        recorded_minimum = RecordedHttpDenon(status_xml=minimum_xml)
+        try:
+            driver = DenonDriver(
+                {
+                    "host": "127.0.0.1",
+                    "transport": "http",
+                    "http_port": recorded_xml.port,
+                }
+            )
+            status = await driver.status()
+            self.assertEqual(status.volume, 104)
+            self.assertEqual(driver.scale.display(status.volume), -28.0)
+
+            minimum_driver = DenonDriver(
+                {
+                    "host": "127.0.0.1",
+                    "transport": "http",
+                    "http_port": recorded_minimum.port,
+                }
+            )
+            minimum_status = await minimum_driver.status()
+            self.assertEqual(minimum_status.volume, 0)
+            self.assertEqual(driver.config["transport"], "http")
+            self.assertIn(
+                "/goform/formMainZone_MainZoneXmlStatus.xml", recorded_xml.paths
+            )
+        finally:
+            recorded_xml.close()
+            recorded_minimum.close()
+
+    async def test_fallback_xml_select_surround_mode_round_trips(self):
+        http = RecordedHttpDenon(fallback_xml=RECORDED_AVR1912_FALLBACK_XML)
+        try:
+            driver = DenonDriver(
+                {
+                    "host": "127.0.0.1",
+                    "transport": "http",
+                    "http_port": http.port,
+                }
+            )
+            self.assertEqual(await driver.set_mode("STEREO"), "STEREO")
+            self.assertEqual((await driver.status()).mode, "STEREO")
+            self.assertIn("/goform/formMainZone_MainZoneXml.xml", http.paths)
         finally:
             http.close()
 
