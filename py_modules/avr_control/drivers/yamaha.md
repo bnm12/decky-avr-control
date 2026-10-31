@@ -12,6 +12,7 @@
 | Transport | [spec][1, §§3, 5] HTTP with JSON responses at `/YamahaExtendedControl/v1/`, normally port 80; [assumed] the driver allows a configured port for tests. |
 | Discovery | [spec][1, §13.2] SSDP/UPnP description; Yamaha's `X_yxcControlURL` indicates YXC support. [assumed][1] The driver uses the description's UDN as its stable receiver ID. |
 | Connections | [assumed] The specifications do not define a concurrent-client limit; the driver uses independent bounded HTTP requests. |
+| State updates | [assumed] Polling only; this HTTP driver does not subscribe to receiver events. |
 
 ## Transport and framing
 
@@ -70,6 +71,15 @@ Host: 192.0.2.20
 
 [assumed][1] Known codes are prettified for display, including `straight` → “Straight”, `7ch_stereo` → “7ch Stereo”, `surr_decoder` → “Surround Decoder”, `all_ch_stereo` → “All-Channel Stereo”, `sci-fi` → “Sci-Fi”, `mono_movie` → “Mono Movie”, and `hall_in_munich` → “Hall in Munich”. Unknown codes are displayed by replacing underscores and hyphens with spaces and title-casing the result.
 
+When `sound_program_list` is present in the receiver's `getFeatures` response
+and the zone supports sound programs, `ModeState.complete` is `true`: Yamaha
+documents the array as the available programs for that zone [spec][1,
+pp.10-11, 14-16, 54]. If the field is missing or not a list, the state is
+incomplete [assumed]. An unknown current program is kept as current but not
+added to selectable modes; standby returns no current or selectable modes
+[assumed]. Labels are resolved from the static prettifier, without a
+configured receiver [assumed][1].
+
 ## Quirks and gotchas
 
 - [community][3][4][6] YXC is not the same protocol as Yamaha's older XML remote-control API. [assumed][1][3][4] Pre-2016 legacy receivers that expose only `/YamahaRemoteControl/ctrl` are not supported by this driver.
@@ -84,6 +94,8 @@ Host: 192.0.2.20
 - [assumed][1][6] Confirm whether `getFeatures` advertises all supported functions consistently and whether setter replies include their confirmed state on every model.
 - [assumed][1] Confirm that enabling network standby is required for discovery/probing while the main zone is in standby, and determine receiver-specific behavior.
 - [assumed][1][2] The Advanced API includes MusicCast distribution and streaming operations that are outside this driver's volume, mute, power, and mode capabilities.
+- [community][3] Some Yamaha MusicCast implementations use UDP notifications; whether those events apply to YXC status is unknown. This driver is polling-only, and UDP event support is a possible future option, not yet measured.
+- [assumed, not yet measured] Tester checklist: change volume with the remote while the panel is open; does the slider follow within 1 s?
 
 ## Sources
 

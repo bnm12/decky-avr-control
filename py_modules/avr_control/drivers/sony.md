@@ -12,6 +12,7 @@
 | Transport | [community] HTTP POST with JSON-RPC-style JSON bodies to `/sony/<service>`, normally port 10000. |
 | Discovery | [community] SSDP service type `urn:schemas-sony-com:service:ScalarWebAPI:1`; the UPnP description advertises `X_ScalarWebAPI_BaseURL`. [assumed] The driver uses its port and prefers system MAC/serial for its receiver ID, falling back to the UDN. |
 | Connections | [assumed] Each request is an independent bounded HTTP request; no persistent session is held. A model-wide concurrent-client limit is unknown. |
+| State updates | [assumed] Polling only; the HTTP driver does not subscribe to receiver events. |
 
 ## Transport and framing
 
@@ -59,11 +60,19 @@
 
 [community] The driver reads the `candidate` list for target `soundField`, uses each candidate's `value` as the opaque mode code, and uses `title` as the display name. Entries marked unavailable are omitted. Candidate availability and names can differ by model and current input.
 
+If MODE is supported and the receiver returns a `candidate` array, it is the
+selectable `soundField` list and `ModeState.complete` is `true` [community].
+Without that array the state is incomplete [assumed]. A current value not
+present among available candidates remains current but is not added to
+selectable modes. Unsupported mode data or standby returns `current=None`, no
+selectable modes, and `complete=false` [community][assumed]. Labels use the
+static prettifier without a configured receiver [assumed].
+
 ## Quirks and gotchas
 
 - [community] The ScalarWebAPI is shared by Sony audio products and BRAVIA TVs; an SSDP match alone does not establish that the device is an AVR or soundbar. The probe checks the product category, and discovery filters advertised video services.
 - [community] Sony's API may reject audio queries while the receiver is in standby. [assumed] The driver returns `Status(power=False)` with volume, mute and mode unset in that case.
-- [assumed] `list_modes()` returns an empty list, rather than raising, when listening mode is unsupported (codes 3/12), when the receiver refuses the sound-field query (40000, e.g. standby), or when MODE was already dropped by `status()`. Connection and HTTP failures still raise `DriverError`, so power control stays available while the receiver is in standby.
+- [assumed] `list_modes()` returns an empty list, rather than raising, when listening mode is unsupported (codes 3/12), when the receiver refuses the sound-field query (40000, e.g. standby), or when MODE was already dropped by `status()`. `mode_state()` also suppresses unsupported/standby mode data. Connection and HTTP failures still raise `DriverError`, so power control stays available while the receiver is in standby.
 - [community] Some Sony TV configurations use a PSK authentication header. [assumed] No PSK field is included here because it was not established as necessary for the supported AVR/soundbar scope.
 - [community] API method versions and supported endpoints are model/firmware-specific. [assumed] The fixed request versions above may need adjustment on some receivers.
 
@@ -73,6 +82,7 @@
 - [assumed] Confirm whether every supported model accepts the empty `output` parameter, the string volume value, and `off` as the power setter's off-state.
 - [assumed] Confirm which non-100 volume ranges are raw steps versus percent-like values, and whether API `step` values larger than one need special handling.
 - [assumed] Confirm how accurately the UPnP description identifies TV-only devices and whether receivers report `macAddr` consistently.
+- [assumed, not yet measured] Tester checklist: change volume with the remote while the panel is open; does the slider follow within 1 s?
 
 ## Sources
 

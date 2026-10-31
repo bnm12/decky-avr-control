@@ -4,8 +4,132 @@ import asyncio
 import re
 import struct
 import xml.etree.ElementTree as ET
+from collections.abc import Awaitable, Callable
 
 from avr_control.drivers.eiscp import packet
+
+
+_MEMORY_EOF = object()
+
+
+class InMemoryStreamReader:
+    def __init__(self):
+        self._chunks: asyncio.Queue = asyncio.Queue()
+        self._buffer = bytearray()
+        self._eof = False
+
+    def feed_data(self, data: bytes) -> None:
+        self._chunks.put_nowait(data)
+
+    def feed_eof(self) -> None:
+        if not self._eof:
+            self._eof = True
+            self._chunks.put_nowait(_MEMORY_EOF)
+
+    async def readexactly(self, count: int) -> bytes:
+        while len(self._buffer) < count:
+            if self._eof and self._chunks.empty():
+                partial = bytes(self._buffer)
+                self._buffer.clear()
+                raise asyncio.IncompleteReadError(partial, count)
+            chunk = await self._chunks.get()
+            if chunk is _MEMORY_EOF:
+                continue
+            self._buffer.extend(chunk)
+        result = bytes(self._buffer[:count])
+        del self._buffer[:count]
+        return result
+
+    async def readuntil(self, separator: bytes = b"\n") -> bytes:
+        while True:
+            position = self._buffer.find(separator)
+            if position >= 0:
+                end = position + len(separator)
+                result = bytes(self._buffer[:end])
+                del self._buffer[:end]
+                return result
+            if self._eof and self._chunks.empty():
+                partial = bytes(self._buffer)
+                self._buffer.clear()
+                raise asyncio.IncompleteReadError(partial, None)
+            chunk = await self._chunks.get()
+            if chunk is _MEMORY_EOF:
+                continue
+            self._buffer.extend(chunk)
+
+    async def readline(self) -> bytes:
+        try:
+            return await self.readuntil(b"\n")
+        except asyncio.IncompleteReadError as exc:
+            return exc.partial
+
+
+class InMemoryStreamWriter:
+    def __init__(
+        self,
+        peer: InMemoryStreamReader,
+        on_write: Callable[[bytes], None] | None = None,
+    ):
+        self._peer = peer
+        self._on_write = on_write
+        self._closed = False
+
+    def write(self, data: bytes) -> None:
+        if self._closed:
+            raise ConnectionError("memory stream is closed")
+        if self._on_write:
+            self._on_write(data)
+        self._peer.feed_data(bytes(data))
+
+    async def drain(self) -> None:
+        await asyncio.sleep(0)
+
+    def close(self) -> None:
+        if not self._closed:
+            self._closed = True
+            self._peer.feed_eof()
+
+    def is_closing(self) -> bool:
+        return self._closed
+
+    async def wait_closed(self) -> None:
+        await asyncio.sleep(0)
+
+
+class InMemoryDuplex:
+    """A duplex-stream adapter with the subset used by asyncio stream drivers."""
+
+    def __init__(
+        self, handler: Callable[[InMemoryStreamReader, InMemoryStreamWriter], Awaitable[None]]
+    ):
+        self.handler = handler
+        self.connections: list[tuple[InMemoryStreamReader, InMemoryStreamWriter]] = []
+        self.client_writes: list[tuple[int, float, bytes]] = []
+        self._tasks: set[asyncio.Task] = set()
+
+    async def connect(self):
+        client_reader = InMemoryStreamReader()
+        server_reader = InMemoryStreamReader()
+        connection_index = len(self.connections)
+
+        def record(data: bytes) -> None:
+            self.client_writes.append(
+                (connection_index, asyncio.get_running_loop().time(), bytes(data))
+            )
+
+        client_writer = InMemoryStreamWriter(server_reader, record)
+        server_writer = InMemoryStreamWriter(client_reader)
+        self.connections.append((client_reader, client_writer))
+        task = asyncio.create_task(self.handler(server_reader, server_writer))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return client_reader, client_writer
+
+    async def close(self) -> None:
+        for _reader, writer in self.connections:
+            writer.close()
+        if self._tasks:
+            await asyncio.gather(*tuple(self._tasks), return_exceptions=True)
 
 
 class FakeEiscp:
@@ -18,6 +142,8 @@ class FakeEiscp:
         self.refused_mode: str | None = None
         self.status_delay = 0.0
         self.report_power = True
+        self.stale_volume_before_ack: int | None = None
+        self.suppress_volume_ack = False
         self.server = None
         self.connections = 0
 
@@ -73,8 +199,14 @@ class FakeEiscp:
                     if self.report_power:
                         await self.send(writer, f"PWR{'01' if self.power else '00'}")
                 elif command.startswith("MVL"):
+                    stale_volume = self.stale_volume_before_ack
+                    self.stale_volume_before_ack = None
                     self.volume = int(command[3:], 16)
-                    await self.send(writer, f"MVL{self.volume:02X}")
+                    if stale_volume is not None:
+                        await self.send(writer, f"!1MVL{stale_volume:02X}")
+                    if not self.suppress_volume_ack:
+                        await self.send(writer, f"MVL{self.volume:02X}")
+                    self.suppress_volume_ack = False
                 elif command.startswith("AMT"):
                     self.muted = command[3:] == "01"
                     await self.send(writer, f"AMT{'01' if self.muted else '00'}")
@@ -102,6 +234,9 @@ class FakePioneerTelnet:
         self.muted = False
         self.power = True
         self.off_power_reply = "2"
+        self.report_volume = True
+        self.report_mute = True
+        self.stale_volume_before_ack: int | None = None
         self.server = None
 
     async def start(self, host: str = "127.0.0.1", port: int = 0):
@@ -121,8 +256,12 @@ class FakePioneerTelnet:
                     break
                 command = line.decode("ascii").strip()
                 if command == "?V":
+                    if not self.report_volume:
+                        continue
                     response = f"VOL{self.volume:03d}"
                 elif command == "?M":
+                    if not self.report_mute:
+                        continue
                     response = f"MUT{'0' if self.muted else '1'}"
                 elif command == "?P":
                     response = f"PWR{'0' if self.power else self.off_power_reply}"
@@ -139,7 +278,13 @@ class FakePioneerTelnet:
                     self.power = False
                     response = f"PWR{self.off_power_reply}"
                 elif command.endswith("VL"):
-                    self.volume = int(command[:-2])
+                    requested = int(command[:-2])
+                    stale_volume = self.stale_volume_before_ack
+                    self.stale_volume_before_ack = None
+                    if stale_volume is not None:
+                        writer.write(f"VOL{stale_volume:03d}\r\n".encode("ascii"))
+                        await writer.drain()
+                    self.volume = requested
                     response = f"VOL{self.volume:03d}"
                 else:
                     continue

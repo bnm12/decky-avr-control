@@ -1,35 +1,37 @@
 # AVR Control
 
-Decky Loader plugin that controls a network AV receiver from the Quick Access menu:
-an absolute volume slider, mute, power and listening mode, instead of CEC volume
-up/down. Anything else with a volume can be controlled through Home Assistant.
+Decky Loader plugin for controlling supported network receivers from the Steam
+Quick Access menu. Home Assistant can connect media-player entities that expose
+compatible controls.
 
 ## Supported receivers
 
-| Receivers | Driver | Status |
-|---|---|---|
-| Onkyo, Pioneer (2016+), Integra (eISCP) | [eiscp](py_modules/avr_control/drivers/eiscp.md) | Verified on a Pioneer VSX-935; other models' volume scales can be set in manual setup |
-| Yamaha MusicCast (YXC) | [yamaha](py_modules/avr_control/drivers/yamaha.md) | Experimental |
-| Yamaha before MusicCast, 2010–2016 (XML) | [yamaha_ync](py_modules/avr_control/drivers/yamaha_ync.md) | Experimental |
-| Denon, Marantz (telnet, with HTTP fallback) | [denon](py_modules/avr_control/drivers/denon.md) | Experimental |
-| Denon HEOS speakers and soundbars (volume, mute) | [heos](py_modules/avr_control/drivers/heos.md) | Experimental |
-| Sony receivers and soundbars (Audio Control API) | [sony](py_modules/avr_control/drivers/sony.md) | Experimental |
-| Pioneer before 2016 (telnet) | [pioneer_telnet](py_modules/avr_control/drivers/pioneer_telnet.md) | Experimental |
-| Sonos and other UPnP/DLNA renderers (volume, mute) | [upnp](py_modules/avr_control/drivers/upnp.md) | Experimental |
-| Any Home Assistant media player | [homeassistant](py_modules/avr_control/drivers/homeassistant.md) | Experimental |
+| Receiver / driver | Volume | Mute | Power | Listening modes | Discovery | Status |
+|---|---:|---:|---:|---:|---|---|
+| Onkyo, Pioneer (2016+), Integra ([eISCP](py_modules/avr_control/drivers/eiscp.md)) | ✓ | ✓ | ✓ | ✓ | UDP broadcast | VSX-935 tested; not every feature verified |
+| Yamaha MusicCast ([YXC](py_modules/avr_control/drivers/yamaha.md)) | ✓* | ✓* | ✓* | ✓* | SSDP | Experimental |
+| Yamaha before MusicCast, 2010–2016 ([XML](py_modules/avr_control/drivers/yamaha_ync.md)) | ✓ | ✓ | ✓ | ✓ | SSDP | Experimental |
+| Denon, Marantz ([telnet / HTTP](py_modules/avr_control/drivers/denon.md)) | ✓ | ✓ | ✓ | ✓ | SSDP | Experimental |
+| Denon HEOS speakers and soundbars ([HEOS](py_modules/avr_control/drivers/heos.md)) | ✓ | ✓ | — | — | SSDP | Experimental |
+| Sony receivers and soundbars ([Audio Control API](py_modules/avr_control/drivers/sony.md)) | ✓* | ✓* | ✓* | ✓* | SSDP | Experimental |
+| Pioneer before 2016 ([telnet](py_modules/avr_control/drivers/pioneer_telnet.md)) | ✓ | ✓ | ✓ | — | Manual IP | Experimental |
+| Sonos and other UPnP/DLNA renderers ([UPnP](py_modules/avr_control/drivers/upnp.md)) | ✓ | ✓ | — | — | SSDP | Experimental |
+| Home Assistant media-player entity ([Home Assistant](py_modules/avr_control/drivers/homeassistant.md)) | Entity-dependent | Entity-dependent | Entity-dependent | Entity-dependent | Manual setup | Experimental |
 
-"Experimental" means built from the vendor's spec or community documentation and
-tested against simulated receivers, not yet on real hardware.
+`—` means unsupported. `*` capabilities depend on the receiver's advertised
+features. Home Assistant capabilities depend on the selected entity. Only eISCP
+has been tested on real hardware (a Pioneer VSX-935); the other drivers are
+simulator-tested and remain experimental.
 
 Each driver links to its protocol spec. Own one of the experimental receivers? A
-two-minute recording from your receiver makes it verified: see
+two-minute recording from your receiver helps us validate it: see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Features
 
-- **Volume slider, mute and power**, in dB (or percent where the receiver has no dB
-  scale), following changes made with the remote or the receiver's app (the open
-  panel refreshes every 2 seconds). Controls a receiver doesn't support are hidden.
+- **Volume slider and mute**, plus power where supported. Volume uses the
+  driver's dB, percent, or step scale. The open panel refreshes status every
+  2 seconds; unsupported controls are hidden.
 - **Per-game volume and listening mode, opt-in.** While a game is running, switch on
   *Remember volume* and/or *Remember listening mode* for it in the plugin. Each one is
   independent, so a game can remember just its mode, just its volume, or both. What a
@@ -39,6 +41,12 @@ two-minute recording from your receiver makes it verified: see
 - **Late night mode.** One toggle lowers the volume to the *Late night max volume* and
   caps the slider there. Switching it off restores the previous volume and cap. Per-game
   profiles are not changed while it is on.
+- **Daily time-of-day schedule.** Choose a local-time quiet-hours window, including one
+  that crosses midnight. It can automatically enable late night mode and set a listening
+  mode at the start; a manual late-night toggle takes precedence until the next boundary.
+- **Steam sleep and wake automation, opt-in.** Independently power the receiver on when
+  Steam resumes (only when power is known to be off) or best-effort power it off before
+  Steam suspends. These controls are disabled for receivers without power support.
 
 - **Listening mode picker.** Choose a listening mode from the panel. Yamaha and Home
   Assistant report their own list; the eISCP list was collected from a VSX-935 with
@@ -60,6 +68,17 @@ two-minute recording from your receiver makes it verified: see
    for Home Assistant choose it explicitly and enter the URL, a long-lived access
    token and the media player's entity id.
 
+## Using Home Assistant
+
+Choose Home Assistant for any `media_player` entity, including receivers without
+a native driver. The controls available depend on the entity's advertised
+capabilities. Create a long-lived access token under your Home Assistant profile
+→ **Security → Long-lived access tokens**, enter the server URL (for example
+`http://homeassistant.local:8123`), and use **Find media players** or type an
+entity ID manually. The token is stored in Decky's settings and never shown again;
+it is sent to the Home Assistant URL you enter. Leave the token field empty to keep
+the saved token, including when looking up media players.
+
 Enable the receiver's network standby setting (Pioneer/Onkyo "Network Standby",
 Denon/Marantz "Network Control: Always On", Yamaha "Network Standby") so it accepts
 commands while idle.
@@ -80,10 +99,10 @@ python -m unittest discover -s tests -t . -v
 
 The version lives in `package.json` and is always the same as the git tag.
 In the repo's **Actions** tab choose **Release**, then **Run workflow**, and enter a
-version such as `0.2.2` (or `gh workflow run release.yml -f version=0.2.2`). It updates
-`package.json`, commits, tags `v0.2.2`, and the Build workflow then attaches
-`avr-control.zip` to a GitHub release. Pushing a `v*` tag by hand also works: the
-zip is stamped with the tag's version, and the build warns if `package.json` differs.
+version such as `X.Y.Z` (or `gh workflow run release.yml -f version=X.Y.Z`). It updates
+`package.json`, commits, tags `vX.Y.Z`, and the Build workflow then attaches
+`avr-control.zip` to a GitHub release. Use this workflow for releases; a manually
+pushed tag can leave the store's `package.json` version stale.
 
 ## Discovery
 
@@ -95,8 +114,25 @@ its IP address changes the plugin looks it up again automatically. Typing an IP 
 hand disables this. Broadcasts only work within one subnet, so a VLAN or guest
 network needs the IP entered manually.
 
-The slider cap is set in the receiver's own unit (dB or percent) in the plugin's
-settings, so the slider can never go above it.
+The slider cap is set in the driver's displayed unit (dB, percent, or steps) in
+the plugin's settings, so the slider can never go above it.
+
+## Troubleshooting & diagnostics
+
+- Enable the receiver's network-standby setting to control it while idle.
+- eISCP and many Denon receivers allow only one reliable control client. Close
+  the vendor app or other controller while testing; Denon can fall back to HTTP
+  when its telnet interface is busy or unavailable.
+- Discovery broadcasts and SSDP multicast may not cross VLANs or guest-network
+  boundaries. Put the Deck and receiver on a reachable network, or enter the
+  receiver IP manually.
+- Decky plugin logs are normally in
+  `~/homebrew/logs/avr-control/`; loader service logs are available with
+  `journalctl -u plugin_loader`.
+- To report a receiver, run `python tools/avr_probe.py capture <receiver-ip>`,
+  review the redacted capture, and attach it to a
+  [Receiver report](https://github.com/bnm12/decky-avr-control/issues/new?template=receiver-report.yml).
+  Never share Home Assistant tokens or credentials.
 ## Collecting listening-mode codes
 
 `tools/collect_modes.py` helps build a table of your receiver's listening-mode codes.
@@ -111,12 +147,11 @@ the receiver displays. Results are saved to `listening_modes.json`.
 
 ## Privacy
 
-The plugin only talks to your receiver on your local network: UDP broadcasts on port
-60128 and SSDP multicast to find it, then connections to the receiver's own IP (or to
-the Home Assistant URL you enter). Nothing else is sent anywhere and there is no
-telemetry. A Home Assistant token is stored in the settings file and never shown in
-the panel again. Settings (receiver address, volume caps, per-game
-profiles) are stored locally in Decky's settings folder.
+The plugin contacts your receiver on the local network and the Home Assistant URL
+you enter; that URL may be outside your LAN. There is no telemetry or other
+built-in service. A Home Assistant token is stored in Decky's settings file and
+is not shown in the panel again. Receiver settings, volume caps and per-game
+profiles are stored locally in Decky's settings folder.
 
 ## License
 

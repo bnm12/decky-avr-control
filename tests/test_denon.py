@@ -4,12 +4,22 @@ import asyncio
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from unittest.mock import patch
 from urllib.parse import unquote, urlsplit
 
 from tests import PY_MODULES  # noqa: F401
 from avr_control import ssdp
-from avr_control.drivers.base import MODE, MUTE, POWER, VOLUME, DriverError, Refused
-from avr_control.drivers.denon import DenonDriver
+from avr_control.drivers.base import (
+    MODE,
+    MUTE,
+    POWER,
+    VOLUME,
+    DriverError,
+    ModeState,
+    Refused,
+    Status,
+)
+from avr_control.drivers.denon import DenonDriver, TelnetTransport
 
 
 def encode_volume(raw: int) -> str:
@@ -56,6 +66,8 @@ class FakeDenon:
         self.power = True
         self.mode = "STEREO"
         self.refused_mode = False
+        self.report_mode = True
+        self.stale_volume_before_ack = False
         self.strict_single_client = strict_single_client
         self.commands: list[str] = []
         self.connections = 0
@@ -108,15 +120,19 @@ class FakeDenon:
                     if self.power:
                         await self.send(writer, "MUON" if self.muted else "MUOFF")
                 elif command == "MS?":
-                    if self.power:
+                    if self.power and self.report_mode:
                         await self.send(writer, f"MS{self.mode}")
                 elif command.startswith("MV") and command not in {
                     "MV?",
                     "MVUP",
                     "MVDOWN",
                 }:
+                    stale_volume = self.volume
                     requested = decode_volume(command[2:])
                     self.volume = min(requested, self.maximum)
+                    if self.stale_volume_before_ack:
+                        self.stale_volume_before_ack = False
+                        await self.send(writer, f"MV{encode_volume(stale_volume)}")
                     await self.send(writer, f"MV{encode_volume(self.volume)}")
                     await self.send(writer, f"MVMAX {encode_volume(self.maximum)}")
                 elif command == "MUON":
@@ -368,6 +384,21 @@ class DenonDriverTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.fake.mode, "DTS SURROUND")
         self.assertLessEqual(self.fake.max_active_connections, 1)
 
+    async def test_set_volume_ignores_stale_state_before_requested_confirmation(self):
+        await self.driver.status()
+        events = asyncio.Queue()
+        unsubscribe = await self.driver.watch(events.put_nowait)
+        self.fake.stale_volume_before_ack = True
+
+        try:
+            self.assertEqual(await self.driver.set_volume(48), 48)
+            self.assertEqual(
+                await asyncio.wait_for(events.get(), 1), Status(volume=91)
+            )
+        finally:
+            if unsubscribe is not None:
+                await unsubscribe()
+
     async def test_http_status_and_setters_use_readback(self):
         http = FakeHttpDenon()
         try:
@@ -505,13 +536,61 @@ class DenonDriverTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(status.muted)
         self.assertIsNone(status.mode)
 
+    async def test_status_does_not_require_a_listening_mode_reply(self):
+        self.fake.report_mode = False
+
+        status = await self.driver.status()
+
+        self.assertEqual((status.volume, status.muted, status.power), (91, False, True))
+        self.assertIsNone(status.mode)
+
+    async def test_mode_connection_failure_is_not_reported_as_refusal(self):
+        unused = await asyncio.start_server(
+            lambda _reader, writer: writer.close(), "127.0.0.1", 0
+        )
+        closed_port = unused.sockets[0].getsockname()[1]
+        unused.close()
+        await unused.wait_closed()
+        driver = DenonDriver(
+            {"host": "127.0.0.1", "port": closed_port, "transport": "telnet"}
+        )
+        driver._transport_adapter = TelnetTransport("127.0.0.1", closed_port)
+
+        with patch.object(driver, "_http_ports", return_value=[]):
+            with self.assertRaises(DriverError) as raised:
+                await driver.set_mode("DIRECT")
+        self.assertNotIsInstance(raised.exception, Refused)
+
     async def test_mode_refusal_and_names(self):
         self.fake.refused_mode = True
         with self.assertRaisesRegex(Refused, "didn't accept"):
             await self.driver.set_mode("DIRECT")
-        self.assertEqual(self.driver.mode_name("DOLBY D+ +DSUR"), "Dolby D+ +Dsur")
+        self.assertEqual(self.fake.mode, "STEREO")
+        self.assertEqual(
+            DenonDriver.mode_label("DOLBY D+ +DSUR"), "Dolby D+ +Dsur"
+        )
+        self.assertEqual(DenonDriver.mode_label("stereo"), "Stereo")
         modes = await self.driver.list_modes()
         self.assertIn(("PURE DIRECT", "Pure Direct"), [(m.code, m.name) for m in modes])
+
+    async def test_mode_state_keeps_unknown_current_out_of_static_modes(self):
+        self.fake.mode = "CUSTOM MODE"
+        status = await self.driver.status()
+        state = await self.driver.mode_state(status)
+        self.assertEqual(state.current, "CUSTOM MODE")
+        self.assertNotIn("CUSTOM MODE", [mode.code for mode in state.selectable])
+        self.assertFalse(state.complete)
+
+        self.fake.power = False
+        state = await self.driver.mode_state(await self.driver.status())
+        self.assertEqual(state, ModeState(None, (), complete=False))
+
+        async def unexpected_status():
+            raise AssertionError("mode_state must reuse the supplied status")
+
+        self.driver.status = unexpected_status
+        state = await self.driver.mode_state(status)
+        self.assertEqual(state.current, "CUSTOM MODE")
 
     async def test_probe_accepts_denon_and_rejects_refused_or_wrong_protocol(self):
         found = await DenonDriver.probe(self.config)
@@ -610,7 +689,7 @@ class DenonDriverTests(unittest.IsolatedAsyncioTestCase):
                 self.fake.mode = reported
                 status = await self.driver.status()
                 self.assertEqual(status.mode, canonical)
-                self.assertEqual(self.driver.mode_name(status.mode), name)
+                self.assertEqual(DenonDriver.mode_label(status.mode), name)
 
         self.assertEqual(await self.driver.set_mode("DOLBY DIGITAL"), "DOLBY DIGITAL")
         self.assertIn("MSDOLBY DIGITAL", self.fake.commands)

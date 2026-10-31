@@ -10,7 +10,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from tests import PY_MODULES  # noqa: F401
 from tests.fakes import FakeSsdpResponder
 from avr_control import ssdp
-from avr_control.drivers.base import DriverError, MODE, MUTE, POWER, VOLUME, Refused
+from avr_control.drivers.base import (
+    DriverError,
+    MODE,
+    MUTE,
+    POWER,
+    VOLUME,
+    ModeState,
+    Refused,
+)
 from avr_control.drivers.yamaha import YamahaDriver
 from avr_control.drivers.yamaha_ync import YamahaYNCDriver
 
@@ -246,6 +254,36 @@ class YamahaYNCDriverTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
+    async def test_mode_state_is_complete_only_for_a_device_configured_list(self):
+        status = await self.driver.status()
+        state = await self.driver.mode_state(status)
+        self.assertEqual(state.current, "Hall in Munich")
+        self.assertTrue(state.complete)
+        self.assertIn("Jazz Club", [mode.code for mode in state.selectable])
+
+        self.fake.sound_program = "Receiver Only"
+        status = await self.driver.status()
+        state = await self.driver.mode_state(status)
+        self.assertEqual(state.current, "Receiver Only")
+        self.assertNotIn("Receiver Only", [mode.code for mode in state.selectable])
+        self.assertTrue(state.complete)
+
+        async def unexpected_status():
+            raise AssertionError("mode_state must reuse the supplied status")
+
+        self.driver.status = unexpected_status
+        self.assertEqual(
+            (await self.driver.mode_state(status)).current,
+            "Receiver Only",
+        )
+
+    def test_mode_labels_do_not_require_a_configured_receiver(self):
+        self.assertEqual(YamahaYNCDriver.mode_label("Straight"), "Straight")
+        self.assertEqual(
+            YamahaYNCDriver.mode_label("receiver_only_program"),
+            "Receiver Only Program",
+        )
+
     async def test_standby_and_straight_mode(self):
         self.fake.power = "Standby"
         self.fake.straight = "On"
@@ -254,6 +292,8 @@ class YamahaYNCDriverTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status.mode, "Straight")
         self.assertEqual(await self.driver.set_mode("Straight"), "Straight")
         self.assertEqual(self.fake.straight, "On")
+        state = await self.driver.mode_state(status)
+        self.assertEqual(state, ModeState(None, (), complete=False))
 
     async def test_fallback_modes_and_default_scale(self):
         self.fake.config_modes = False
@@ -269,11 +309,19 @@ class YamahaYNCDriverTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(("Hall in Munich", "Hall in Munich"), [
             (mode.code, mode.name) for mode in modes
         ])
+        self.assertFalse((await driver.mode_state()).complete)
 
     async def test_nonzero_rc_is_refused_and_malformed_volume_is_driver_error(self):
         self.fake.rc = "3"
         with self.assertRaisesRegex(Refused, "RC=3"):
             await self.driver.status()
+
+        self.fake.rc = None
+        before = self.fake.sound_program
+        self.fake.rc = "5"
+        with self.assertRaisesRegex(Refused, "RC=5"):
+            await self.driver.set_mode("Rejected Program")
+        self.assertEqual(self.fake.sound_program, before)
 
         self.fake.rc = None
         self.fake.bad_volume = True

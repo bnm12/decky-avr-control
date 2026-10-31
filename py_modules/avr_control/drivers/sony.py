@@ -20,6 +20,7 @@ from .base import (
     DriverError,
     Found,
     Mode,
+    ModeState,
     Refused,
     Status,
     Unsupported,
@@ -429,7 +430,23 @@ class SonyDriver(Driver):
         except (Unsupported, Refused):
             return []
 
-    def mode_name(self, code: str) -> str:
+    async def mode_state(self, status: Status | None = None) -> ModeState:
+        current_status = status if status is not None else await self.status()
+        if current_status.power is False or MODE not in self._capabilities:
+            return ModeState(None, (), complete=False)
+        try:
+            setting = await self._get_sound_setting()
+        except (Unsupported, Refused):
+            return ModeState(None, (), complete=False)
+        candidates = setting.get("candidate")
+        return ModeState(
+            current_status.mode,
+            tuple(_modes(setting)),
+            complete=isinstance(candidates, list),
+        )
+
+    @classmethod
+    def mode_label(cls, code: str) -> str:
         return _pretty_mode(code)
 
     @classmethod

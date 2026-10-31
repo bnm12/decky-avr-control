@@ -14,7 +14,9 @@ from avr_control.drivers.base import (
     POWER,
     VOLUME,
     DriverError,
+    ModeState,
     Refused,
+    SetupOption,
     Unsupported,
 )
 from avr_control.drivers.homeassistant import (
@@ -44,6 +46,14 @@ class FakeHomeAssistant:
             "sound_mode_list": ["Stereo", "Direct", "Dolby"],
             "supported_features": ALL_FEATURES,
         }
+        self.entities = [
+            {
+                "entity_id": ENTITY_ID,
+                "state": self.state,
+                "attributes": dict(self.attributes),
+            }
+        ]
+        self.get_paths: list[str] = []
         self.services: list[tuple[str, dict]] = []
         self.httpd = None
         self.thread = None
@@ -70,11 +80,15 @@ class FakeHomeAssistant:
                 return False
 
             def do_GET(self):
+                path = urlsplit(self.path).path
+                fake.get_paths.append(path)
                 if not self._authorized():
                     return
-                path = urlsplit(self.path).path
                 if path == "/api/":
                     self._respond(200, {"message": "API running."})
+                    return
+                if path == "/api/states":
+                    self._respond(200, fake.entities)
                     return
                 if path.startswith("/api/states/"):
                     requested_id = unquote(path[len("/api/states/") :])
@@ -177,6 +191,68 @@ class HomeAssistantDriverTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(Unsupported, "doesn't support turning off"):
             await self.driver.set_power(False)
 
+    async def test_setup_options_lists_sorted_media_players_and_volume_support(self):
+        self.fake.entities = [
+            {
+                "entity_id": "media_player.z_den",
+                "attributes": {
+                    "friendly_name": "Z Den",
+                    "supported_features": VOLUME_SET,
+                },
+            },
+            {
+                "entity_id": "light.hall",
+                "attributes": {"friendly_name": "Hall"},
+            },
+            {
+                "entity_id": "media_player.a_bedroom",
+                "attributes": {
+                    "friendly_name": "A Bedroom",
+                    "supported_features": VOLUME_MUTE,
+                },
+            },
+            {
+                "entity_id": "media_player.living_room_receiver",
+                "attributes": {
+                    "friendly_name": "Living Room Receiver",
+                    "supported_features": ALL_FEATURES,
+                },
+            },
+        ]
+
+        self.assertEqual(
+            await HomeAssistantDriver.setup_options(
+                {"url": self.url, "token": TOKEN}
+            ),
+            {
+                "entity_id": [
+                    SetupOption(
+                        "media_player.a_bedroom",
+                        "A Bedroom (media_player.a_bedroom) (no volume control)",
+                    ),
+                    SetupOption(
+                        "media_player.living_room_receiver",
+                        "Living Room Receiver (media_player.living_room_receiver)",
+                    ),
+                    SetupOption("media_player.z_den", "Z Den (media_player.z_den)"),
+                ]
+            },
+        )
+        self.assertEqual(self.fake.get_paths, ["/api/states"])
+
+    async def test_setup_options_skips_request_without_url_or_token(self):
+        for config in (
+            {},
+            {"url": self.url},
+            {"url": "", "token": TOKEN},
+            {"url": None, "token": TOKEN},
+            {"url": self.url, "token": ""},
+            {"url": self.url, "token": None},
+        ):
+            with self.subTest(config=config):
+                self.assertEqual(await HomeAssistantDriver.setup_options(config), {})
+        self.assertEqual(self.fake.get_paths, [])
+
     async def test_off_standby_unavailable_and_unknown_state_mapping(self):
         self.fake.state = "off"
         self.assertFalse((await self.driver.status()).power)
@@ -212,11 +288,52 @@ class HomeAssistantDriverTests(unittest.IsolatedAsyncioTestCase):
         modes = await self.driver.list_modes()
         self.assertEqual([(mode.code, mode.name) for mode in modes],
                          [("Stereo", "Stereo"), ("Direct", "Direct"), ("Dolby", "Dolby")])
-        self.assertEqual(self.driver.mode_name("anything"), "anything")
+        self.assertEqual(HomeAssistantDriver.mode_label("anything"), "anything")
+        state = await self.driver.mode_state()
+        self.assertEqual(state.current, "Stereo")
+        self.assertTrue(state.complete)
         before = len(self.fake.services)
         with self.assertRaisesRegex(Refused, "doesn't offer that sound mode"):
             await self.driver.set_mode("Not a mode")
         self.assertEqual(len(self.fake.services), before)
+        self.assertEqual(self.fake.attributes["sound_mode"], "Stereo")
+
+    async def test_mode_state_treats_entity_list_as_complete_and_missing_list_as_partial(self):
+        self.fake.attributes["sound_mode"] = "Receiver Only"
+        status = await self.driver.status()
+        state = await self.driver.mode_state(status)
+        self.assertEqual(state.current, "Receiver Only")
+        self.assertNotIn("Receiver Only", [mode.code for mode in state.selectable])
+        self.assertTrue(state.complete)
+
+        self.fake.attributes.pop("sound_mode_list")
+        status = await self.driver.status()
+        state = await self.driver.mode_state(status)
+        self.assertEqual(state.current, "Receiver Only")
+        self.assertEqual(state.selectable, ())
+        self.assertFalse(state.complete)
+
+        async def unexpected_status():
+            raise AssertionError("mode_state must reuse the supplied status")
+
+        self.driver.status = unexpected_status
+        self.assertEqual(
+            (await self.driver.mode_state(status)).current,
+            "Receiver Only",
+        )
+
+    async def test_mode_state_suppresses_modes_in_standby_or_when_unsupported(self):
+        self.fake.state = "off"
+        state = await self.driver.mode_state()
+        self.assertEqual(state, ModeState(None, (), False))
+
+        self.fake.state = "playing"
+        self.fake.attributes["supported_features"] = VOLUME_SET
+        status = await self.driver.status()
+        self.assertEqual(
+            await self.driver.mode_state(status),
+            ModeState(None, (), False),
+        )
 
     async def test_authentication_and_missing_entity_errors_do_not_leak_token(self):
         bad_token = "do-not-leak-this-token"
@@ -225,6 +342,15 @@ class HomeAssistantDriverTests(unittest.IsolatedAsyncioTestCase):
             await bad_driver.status()
         self.assertEqual(str(error.exception), "Home Assistant rejected the token")
         self.assertNotIn(bad_token, str(error.exception))
+
+        with self.assertRaises(DriverError) as options_error:
+            await HomeAssistantDriver.setup_options(
+                {"url": self.url, "token": bad_token}
+            )
+        self.assertEqual(
+            str(options_error.exception), "Home Assistant rejected the token"
+        )
+        self.assertNotIn(bad_token, str(options_error.exception))
 
         missing = HomeAssistantDriver(
             {**self.config, "entity_id": "media_player.missing"}
@@ -316,7 +442,7 @@ class HomeAssistantDriverTests(unittest.IsolatedAsyncioTestCase):
                 DriverError,
                 "Home Assistant redirected to another address; enter the final URL",
             ):
-                await driver.status()
+                await HomeAssistantDriver.setup_options(driver.config)
             self.assertEqual(received_authorization, [])
         finally:
             redirect_server.shutdown()

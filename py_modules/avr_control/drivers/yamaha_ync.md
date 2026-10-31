@@ -12,6 +12,7 @@
 | Transport | [community][1][2] HTTP POST with XML to `/YamahaRemoteControl/ctrl`, normally port 80; the driver honours `config["port"]` for alternate endpoints and tests. |
 | Discovery | [community][1][3] SSDP `MediaRenderer` and `upnp:rootdevice`, then the Yamaha UPnP `X_device` block. Legacy XML needs `X_controlURL` and must not advertise `X_yxcControlURL`; UDN is the receiver ID. |
 | Connections | [assumed] Independent, bounded HTTP requests; no concurrent-client limit has been verified. |
+| State updates | [assumed] Polling only; this HTTP driver does not subscribe to receiver events. |
 
 ## Transport and framing
 
@@ -53,6 +54,13 @@ Content-Type: text/xml; charset=utf-8
 
 [community][1][2] The driver tries `System/Config` and then `Main_Zone/Config` for a `Sound_Program` list and uses it when available; the set varies by model. [assumed] If neither query provides a list, it offers a common Yamaha set including Straight, stereo modes, surround decoder, cinema programs, and concert-hall programs. `Straight` is a distinct mode code. Mode codes are passed through to the receiver unchanged.
 
+`ModeState.complete` is `true` only when a sound-program list was read from one
+of those receiver configuration responses [community][1][2]. The fallback
+common Yamaha set is incomplete (`false`) [assumed]. A current program absent
+from the offered list remains visible but is not added to selectable modes;
+standby returns no current or selectable modes [assumed]. Labels are
+prettified from the code without a configured receiver [assumed].
+
 ## Quirks and gotchas
 
 - [community][1][2] The XML remote-control protocol is not Yamaha YXC/MusicCast's HTTP/JSON API.
@@ -68,6 +76,7 @@ Content-Type: text/xml; charset=utf-8
 - [assumed] Confirm the raw volume mapping, cap behavior, and whether every firmware accepts the `Val`/`Exp` write format at half-dB increments.
 - [assumed] Confirm SSDP description variants and whether YXC-capable receivers always advertise `X_yxcControlURL`.
 - [assumed] No real receiver has been tested. The `rxv` project is BSD-3-Clause licensed, not MIT; no third-party implementation code is copied into this driver.
+- [assumed, not yet measured] Tester checklist: change volume with the remote while the panel is open; does the slider follow within 1 s?
 
 ## Sources
 

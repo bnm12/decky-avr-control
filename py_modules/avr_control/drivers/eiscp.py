@@ -7,7 +7,7 @@ import re
 import socket
 import struct
 import time
-from typing import Callable, ClassVar
+from typing import Awaitable, Callable, ClassVar
 
 from .base import (
     MODE,
@@ -19,10 +19,12 @@ from .base import (
     DriverError,
     Found,
     Mode,
+    ModeState,
     Refused,
     Status,
     VolumeScale,
 )
+from .receiver_session import ReceiverSessionError, shared_session
 
 EISCP_PORT = 60128
 DISCOVERY_TARGETS: list[tuple[str, int]] | None = None
@@ -79,42 +81,39 @@ async def _read_packet(reader: asyncio.StreamReader) -> str:
     return (await reader.readexactly(data_size)).decode("ascii", errors="ignore")
 
 
-async def _open(host: str, port: int) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
-    try:
-        return await asyncio.wait_for(asyncio.open_connection(host, port), 2.0)
-    except Exception as exc:
-        raise DriverError(f"Can't reach AVR at {host}:{port}: {exc}") from exc
+async def _query(
+    host: str,
+    port: int,
+    command: str,
+    pattern: str,
+    timeout: float = 2.0,
+    expected: Callable[[re.Match[str]], bool] | None = None,
+):
+    matcher = re.compile(pattern)
+    last_observed: re.Match[str] | None = None
 
+    def classify(payload: str) -> str | None:
+        nonlocal last_observed
+        if _NJAPUSH.search(payload):
+            return None
+        match = matcher.search(payload)
+        if match is None:
+            return None
+        last_observed = match
+        return "reply" if expected is None or expected(match) else None
 
-async def _query(host: str, port: int, command: str, pattern: str, timeout: float = 2.0):
-    reader, writer = await _open(host, port)
     try:
-        writer.write(packet(f"!1{command}\r"))
-        await writer.drain()
-        matcher = re.compile(pattern)
-        deadline = asyncio.get_running_loop().time() + timeout
-        while True:
-            remaining = deadline - asyncio.get_running_loop().time()
-            if remaining <= 0:
-                raise asyncio.TimeoutError()
-            payload = await asyncio.wait_for(_read_packet(reader), remaining)
-            if _NJAPUSH.search(payload):
-                continue
-            match = matcher.search(payload)
-            if match:
-                return match
-    except (asyncio.TimeoutError, asyncio.IncompleteReadError):
+        frames = await shared_session(host, port, _read_packet).transact(
+            [packet(f"!1{command}\r")],
+            classify,
+            frozenset({"reply"}),
+            timeout=timeout,
+        )
+    except ReceiverSessionError as exc:
+        if expected is not None and exc.kind == "confirmation" and last_observed:
+            return last_observed
         raise
-    except DriverError:
-        raise
-    except Exception as exc:
-        raise DriverError(f"eISCP request failed: {exc}") from exc
-    finally:
-        writer.close()
-        try:
-            await writer.wait_closed()
-        except Exception:
-            pass
+    return matcher.search(frames["reply"])
 
 
 async def _multi(
@@ -126,62 +125,55 @@ async def _multi(
     complete_when: Callable[[list[re.Match[str] | None]], bool] | None = None,
     grace_indices: set[int] | None = None,
 ) -> list[re.Match[str] | None]:
-    reader, writer = await _open(host, port)
-    try:
-        for command, _, _ in queries:
-            writer.write(packet(f"!1{command}\r"))
-        await writer.drain()
-        patterns = [re.compile(pattern) for _, pattern, _ in queries]
-        result: list[re.Match[str] | None] = [None] * len(queries)
-        required = {i for i, query in enumerate(queries) if query[2]}
-        optional = {i for i, query in enumerate(queries) if not query[2]}
-        deadline = asyncio.get_running_loop().time() + required_timeout
+    patterns = [re.compile(pattern) for _, pattern, _ in queries]
+    result: list[re.Match[str] | None] = [None] * len(queries)
+    if complete_when is None:
+        required_indices = {i for i, query in enumerate(queries) if query[2]}
+    else:
+        required_indices = set()
+    optional_indices = (
+        set(grace_indices)
+        if grace_indices is not None
+        else {i for i, query in enumerate(queries) if not query[2]}
+    )
+    optional_keys = frozenset(f"reply-{index}" for index in optional_indices)
 
-        while (
-            not complete_when(result)
-            if complete_when is not None
-            else any(result[i] is None for i in required)
-        ):
-            remaining = deadline - asyncio.get_running_loop().time()
-            if remaining <= 0:
-                raise asyncio.TimeoutError()
-            payload = await asyncio.wait_for(_read_packet(reader), remaining)
-            if _NJAPUSH.search(payload):
+    def classify(payload: str) -> str | None:
+        if _NJAPUSH.search(payload):
+            return None
+        for index, pattern in enumerate(patterns):
+            if result[index] is not None:
                 continue
-            for i, pattern in enumerate(patterns):
-                if result[i] is None:
-                    result[i] = pattern.search(payload)
+            match = pattern.search(payload)
+            if match is None:
+                continue
+            was_complete = (
+                complete_when(result) if complete_when is not None else False
+            )
+            result[index] = match
+            if (
+                complete_when is not None
+                and not was_complete
+                and complete_when(result)
+            ):
+                return "complete"
+            return f"reply-{index}"
+        return None
 
-        if grace_indices is not None:
-            optional = grace_indices
-        if optional and any(result[i] is None for i in optional):
-            deadline = asyncio.get_running_loop().time() + grace
-            while any(result[i] is None for i in optional):
-                remaining = deadline - asyncio.get_running_loop().time()
-                if remaining <= 0:
-                    break
-                try:
-                    payload = await asyncio.wait_for(_read_packet(reader), remaining)
-                except (asyncio.TimeoutError, asyncio.IncompleteReadError, OSError):
-                    break
-                if _NJAPUSH.search(payload):
-                    continue
-                for i in optional:
-                    if result[i] is None:
-                        result[i] = patterns[i].search(payload)
-        return result
-    except (asyncio.TimeoutError, asyncio.IncompleteReadError):
-        raise
-    except DriverError:
-        raise
-    except Exception as exc:
-        raise DriverError(f"eISCP status request failed: {exc}") from exc
-    finally:
-        writer.close()
-        try:
-            await writer.wait_closed()
-        except Exception:
-            pass
+    required_keys = (
+        frozenset({"complete"})
+        if complete_when is not None
+        else frozenset(f"reply-{index}" for index in required_indices)
+    )
+    await shared_session(host, port, _read_packet).transact(
+        [packet(f"!1{command}\r") for command, _, _ in queries],
+        classify,
+        required_keys,
+        timeout=required_timeout,
+        optional=optional_keys,
+        optional_grace=grace,
+    )
+    return result
 
 
 def _local_prefix() -> str | None:
@@ -396,7 +388,7 @@ class EiscpDriver(Driver):
                 or (result[0] is not None and result[1] is not None),
                 grace_indices={2, 3},
             )
-        except (asyncio.TimeoutError, asyncio.IncompleteReadError) as exc:
+        except ReceiverSessionError as exc:
             raise DriverError("AVR didn't report its power state") from exc
         return Status(
             volume=int(volume.group(1), 16) if volume else None,
@@ -405,25 +397,73 @@ class EiscpDriver(Driver):
             mode=mode.group(1).upper() if mode else None,
         )
 
-    async def _set(self, command: str, pattern: str) -> re.Match[str]:
-        try:
-            return await _query(self.host, self.port, command, pattern)
-        except (asyncio.TimeoutError, asyncio.IncompleteReadError) as exc:
-            raise DriverError("AVR didn't confirm the command") from exc
+    async def watch(
+        self, on_change: Callable[[Status], None]
+    ) -> Callable[[], Awaitable[None]]:
+        session = shared_session(self.host, self.port, _read_packet)
+
+        def receive(payload: str) -> None:
+            if _NJAPUSH.search(payload):
+                return
+            payload = payload.rstrip("\r\n\x1a")
+            match = re.fullmatch(
+                r"!1(?:MVL([0-9A-Fa-f]{2})|AMT(00|01)|PWR(00|01)|LMD([0-9A-Fa-f]{2,4}))",
+                payload,
+            )
+            if match is None:
+                return
+            volume, mute, power, mode = match.groups()
+            on_change(
+                Status(
+                    volume=int(volume, 16) if volume is not None else None,
+                    muted=(mute == "01") if mute is not None else None,
+                    power=(power == "01") if power is not None else None,
+                    mode=mode.upper() if mode is not None else None,
+                )
+            )
+
+        session.subscribe(receive)
+
+        async def unsubscribe() -> None:
+            await session.unsubscribe(receive)
+
+        return unsubscribe
 
     async def set_volume(self, raw: int) -> int:
         value = max(self.scale.min, min(self.scale.max, int(raw)))
-        match = await self._set(f"MVL{value:02X}", r"MVL([0-9A-F]{2})")
+        match = await _query(
+            self.host,
+            self.port,
+            f"MVL{value:02X}",
+            r"MVL([0-9A-F]{2})",
+            expected=lambda response: int(response.group(1), 16) == value,
+        )
+        if match is None:
+            raise DriverError("AVR didn't confirm the volume")
         return int(match.group(1), 16)
 
     async def set_mute(self, muted: bool) -> bool:
-        match = await self._set(
-            "AMT01" if muted else "AMT00", r"AMT([0-9A-F]{2})"
+        match = await _query(
+            self.host,
+            self.port,
+            "AMT01" if muted else "AMT00",
+            r"AMT([0-9A-F]{2})",
+            expected=lambda response: (response.group(1) == "01") is muted,
         )
+        if match is None:
+            raise DriverError("AVR didn't confirm mute")
         return match.group(1) == "01"
 
     async def set_power(self, on: bool) -> bool:
-        match = await self._set("PWR01" if on else "PWR00", r"PWR(00|01)")
+        match = await _query(
+            self.host,
+            self.port,
+            "PWR01" if on else "PWR00",
+            r"PWR(00|01)",
+            expected=lambda response: (response.group(1) == "01") is on,
+        )
+        if match is None:
+            raise DriverError("AVR didn't confirm power")
         return match.group(1) == "01"
 
     async def set_mode(self, code: str) -> str:
@@ -432,17 +472,34 @@ class EiscpDriver(Driver):
             raise Refused(f"Invalid mode code: {code}")
         try:
             match = await _query(
-                self.host, self.port, f"LMD{code}", r"LMD([0-9A-F]{2,4})"
+                self.host,
+                self.port,
+                f"LMD{code}",
+                r"LMD([0-9A-F]{2,4})",
+                expected=lambda response: response.group(1).upper() == code,
             )
-        except (asyncio.TimeoutError, asyncio.IncompleteReadError) as exc:
-            raise Refused(REFUSED_MODE_MESSAGE) from exc
+        except ReceiverSessionError as exc:
+            if exc.kind == "confirmation":
+                raise Refused(REFUSED_MODE_MESSAGE) from exc
+            raise DriverError("AVR couldn't confirm the mode") from exc
         return match.group(1).upper()
 
     async def list_modes(self) -> list[Mode]:
         return [Mode(code, name) for code, name in MODE_NAMES]
 
-    def mode_name(self, code: str) -> str:
-        return dict(MODE_NAMES).get(code.upper(), f"Mode {code}")
+    async def mode_state(self, status: Status | None = None) -> ModeState:
+        current_status = status if status is not None else await self.status()
+        if current_status.power is False:
+            return ModeState(None, (), complete=False)
+        return ModeState(
+            current_status.mode,
+            tuple(await self.list_modes()),
+            complete=False,
+        )
+
+    @classmethod
+    def mode_label(cls, code: str) -> str:
+        return dict(MODE_NAMES).get(str(code).strip().upper(), f"Mode {code}")
 
     @classmethod
     async def discover(cls, timeout: float) -> list[Found]:

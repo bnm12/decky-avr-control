@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import patch
 
 from tests import PY_MODULES  # noqa: F401
-from avr_control.settings import SettingsStore
+from avr_control.settings import FileSettingsStore
 
 
 class Logger:
@@ -34,6 +34,12 @@ class MainSmokeTests(unittest.TestCase):
             decky_stub = types.ModuleType("decky")
             decky_stub.DECKY_PLUGIN_SETTINGS_DIR = settings_dir
             decky_stub.logger = Logger()
+            emitted = []
+
+            async def emit(event, *args):
+                emitted.append((event, args))
+
+            decky_stub.emit = emit
             old_decky = sys.modules.get("decky")
             old_main = sys.modules.pop("avr_control_main_smoke", None)
             sys.modules["decky"] = decky_stub
@@ -44,9 +50,24 @@ class MainSmokeTests(unittest.TestCase):
                 module = importlib.util.module_from_spec(spec)
                 sys.modules[spec.name] = module
                 spec.loader.exec_module(module)
-                plugin = module.Plugin()
+                smoke_snapshot = {"revision": 3, "push": True}
+                asyncio.run(module._publish_snapshot(smoke_snapshot))
                 self.assertEqual(
-                    asyncio.run(plugin.get_connection()),
+                    emitted, [("avr_snapshot", (smoke_snapshot,))]
+                )
+                plugin = module.Plugin()
+                public_rpcs = {
+                    name
+                    for name, value in vars(module.Plugin).items()
+                    if not name.startswith("_") and callable(value)
+                }
+                self.assertEqual(
+                    public_rpcs,
+                    {"snapshot", "dispatch", "discover", "list_drivers", "setup_options"},
+                )
+                snapshot = asyncio.run(plugin.snapshot())
+                self.assertEqual(
+                    snapshot["connection"],
                     {
                         "configured": False,
                         "driver": None,
@@ -55,16 +76,66 @@ class MainSmokeTests(unittest.TestCase):
                         "fields": {},
                     },
                 )
-                state = asyncio.run(plugin.get_state())
-                self.assertFalse(state["ok"])
+                self.assertEqual(snapshot["schedule"]["enabled"], False)
+                self.assertEqual(snapshot["sleep_wake"]["supports_power"], False)
+                self.assertFalse(snapshot["push"])
+                panel_opened = asyncio.run(
+                    plugin.dispatch({"type": "panel_opened"})
+                )
+                self.assertTrue(panel_opened["ok"])
+                panel_closed = asyncio.run(
+                    plugin.dispatch({"type": "panel_closed"})
+                )
+                self.assertTrue(panel_closed["ok"])
                 from avr_control.drivers import REGISTRY
 
                 drivers = asyncio.run(plugin.list_drivers())
                 self.assertEqual(
                     [d["key"] for d in drivers], [d.key for d in REGISTRY]
                 )
-                asyncio.run(plugin._main())
-                asyncio.run(plugin._unload())
+                bad_type = asyncio.run(plugin.dispatch({"type": "future_intent"}))
+                self.assertEqual(
+                    bad_type,
+                    {
+                        "ok": False,
+                        "error": "Unknown intent type: 'future_intent'",
+                    },
+                )
+                bad_fields = asyncio.run(
+                    plugin.dispatch({"type": "set_volume", "display": "loud"})
+                )
+                self.assertFalse(bad_fields["ok"])
+                self.assertIn("Invalid display", bad_fields["error"])
+                configured_schedule = asyncio.run(
+                    plugin.dispatch(
+                        {
+                            "type": "set_schedule",
+                            "enabled": True,
+                            "start": "22:00",
+                            "end": "07:00",
+                            "mode": None,
+                        }
+                    )
+                )
+                self.assertTrue(configured_schedule["ok"])
+                self.assertTrue(configured_schedule["snapshot"]["schedule"]["enabled"])
+                bad_schedule = asyncio.run(
+                    plugin.dispatch(
+                        {
+                            "type": "set_schedule",
+                            "enabled": True,
+                            "start": 2200,
+                            "end": "07:00",
+                            "mode": None,
+                        }
+                    )
+                )
+                self.assertFalse(bad_schedule["ok"])
+                async def lifecycle():
+                    await plugin._main()
+                    await plugin._unload()
+
+                asyncio.run(lifecycle())
             finally:
                 sys.modules.pop("avr_control_main_smoke", None)
                 if old_main is not None:
@@ -92,7 +163,7 @@ class MainSmokeTests(unittest.TestCase):
             sys.modules["decky"] = decky_stub
             try:
                 with patch.object(
-                    SettingsStore, "save", side_effect=OSError("disk full")
+                    FileSettingsStore, "save", side_effect=OSError("disk full")
                 ):
                     spec = importlib.util.spec_from_file_location(
                         "avr_control_main_smoke", os.path.join(
@@ -102,8 +173,10 @@ class MainSmokeTests(unittest.TestCase):
                     module = importlib.util.module_from_spec(spec)
                     sys.modules[spec.name] = module
                     spec.loader.exec_module(module)
+                    self.assertIsNone(module.application.publish)
                     plugin = module.Plugin()
-                    self.assertEqual(asyncio.run(plugin.get_host()), "192.0.2.7")
+                    snapshot = asyncio.run(plugin.snapshot())
+                    self.assertEqual(snapshot["connection"]["summary"], "192.0.2.7")
             finally:
                 sys.modules.pop("avr_control_main_smoke", None)
                 if old_main is not None:

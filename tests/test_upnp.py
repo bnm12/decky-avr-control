@@ -10,7 +10,7 @@ from xml.etree import ElementTree as ET
 from tests import PY_MODULES  # noqa: F401
 from tests.fakes import FakeSsdpResponder
 from avr_control import ssdp
-from avr_control.drivers.base import MUTE, Refused, VOLUME
+from avr_control.drivers.base import MUTE, ModeState, Refused, VOLUME
 from avr_control.drivers.upnp import UpnpDriver
 
 
@@ -248,6 +248,12 @@ class UpnpDriverTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(path == "/control" for _, path in self.fake.requests))
         self.assertIn("<InstanceID>0</InstanceID>", self.fake.request_bodies[0])
         self.assertIn("<Channel>Master</Channel>", self.fake.request_bodies[0])
+
+    async def test_mode_state_has_no_io_for_driver_without_mode_support(self):
+        driver = UpnpDriver({})
+        self.assertEqual(await driver.mode_state(), ModeState(None, (), False))
+        self.assertEqual(self.fake.requests, [])
+        self.assertEqual(UpnpDriver.mode_label("custom"), "Mode custom")
 
     async def test_scpd_volume_range_and_step_are_honored(self):
         await self.fake.close()

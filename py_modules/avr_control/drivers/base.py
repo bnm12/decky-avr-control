@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import ClassVar, Literal
+from typing import Awaitable, Callable, ClassVar, Literal
 
 VOLUME = "volume"
 MUTE = "mute"
@@ -76,6 +76,26 @@ class VolumeScale:
 class Mode:
     code: str  # driver-specific, opaque to everything above the driver
     name: str
+
+
+@dataclass(frozen=True)
+class ModeState:
+    """The current listening mode and what the user may select.
+
+    `current` may be a code that isn't in `selectable` (decoder-specific or
+    unknown): it is displayable but not offered for selection. `complete` is
+    True only when the driver read the list from the receiver itself.
+    """
+
+    current: str | None
+    selectable: tuple[Mode, ...]
+    complete: bool = False
+
+
+@dataclass(frozen=True)
+class SetupOption:
+    value: str
+    label: str
 
 
 @dataclass
@@ -150,6 +170,17 @@ class Driver(ABC):
     async def status(self) -> Status:
         """Everything at once, in as few round trips as the protocol allows."""
 
+    async def watch(
+        self, on_change: Callable[[Status], None]
+    ) -> Callable[[], Awaitable[None]] | None:
+        """Watch for receiver-originated state changes while the panel is open.
+
+        ``on_change`` receives a partial ``Status``: only fields carried by the
+        event are set; every other field is ``None``. Return an async
+        unsubscribe function, or ``None`` when this driver cannot push updates.
+        """
+        return None
+
     async def get_volume(self) -> int:
         return _require((await self.status()).volume, VOLUME)
 
@@ -178,9 +209,27 @@ class Driver(ABC):
         """Modes the user can pick. May be empty even if MODE is supported."""
         return []
 
+    async def mode_state(self, status: Status | None = None) -> ModeState:
+        """Current mode plus what can be selected (deepening 1.6).
+
+        Pass the status you already have to avoid another round trip. The
+        default builds it from status() and list_modes() with complete=False;
+        drivers whose list is authoritative (read from the device) say so.
+        """
+        current = (status or await self.status()).mode
+        return ModeState(current, tuple(await self.list_modes()), complete=False)
+
+    @classmethod
+    def mode_label(cls, code: str) -> str:
+        """Display name for a mode code without a configured receiver.
+
+        Used for saved game profiles. Unknown codes must still get a label.
+        """
+        return f"Mode {code}"
+
     def mode_name(self, code: str) -> str:
         """Display name for a mode code, including codes not in list_modes()."""
-        return f"Mode {code}"
+        return self.mode_label(code)
 
     async def close(self) -> None:
         """Release connections. Safe to call more than once."""
@@ -201,6 +250,15 @@ class Driver(ABC):
         None (not an exception) when the receiver doesn't speak this protocol.
         """
         return None
+
+    @classmethod
+    async def setup_options(cls, config: dict) -> dict[str, list[SetupOption]]:
+        """Choices for setup fields, given what the user entered so far.
+
+        E.g. Home Assistant lists media_player entities once URL and token are
+        filled in. Keys are ConfigField keys. Read-only; may raise DriverError.
+        """
+        return {}
 
 
 def _require(value, what: str):

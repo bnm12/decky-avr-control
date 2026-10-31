@@ -20,7 +20,9 @@ from .base import (
     DriverError,
     Found,
     Mode,
+    ModeState,
     Refused,
+    SetupOption,
     Status,
     Unsupported,
     VolumeScale,
@@ -101,6 +103,7 @@ class HomeAssistantDriver(Driver):
         super().__init__(config)
         self._supported_features: int | None = None
         self._sound_mode_list: list[str] | None = None
+        self._sound_mode_list_complete = False
 
     @property
     def url(self) -> str:
@@ -245,6 +248,7 @@ class HomeAssistantDriver(Driver):
             current_mode = None
 
         modes = attributes.get("sound_mode_list")
+        self._sound_mode_list_complete = isinstance(modes, list)
         self._sound_mode_list = (
             [mode for mode in modes if isinstance(mode, str)]
             if isinstance(modes, list)
@@ -340,12 +344,83 @@ class HomeAssistantDriver(Driver):
         await self.status()
         return [Mode(mode, mode) for mode in (self._sound_mode_list or [])]
 
-    def mode_name(self, code: str) -> str:
+    async def mode_state(self, status: Status | None = None) -> ModeState:
+        current_status = status if status is not None else await self.status()
+        if (
+            current_status.power is False
+            or self._supported_features is None
+            or not self._supported_features & SELECT_SOUND_MODE
+        ):
+            return ModeState(None, (), complete=False)
+        modes = tuple(
+            Mode(mode, mode) for mode in (self._sound_mode_list or [])
+        )
+        return ModeState(
+            current_status.mode,
+            modes,
+            complete=self._sound_mode_list_complete,
+        )
+
+    @classmethod
+    def mode_label(cls, code: str) -> str:
         return code
 
     @classmethod
     async def discover(cls, timeout: float) -> list[Found]:
         return []
+
+    @classmethod
+    async def setup_options(cls, config: dict) -> dict[str, list[SetupOption]]:
+        url = config.get("url")
+        token = config.get("token")
+        if (
+            not isinstance(url, str)
+            or not url.strip()
+            or not isinstance(token, str)
+            or not token.strip()
+        ):
+            return {}
+
+        response = await cls(config)._request_json("/api/states")
+        if not isinstance(response, list):
+            raise DriverError("Home Assistant returned an invalid entity list")
+
+        entities: list[tuple[str, str, SetupOption]] = []
+        for state in response:
+            if not isinstance(state, dict):
+                continue
+            entity_id = state.get("entity_id")
+            if not isinstance(entity_id, str) or not entity_id.startswith(
+                "media_player."
+            ):
+                continue
+
+            attributes = state.get("attributes")
+            if not isinstance(attributes, dict):
+                attributes = {}
+            friendly_name = attributes.get("friendly_name")
+            if not isinstance(friendly_name, str) or not friendly_name.strip():
+                friendly_name = entity_id
+            else:
+                friendly_name = friendly_name.strip()
+            try:
+                features = int(attributes.get("supported_features", 0))
+            except (TypeError, ValueError, OverflowError):
+                features = 0
+
+            label = f"{friendly_name} ({entity_id})"
+            if not features & VOLUME_SET:
+                label += " (no volume control)"
+            entities.append(
+                (
+                    friendly_name.casefold(),
+                    entity_id.casefold(),
+                    SetupOption(entity_id, label),
+                )
+            )
+
+        entities.sort(key=lambda item: (item[0], item[1]))
+        return {"entity_id": [item[2] for item in entities]}
 
     @classmethod
     async def probe(cls, config: dict) -> Found | None:

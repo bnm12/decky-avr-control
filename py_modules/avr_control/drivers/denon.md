@@ -11,21 +11,24 @@
 | Verified on | none (simulator only) |
 | Transport | [spec] Telnet-compatible TCP port 23; [community] HTTP/XML status and control, normally port 80 or 8080 depending on model year. Telnet is preferred when it answers; HTTP is the fallback. |
 | Discovery | [assumed] SSDP M-SEARCH for MediaRenderer and root-device advertisements; description UDN is the preferred stable ID. |
-| Connections | [community] Receivers commonly allow one active Telnet client; this driver opens and closes one connection per operation. |
+| Connections | [community] Receivers commonly allow one active Telnet client; a shared TCP session serializes drivers for the same host and port and closes after each transaction except while a push subscriber is active. |
+| State updates | [spec][11, not yet measured] The Telnet protocol reports unsolicited status-change lines; this driver watches MV, MU, PW and MS lines. HTTP transport remains polling-only. |
 
 ## Transport and framing
 
 [spec] Send plain ASCII commands terminated by carriage return (`\r`, byte `0x0d`) to TCP port 23. Replies are CR-terminated ASCII lines; a line-feed, if present, is ignored. For example, send `PW?\r` and expect `PWON\r` or `PWSTANDBY\r`.
 
-[community] The receiver can also push unsolicited event lines on an open Telnet connection. The driver ignores lines that do not match a requested response, and uses a fresh connection for each operation rather than keeping a subscription open.
+[spec][11, not yet measured] Denon AVR control protocol documents status-change event lines on Telnet connections, including `MV`, `MU`, `PW` and `MS` reports. The driver maps these to partial status updates when using Telnet. This behavior has not been measured on a real receiver. The shared `ReceiverSession` routes unclaimed lines to subscribers; the HTTP transport has no push subscription and remains polling-only.
 
 [community] The driver first checks Telnet TCP 23 and prefers it if it returns a Denon power reply. When Telnet is unavailable, busy, or disabled, it tries HTTP on the configured `http_port`, then ports 80 and 8080. The selected transport and HTTP port are retained in receiver config.
 
 [community] The HTTP adapter reads `/goform/formMainZone_MainZoneXmlStatus.xml` (and falls back to `/goform/formMainZone_MainZoneXml.xml`) and parses the main-zone Power, MasterVolume, VolumeDisplay, Mute and surround-mode XML fields. The fallback page can report its mode as `selectSurround` ([AVR-1912 recording](https://github.com/ol-iver/denonavr/blob/12b5cf70efe843a81276cfab56311de88c7fe489/tests/xml/AVR-1912-formMainZone_MainZoneXml.xml)). Setters use `/goform/formiPhoneAppDirect.xml?<command>` with the same Telnet-style command strings, then query the XML status page to confirm the new value. The library's AppCommand interface is another HTTP/XML option (`POST /goform/AppCommand.xml`) with `GetAllZonePowerStatus`, `GetAllZoneVolume`, `GetAllZoneMuteStatus` and `GetSurroundModeStatus`; this driver uses the status pages instead of AppCommand because they expose the needed state in one response and are also used as the library's fallback for receivers with incomplete AppCommand responses.
 
-[community] Because receivers may reject a second Telnet client, a per-receiver lock serializes Telnet operations across driver instances. HTTP does not hold the Telnet slot and can coexist with other apps' Telnet clients.
+[community] Because receivers may reject a second Telnet client, the shared session keyed by host and port serializes Telnet operations across driver instances. HTTP does not hold the Telnet slot and can coexist with other apps' Telnet clients.
 
 [spec] Leave at least 50 ms between successive commands sent on the same connection. `status()` sends its four queries with this spacing. [community] The port-23 interface is Telnet-compatible raw TCP and does not require a login handshake.
+
+[assumed] Telnet status requires power and, while powered on, volume and mute; listening mode is collected during a short optional grace period and remains `None` when absent. Standby reports power alone. Setters only accept a state line matching the requested value as confirmation; other state lines are routed to subscribers while the command waits to its bounded deadline. If a value setter times out after observing a different value, it returns that last observed value. Connection and transport failures remain driver errors, not mode refusals.
 
 ## Discovery
 
@@ -58,6 +61,8 @@
 
 [community] Mode availability depends on model, input, and signal. `status()` canonicalizes recognized decoder-specific reports to settable commands: Dolby report variants (such as `DOLBY D+ +DSUR`) to `DOLBY DIGITAL`, DTS variants (such as `DTS HD+DSUR`) to `DTS SURROUND`, decoder reports with Music/Movie/Game suffixes to their matching settable modes, multi-channel stereo reports to `MCH STEREO`, and `AUTO`/`NONE` to `AUTO`. The mode code returned by status can therefore be restored with `set_mode()`. Unrecognized values remain available to display and are sent without a local mode whitelist (after trimming and uppercasing); a refusal is reported only if the receiver does not confirm the command.
 
+The common static set is not guaranteed to enumerate every model's selectable modes, so `ModeState.complete` is always `false` [community]. A current decoder report is canonicalized when a known settable equivalent exists; other unknown current values remain visible but are not added to the selectable list. Standby returns no current or selectable modes [assumed]. Labels use the canonical catalog or prettify unknown codes without a configured receiver [community].
+
 [community] This grouping follows `denonavr`'s `SOUND_MODE_MAPPING`: decoder-specific Dolby and DTS values are grouped under the corresponding settable sound mode, `MCH STEREO` / `MULTI CH STEREO` map to `MCH STEREO`, and `None` maps to `AUTO`. The source is MIT-licensed; see [denonavr `const.py`](https://github.com/ol-iver/denonavr/blob/master/denonavr/const.py) and [LICENSE](https://github.com/ol-iver/denonavr/blob/master/LICENSE).
 
 ## Quirks and gotchas
@@ -77,6 +82,7 @@
 - [assumed] Confirm the 0 dB reference, volume range, and relative-versus-absolute display for older models and each firmware family; the documented modern decimal mapping may not apply to every receiver.
 - [assumed] Confirm which `MS` codes can be set for each input/signal and how unsupported modes are reported.
 - [assumed] Confirm which Denon/Marantz models advertise a usable SSDP description and expose manufacturer, model, and UDN fields.
+- [spec, not yet measured] Tester checklist: change volume with the remote while the panel is open; does the slider follow within 1 s?
 
 ## Sources
 
@@ -90,3 +96,4 @@
 8. [community] [ol-iver/denonavr XML status example (`tests/xml/AVR-3311CI-formMainZone_MainZoneXml.xml`)](https://github.com/ol-iver/denonavr/blob/12b5cf70efe843a81276cfab56311de88c7fe489/tests/xml/AVR-3311CI-formMainZone_MainZoneXml.xml); MIT.
 9. [community] [ol-iver/denonavr AVR-X2100W status XML recording (`tests/xml/AVR-X2100W-2-formMainZone_MainZoneXmlStatus.xml`)](https://github.com/ol-iver/denonavr/blob/12b5cf70efe843a81276cfab56311de88c7fe489/tests/xml/AVR-X2100W-2-formMainZone_MainZoneXmlStatus.xml); MIT.
 10. [community] [ol-iver/denonavr AVR-1912 fallback XML recording (`tests/xml/AVR-1912-formMainZone_MainZoneXml.xml`)](https://github.com/ol-iver/denonavr/blob/12b5cf70efe843a81276cfab56311de88c7fe489/tests/xml/AVR-1912-formMainZone_MainZoneXml.xml); MIT.
+11. [spec] [Denon 2018 AVR Control Protocol](https://assets.denon.com/documentmaster/us/denon-avr-2018-avr-control-protocol-v01.pdf): Telnet status-change event reports; not measured for this project.

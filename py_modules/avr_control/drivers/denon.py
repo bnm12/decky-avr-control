@@ -7,9 +7,8 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
-import weakref
 import xml.etree.ElementTree as ET
-from typing import ClassVar
+from typing import Awaitable, Callable, ClassVar
 
 from .. import ssdp
 from .base import (
@@ -21,15 +20,18 @@ from .base import (
     DriverError,
     Found,
     Mode,
+    ModeState,
     Refused,
     Status,
     VolumeScale,
 )
+from .receiver_session import ReceiverSessionError, shared_session
 
 DENON_PORT = 23
 COMMAND_INTERVAL = 0.05
 _REPLY_TIMEOUT = 1.2
 _STATUS_TIMEOUT = 0.65
+_STATUS_MODE_GRACE = 0.12
 _HTTP_TIMEOUT = 0.8
 _HTTP_STATUS_PATHS = (
     "/goform/formMainZone_MainZoneXmlStatus.xml",
@@ -135,113 +137,91 @@ def _encode_volume(raw: int) -> str:
     return f"{whole:02d}{'5' if half else ''}"
 
 
-async def _open(
-    host: str, port: int
-) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
-    try:
-        return await asyncio.wait_for(asyncio.open_connection(host, port), 2.0)
-    except Exception as exc:
-        raise DriverError(f"Can't reach Denon/Marantz receiver at {host}:{port}: {exc}") from exc
-
-
-async def _read_line(reader: asyncio.StreamReader, timeout: float) -> str:
-    data = await asyncio.wait_for(reader.readuntil(b"\r"), timeout)
+async def _read_telnet_line(reader: asyncio.StreamReader) -> str:
+    data = await reader.readuntil(b"\r")
     return data[:-1].decode("ascii", errors="ignore").strip()
 
 
-async def _close(writer: asyncio.StreamWriter) -> None:
-    writer.close()
-    try:
-        await writer.wait_closed()
-    except Exception:
-        pass
-
-
 class TelnetTransport:
-    """Short-lived Telnet connections, serialized for single-client receivers."""
+    """Denon command grammar over the shared owned TCP session."""
 
-    def __init__(self, host: str, port: int, lock: asyncio.Lock):
-        self.host = host
-        self.port = port
-        self.lock = lock
+    def __init__(self, host: str, port: int):
+        self.session = shared_session(host, port, _read_telnet_line)
 
     async def query(self, commands: tuple[str, ...]) -> list[str]:
-        async with self.lock:
-            reader, writer = await _open(self.host, self.port)
-            lines: list[str] = []
-            try:
-                for index, command in enumerate(commands):
-                    if index:
-                        await asyncio.sleep(COMMAND_INTERVAL)
-                    writer.write(command.encode("ascii") + b"\r")
-                    await writer.drain()
+        lines: list[str] = []
 
-                deadline = asyncio.get_running_loop().time() + _STATUS_TIMEOUT
-                while True:
-                    remaining = deadline - asyncio.get_running_loop().time()
-                    if remaining <= 0:
-                        break
-                    try:
-                        line = await _read_line(reader, remaining)
-                    except asyncio.TimeoutError:
-                        break
-                    if line:
-                        lines.append(line)
-                        if self._query_complete(commands, lines):
-                            break
-            except DriverError:
-                raise
-            except Exception as exc:
-                raise DriverError(
-                    f"Denon/Marantz status request failed: {exc}"
-                ) from exc
-            finally:
-                await _close(writer)
-            return lines
+        def classify(line: str) -> str | None:
+            if not line:
+                return None
+            lines.append(line)
+            mode = _MODE_LINE.fullmatch(line)
+            if mode:
+                return "mode"
+            if self._query_complete(commands, lines):
+                return "complete"
+            for key, matcher in (
+                ("power", _POWER_LINE),
+                ("volume", _VOLUME_TOKEN),
+                ("mute", _MUTE_LINE),
+            ):
+                if matcher.fullmatch(line):
+                    return key
+            return None
 
-    async def send(self, command: str) -> list[str]:
-        async with self.lock:
-            reader, writer = await _open(self.host, self.port)
-            lines: list[str] = []
-            matches = self._reply_matcher(command)
-            try:
-                writer.write(command.encode("ascii") + b"\r")
-                await writer.drain()
-                deadline = asyncio.get_running_loop().time() + _REPLY_TIMEOUT
-                while True:
-                    remaining = deadline - asyncio.get_running_loop().time()
-                    if remaining <= 0:
-                        raise asyncio.TimeoutError()
-                    line = await _read_line(reader, remaining)
-                    if not line:
-                        continue
-                    lines.append(line)
-                    if matches(line):
-                        grace_deadline = min(
-                            deadline,
-                            asyncio.get_running_loop().time() + 0.07,
-                        )
-                        while grace_deadline > asyncio.get_running_loop().time():
-                            try:
-                                line = await _read_line(
-                                    reader,
-                                    grace_deadline - asyncio.get_running_loop().time(),
-                                )
-                            except asyncio.TimeoutError:
-                                break
-                            if line:
-                                lines.append(line)
-                        return lines
-            except asyncio.TimeoutError:
+        await self.session.transact(
+            [command.encode("ascii") + b"\r" for command in commands],
+            classify,
+            frozenset({"complete"}),
+            timeout=_STATUS_TIMEOUT,
+            min_interval=COMMAND_INTERVAL,
+            optional=frozenset({"mode"}),
+            optional_grace=_STATUS_MODE_GRACE,
+        )
+        return lines
+
+    async def send(
+        self, command: str, expected: Callable[[str], bool] | None = None
+    ) -> list[str]:
+        lines: list[str] = []
+        matcher = self._reply_matcher(command)
+        optional = frozenset({"max"}) if command.startswith("MV") else frozenset()
+        observed_reply = False
+        last_reply: str | None = None
+        confirmed_reply: str | None = None
+
+        def classify(line: str) -> str | None:
+            nonlocal observed_reply, last_reply, confirmed_reply
+            if matcher(line):
+                lines.append(line)
+                observed_reply = True
+                last_reply = line
+                if expected is not None and not expected(line):
+                    return None
+                confirmed_reply = line
+                return "reply"
+            if _MAX_VOLUME_LINE.fullmatch(line):
+                lines.append(line)
+                return "max"
+            return None
+
+        try:
+            await self.session.transact(
+                [command.encode("ascii") + b"\r"],
+                classify,
+                frozenset({"reply"}),
+                timeout=_REPLY_TIMEOUT,
+                optional=optional,
+                optional_grace=0.07 if optional else 0,
+            )
+        except ReceiverSessionError as exc:
+            if exc.kind != "confirmation" or not observed_reply:
                 raise
-            except DriverError:
-                raise
-            except Exception as exc:
-                raise DriverError(
-                    f"Denon/Marantz command {command!r} failed: {exc}"
-                ) from exc
-            finally:
-                await _close(writer)
+        selected_reply = confirmed_reply or last_reply
+        if expected is not None and selected_reply is not None:
+            lines.remove(selected_reply)
+            lines.insert(0, selected_reply)
+        return lines
 
     @staticmethod
     def _reply_matcher(command: str):
@@ -267,7 +247,6 @@ class TelnetTransport:
         return (
             any(_VOLUME_TOKEN.fullmatch(line) for line in lines)
             and any(_MUTE_LINE.fullmatch(line) for line in lines)
-            and any(_MODE_LINE.fullmatch(line) for line in lines)
         )
 
 
@@ -325,7 +304,6 @@ class DenonDriver(Driver):
     key: ClassVar[str] = "denon"
     label: ClassVar[str] = "Denon / Marantz"
     capabilities = frozenset({VOLUME, MUTE, POWER, MODE})
-    _operation_locks: ClassVar[weakref.WeakKeyDictionary] = weakref.WeakKeyDictionary()
 
     def __init__(self, config: dict):
         super().__init__(config)
@@ -351,19 +329,6 @@ class DenonDriver(Driver):
     @property
     def scale(self) -> VolumeScale:
         return self._scale
-
-    def _operation_lock(self) -> asyncio.Lock:
-        loop = asyncio.get_running_loop()
-        locks = self._operation_locks.get(loop)
-        if locks is None:
-            locks = weakref.WeakValueDictionary()
-            self._operation_locks[loop] = locks
-        receiver = (self.host, self.port)
-        lock = locks.get(receiver)
-        if lock is None:
-            lock = asyncio.Lock()
-            locks[receiver] = lock
-        return lock
 
     def _record_max_volume(self, line: str) -> None:
         match = _MAX_VOLUME_LINE.fullmatch(line)
@@ -412,7 +377,7 @@ class DenonDriver(Driver):
             raise DriverError("Invalid Denon transport")
 
         if configured != "http":
-            telnet = TelnetTransport(self.host, self.port, self._operation_lock())
+            telnet = TelnetTransport(self.host, self.port)
             try:
                 lines = await telnet.query(("PW?",))
                 if not any(_POWER_LINE.fullmatch(line) for line in lines):
@@ -439,10 +404,12 @@ class DenonDriver(Driver):
         )
 
     async def _send_command(
-        self, command: str
+        self, command: str, expected: Callable[[str], bool] | None = None
     ) -> tuple[TelnetTransport | HttpTransport, list[str]]:
         transport = await self._get_transport()
         try:
+            if isinstance(transport, TelnetTransport):
+                return transport, await transport.send(command, expected=expected)
             return transport, await transport.send(command)
         except Exception as first_error:
             if not isinstance(transport, TelnetTransport):
@@ -545,7 +512,7 @@ class DenonDriver(Driver):
         if configured not in {"", "telnet", "http"}:
             raise DriverError("Invalid Denon transport")
         if configured != "http":
-            telnet = TelnetTransport(self.host, self.port, self._operation_lock())
+            telnet = TelnetTransport(self.host, self.port)
             try:
                 status = self._parse_telnet_status(await telnet.query(commands))
                 self._remember_transport(telnet, "telnet", self.port)
@@ -565,6 +532,37 @@ class DenonDriver(Driver):
         raise DriverError(
             f"Can't reach Denon/Marantz receiver at {self.host} via Telnet or HTTP"
         )
+
+    async def watch(
+        self, on_change: Callable[[Status], None]
+    ) -> Callable[[], Awaitable[None]] | None:
+        transport = await self._get_transport()
+        if not isinstance(transport, TelnetTransport):
+            return None
+
+        def receive(line: str) -> None:
+            power = _POWER_LINE.fullmatch(line)
+            volume = _VOLUME_TOKEN.fullmatch(line)
+            mute = _MUTE_LINE.fullmatch(line)
+            mode = _MODE_LINE.fullmatch(line)
+            if power:
+                on_change(Status(power=power.group(1) == "ON"))
+            elif volume:
+                try:
+                    on_change(Status(volume=_decode_volume(volume.group(1))))
+                except ValueError:
+                    return
+            elif mute:
+                on_change(Status(muted=mute.group(1) == "ON"))
+            elif mode and mode.group(1) != "?":
+                on_change(Status(mode=_canonical_mode(mode.group(1))))
+
+        transport.session.subscribe(receive)
+
+        async def unsubscribe() -> None:
+            await transport.session.unsubscribe(receive)
+
+        return unsubscribe
 
     def _parse_telnet_status(self, lines: list[str]) -> Status:
         power: bool | None = None
@@ -607,8 +605,13 @@ class DenonDriver(Driver):
         except (TypeError, ValueError) as exc:
             raise DriverError("Invalid Denon volume value") from exc
         try:
-            transport, lines = await self._send_command(f"MV{_encode_volume(value)}")
-        except asyncio.TimeoutError as exc:
+            transport, lines = await self._send_command(
+                f"MV{_encode_volume(value)}",
+                expected=lambda line: (
+                    _decode_volume(_VOLUME_TOKEN.fullmatch(line).group(1)) == value
+                ),
+            )
+        except ReceiverSessionError as exc:
             raise DriverError("Denon/Marantz didn't confirm the volume") from exc
         for line in lines:
             self._record_max_volume(line)
@@ -640,9 +643,10 @@ class DenonDriver(Driver):
     async def set_mute(self, muted: bool) -> bool:
         try:
             transport, lines = await self._send_command(
-                "MUON" if muted else "MUOFF"
+                "MUON" if muted else "MUOFF",
+                expected=lambda line: line == ("MUON" if muted else "MUOFF"),
             )
-        except asyncio.TimeoutError as exc:
+        except ReceiverSessionError as exc:
             raise DriverError("Denon/Marantz didn't confirm mute") from exc
         if isinstance(transport, HttpTransport):
             confirmed = (await self.status()).muted
@@ -655,8 +659,10 @@ class DenonDriver(Driver):
     async def set_power(self, on: bool) -> bool:
         command = "PWON" if on else "PWSTANDBY"
         try:
-            transport, lines = await self._send_command(command)
-        except asyncio.TimeoutError as exc:
+            transport, lines = await self._send_command(
+                command, expected=lambda line: line == command
+            )
+        except ReceiverSessionError as exc:
             raise DriverError("Denon/Marantz didn't confirm power") from exc
         if isinstance(transport, HttpTransport):
             confirmed = (await self.status()).power
@@ -669,12 +675,17 @@ class DenonDriver(Driver):
     async def set_mode(self, code: str) -> str:
         normalized = _canonical_mode(str(code))
         try:
-            transport, lines = await self._send_command(f"MS{normalized}")
-        except asyncio.TimeoutError as exc:
-            raise Refused(
-                "The receiver didn't accept that listening mode (it may be unavailable "
-                "for the current input or signal)"
-            ) from exc
+            transport, lines = await self._send_command(
+                f"MS{normalized}",
+                expected=lambda line: _canonical_mode(line[2:]) == normalized,
+            )
+        except ReceiverSessionError as exc:
+            if exc.kind == "confirmation":
+                raise Refused(
+                    "The receiver didn't accept that listening mode (it may be unavailable "
+                    "for the current input or signal)"
+                ) from exc
+            raise DriverError("Denon/Marantz couldn't confirm the listening mode") from exc
         if isinstance(transport, HttpTransport):
             actual = (await self.status()).mode
             if actual is None or actual != normalized:
@@ -695,7 +706,18 @@ class DenonDriver(Driver):
     async def list_modes(self) -> list[Mode]:
         return [Mode(code, name) for code, name in MODE_NAMES]
 
-    def mode_name(self, code: str) -> str:
+    async def mode_state(self, status: Status | None = None) -> ModeState:
+        current_status = status if status is not None else await self.status()
+        if current_status.power is False:
+            return ModeState(None, (), complete=False)
+        return ModeState(
+            current_status.mode,
+            tuple(await self.list_modes()),
+            complete=False,
+        )
+
+    @classmethod
+    def mode_label(cls, code: str) -> str:
         normalized = str(code).strip().upper()
         if normalized in _MODE_NAME_BY_CODE:
             return _MODE_NAME_BY_CODE[normalized]

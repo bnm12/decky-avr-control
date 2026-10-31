@@ -11,13 +11,16 @@
 | Verified on | [measured] Pioneer VSX-935 |
 | Transport | [measured] TCP and UDP over IPv4; TCP port 60128; ISCP packet framing |
 | Discovery | [measured] UDP broadcasts to port 60128; stable ID is the receiver's ECN identifier (looks like a MAC address) |
-| Connections | [measured] A VSX-935 accepts roughly one control client reliably; close the Pioneer app while collecting modes |
+| Connections | [measured] A VSX-935 accepts roughly one control client reliably; the shared TCP session closes after each transaction except while a push subscriber is active |
+| State updates | [community][2][5, not yet measured] Connected eISCP clients can receive unsolicited volume, mute, power and listening-mode reports; this driver watches only those reports and ignores NJA album-art frames. |
 
 ## Transport and framing
 
-[spec] An eISCP packet is `ISCP`, a 16-byte header, then the payload. The header includes its own length, payload length, and version; control payloads are ASCII and end in carriage return. A command starts with `!1`, for example `!1MVLQSTN\r`. Requests use one TCP connection; status requests are batched on a single connection.
+[spec] An eISCP packet is `ISCP`, a 16-byte header, then the payload. The header includes its own length, payload length, and version; control payloads are ASCII and end in carriage return. A command starts with `!1`, for example `!1MVLQSTN\r`. Status requests are batched on one TCP connection. Connection ownership, transaction serialization, deadlines and cleanup are handled by the shared `ReceiverSession`, keyed by host, port and framing adapter; its default closes the stream after each transaction.
 
-[measured] A VSX-935 sends an unsolicited `!1NJA2-http://<ip>/album_art.cgi` packet on connect. It must be skipped while waiting for replies. The response terminator observed after MVL data is `\x1a\r\n`.
+[measured] A VSX-935 sends an unsolicited `!1NJA2-http://<ip>/album_art.cgi` packet on connect. It is not a command reply; the session routes unclassified frames to subscribers and otherwise ignores them. The response terminator observed after MVL data is `\x1a\r\n`.
+
+[community][2][5, not yet measured] eISCP receivers may send `!1MVLxx`, `!1AMTxx`, `!1PWRxx` and `!1LMDxx` state reports to connected clients when those values change. The driver converts only these frames to partial status updates; it ignores NJA album-art messages. This event behavior has not been measured on the VSX-935 or another receiver.
 
 [measured] The exact payload length matters: a wrong declared length for `!1MVLQSTN\r` made the VSX-935 wait indefinitely. The driver reads the exact declared payload length and ignores unrelated pushes.
 
@@ -61,6 +64,13 @@ Manual setup can override `volume_steps` (1 or 2), `zero_db` (blank or `absolute
 
 [measured] Picker order and codes collected from a Pioneer VSX-935:
 
+The measured table is intentionally treated as partial, not as the receiver's
+complete selectable-mode list: `ModeState.complete` is always `false` for this
+static catalog [measured]. An unlisted current code remains visible as the
+current code but is not offered for selection; standby reports no current mode
+or selectable modes [assumed]. Labels use the measured table without needing a
+configured receiver, with unknown codes shown as `Mode {code}` [measured].
+
 | Code | Name |
 |---|---|
 | `FF` | Auto Surround |
@@ -90,6 +100,9 @@ Manual setup can override `volume_steps` (1 or 2), `zero_db` (blank or `absolute
 - [measured] NJA album-art pushes can arrive before a query response.
 - [measured] One control client works most reliably on the tested VSX-935.
 - [measured] Standby may answer PWR while omitting volume, mute and mode. Status tolerates missing volume and mute only when PWR reports standby; while power is on or unknown, both are awaited up to the normal two-second timeout. Listening mode remains optional with a short grace period.
+
+- [assumed] Set-command replies are confirmed against the requested volume, mute, power or mode. A different state report is routed to subscribers rather than claimed as the confirmation; the driver waits to its bounded deadline and returns the last observed value when one is available.
+
 - [measured] WSL2 NAT can prevent discovery replies from reaching the client.
 - [assumed] Power command flag meanings follow the common Onkyo ISCP convention.
 
@@ -99,6 +112,7 @@ Manual setup can override `volume_steps` (1 or 2), `zero_db` (blank or `absolute
 - [assumed] Power behavior and its numeric flags have not been independently measured on the VSX-935.
 - [measured] A VSX-935 scan also showed ports 80, 7000, 8008, 8009, 8443, 8554, 8888, 9013, 10001, 10109–10120, 39009 and 60228; this driver only uses 60128.
 - [assumed] Confirm how additional Onkyo/Integra models report standby and which listening modes are available for each input.
+- [community, not yet measured] Tester checklist: change volume with the remote while the panel is open; does the slider follow within 1 s?
 
 ## Sources
 
@@ -106,3 +120,4 @@ Manual setup can override `volume_steps` (1 or 2), `zero_db` (blank or `absolute
 2. [community] [miracle2k/onkyo-eiscp](https://github.com/miracle2k/onkyo-eiscp) (MIT): `eiscp/core.py:322-360,369-398`, `eiscp/commands.py:1479-1491,1675-1688`
 3. [community] [openHAB Pioneer AVR binding](https://www.openhab.org/addons/bindings/pioneeravr/)
 4. [community] [Home Assistant Onkyo integration](https://github.com/home-assistant/core/tree/dev/homeassistant/components/onkyo): volume resolutions and configurable maximum; not a model-specific scale table
+5. [community] [Home Assistant Onkyo integration source](https://github.com/home-assistant/core/tree/dev/homeassistant/components/onkyo): event-driven state updates; not measured for this project.

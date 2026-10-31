@@ -10,7 +10,7 @@ from urllib.parse import parse_qs
 from tests import PY_MODULES  # noqa: F401
 from tests.fakes import FakeSsdpResponder
 from avr_control import ssdp
-from avr_control.drivers.base import MUTE, VOLUME, DriverError
+from avr_control.drivers.base import MUTE, VOLUME, DriverError, ModeState, Status
 from avr_control.drivers.heos import HEOS_SSDP_ST, HeosDriver
 
 
@@ -37,6 +37,8 @@ class FakeHeos:
             },
         ]
         self.commands: list[str] = []
+        self.stale_volume_before_readback: int | None = None
+        self.report_mute = True
         self.server = None
 
     async def start(self):
@@ -85,6 +87,14 @@ class FakeHeos:
                     pid = int(args["pid"][0])
                     player = next(item for item in self.players if item["pid"] == pid)
                     if path == "player/get_volume":
+                        if self.stale_volume_before_readback is not None:
+                            stale = self.stale_volume_before_readback
+                            self.stale_volume_before_readback = None
+                            await self.send(
+                                writer,
+                                path,
+                                message=f"pid='{pid}'&level='{stale}'",
+                            )
                         await self.send(
                             writer,
                             path,
@@ -92,9 +102,12 @@ class FakeHeos:
                         )
                         continue
                     elif path == "player/set_volume":
+                        self.stale_volume_before_readback = player["level"]
                         player["level"] = int(args["level"][0])
                         payload = {}
                     elif path == "player/get_mute":
+                        if not self.report_mute:
+                            continue
                         await self.send(
                             writer,
                             path,
@@ -176,6 +189,21 @@ class HeosDriverTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(self.fake.commands.count("player/get_volume"), 2)
         self.assertGreaterEqual(self.fake.commands.count("player/get_mute"), 2)
         self.assertNotIn("system/register_for_change_events", self.fake.commands)
+
+    async def test_set_volume_ignores_stale_readback_before_requested_state(self):
+        self.fake.stale_volume_before_readback = None
+        self.assertEqual(await self.driver.set_volume(67), 67)
+
+    async def test_status_keeps_volume_when_mute_is_not_reported(self):
+        self.fake.report_mute = False
+
+        self.assertEqual(await self.driver.status(), Status(volume=34, muted=None))
+
+    async def test_mode_state_has_no_io_for_driver_without_mode_support(self):
+        driver = HeosDriver({})
+        self.assertEqual(await driver.mode_state(), ModeState(None, (), False))
+        self.assertEqual(self.fake.commands, [])
+        self.assertEqual(HeosDriver.mode_label("custom"), "Mode custom")
 
     async def test_configured_player_name_beats_the_player_at_the_host_ip(self):
         by_name = HeosDriver(

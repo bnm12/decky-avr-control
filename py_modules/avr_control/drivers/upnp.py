@@ -19,6 +19,7 @@ from .base import (
     Driver,
     DriverError,
     Found,
+    ModeState,
     Refused,
     Status,
     VolumeScale,
@@ -501,6 +502,13 @@ class UpnpDriver(Driver):
         volume = await self._get_volume()
         muted = await self._get_mute()
         return Status(volume=volume, muted=muted)
+
+    async def mode_state(self, status: Status | None = None) -> ModeState:
+        return ModeState(None, (), complete=False)
+
+    @classmethod
+    def mode_label(cls, code: str) -> str:
+        return f"Mode {code}"
 
     async def set_volume(self, raw: int) -> int:
         await self._ensure_service()

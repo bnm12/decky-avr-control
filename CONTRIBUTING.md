@@ -17,8 +17,8 @@
    volume, toggling and restoring mute, and setting the current listening mode.
    `--power` additionally puts the receiver in standby and turns it back on;
    use it only with `--write`.
-3. Attach the capture JSON to a **Receiver report** issue and complete the
-   model, firmware, network-standby and observed-behavior fields.
+3. Attach the capture JSON to a [**Receiver report** issue](https://github.com/bnm12/decky-avr-control/issues/new?template=receiver-report.yml)
+   and complete the model, firmware, network-standby and observed-behavior fields.
 
    Captures include driver status and capabilities, volume scale, listening
    modes, and timestamped raw TCP request/reply bytes. IP addresses and

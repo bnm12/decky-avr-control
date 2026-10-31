@@ -1,7 +1,7 @@
 {
   "name": "avr-control",
   "version": "0.4.0",
-  "description": "Volume slider, listening mode and per-game audio profiles for Pioneer and Onkyo AV receivers",
+  "description": "Quick Access controls for network receivers and Home Assistant media players; eISCP verified on Pioneer VSX-935, other drivers experimental.",
   "type": "module",
   "scripts": {
     "build": "rollup -c",

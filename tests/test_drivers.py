@@ -11,7 +11,9 @@ from avr_control.drivers.base import (
     POWER,
     VOLUME,
     DriverError,
+    ModeState,
     Refused,
+    Status,
     Unsupported,
 )
 from avr_control.drivers.eiscp import EiscpDriver
@@ -43,6 +45,58 @@ class EiscpDriverTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.fake.muted)
         self.assertFalse(self.fake.power)
         self.assertEqual(self.fake.mode, "11")
+
+    async def test_set_volume_ignores_stale_state_before_requested_confirmation(self):
+        events = asyncio.Queue()
+        unsubscribe = await self.driver.watch(events.put_nowait)
+        self.fake.stale_volume_before_ack = 0x20
+
+        try:
+            self.assertEqual(await self.driver.set_volume(0x30), 0x30)
+            self.assertEqual(
+                await asyncio.wait_for(events.get(), 1), Status(volume=0x20)
+            )
+        finally:
+            await unsubscribe()
+
+    async def test_set_volume_returns_last_state_when_confirmation_deadline_expires(self):
+        self.fake.stale_volume_before_ack = 0x20
+        self.fake.suppress_volume_ack = True
+
+        started = asyncio.get_running_loop().time()
+        self.assertEqual(await self.driver.set_volume(0x30), 0x20)
+        self.assertGreaterEqual(asyncio.get_running_loop().time() - started, 1.5)
+
+    async def test_mode_state_uses_measured_modes_without_offering_unknown_current(self):
+        status = await self.driver.status()
+        state = await self.driver.mode_state(status)
+        self.assertEqual(state.current, "00")
+        self.assertIn("00", [mode.code for mode in state.selectable])
+        self.assertFalse(state.complete)
+
+        self.fake.mode = "FE"
+        status = await self.driver.status()
+        state = await self.driver.mode_state(status)
+        self.assertEqual(state.current, "FE")
+        self.assertNotIn("FE", [mode.code for mode in state.selectable])
+        self.assertFalse(state.complete)
+
+        self.fake.power = False
+        state = await self.driver.mode_state(await self.driver.status())
+        self.assertEqual(state, ModeState(None, (), complete=False))
+
+        async def unexpected_status():
+            raise AssertionError("mode_state must reuse the supplied status")
+
+        self.driver.status = unexpected_status
+        self.assertEqual(
+            await self.driver.mode_state(Status(mode="00", power=True)),
+            ModeState("00", tuple(await self.driver.list_modes()), complete=False),
+        )
+
+    def test_mode_labels_do_not_require_a_configured_receiver(self):
+        self.assertEqual(EiscpDriver.mode_label("00"), "Stereo")
+        self.assertEqual(EiscpDriver.mode_label("fe"), "Mode fe")
 
     def test_scale_defaults_and_model_lookup(self):
         self.assertTrue(
@@ -162,12 +216,26 @@ class EiscpDriverTests(unittest.IsolatedAsyncioTestCase):
         self.fake.refused_mode = "80"
         with self.assertRaisesRegex(Refused, "didn't accept that mode"):
             await self.driver.set_mode("80")
+        self.assertEqual(self.fake.mode, "00")
         found = await EiscpDriver.probe({"host": "127.0.0.1", "port": self.port})
         self.assertIsNotNone(found)
         self.assertEqual(found.driver, "eiscp")
         self.assertIsNone(
             await EiscpDriver.probe({"host": "127.0.0.1", "port": self.port + 1})
         )
+
+    async def test_mode_connection_failure_is_not_reported_as_refusal(self):
+        unused = await asyncio.start_server(
+            lambda _reader, writer: writer.close(), "127.0.0.1", 0
+        )
+        closed_port = unused.sockets[0].getsockname()[1]
+        unused.close()
+        await unused.wait_closed()
+        driver = EiscpDriver({"host": "127.0.0.1", "port": closed_port})
+
+        with self.assertRaises(DriverError) as raised:
+            await driver.set_mode("11")
+        self.assertNotIsInstance(raised.exception, Refused)
 
     async def test_mode_validation_rejects_non_hex_codes_in_the_driver(self):
         with self.assertRaisesRegex(Refused, "Invalid mode code: STEREO"):
@@ -228,6 +296,26 @@ class PioneerTelnetDriverTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(Unsupported):
             await self.driver.set_mode("00")
 
+    async def test_set_volume_ignores_stale_state_before_requested_confirmation(self):
+        events = asyncio.Queue()
+        unsubscribe = await self.driver.watch(events.put_nowait)
+        self.fake.stale_volume_before_ack = 32
+
+        try:
+            self.assertEqual(await self.driver.set_volume(100), 100)
+            self.assertEqual(
+                await asyncio.wait_for(events.get(), 1), Status(volume=32)
+            )
+        finally:
+            await unsubscribe()
+
+    async def test_mode_state_does_not_probe_a_driver_without_mode_support(self):
+        self.assertEqual(
+            await self.driver.mode_state(),
+            ModeState(None, (), complete=False),
+        )
+        self.assertEqual(PioneerTelnetDriver.mode_label("01"), "Mode 01")
+
     async def test_probe_yes_and_no(self):
         found = await PioneerTelnetDriver.probe(
             {"host": "127.0.0.1", "port": self.port}
@@ -242,9 +330,11 @@ class PioneerTelnetDriverTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_status_treats_pwr2_and_pwr1_as_standby(self):
         self.fake.power = False
+        self.fake.report_volume = False
+        self.fake.report_mute = False
 
         status = await self.driver.status()
-        self.assertFalse(status.power)
+        self.assertEqual((status.power, status.volume, status.muted), (False, None, None))
 
         self.fake.off_power_reply = "1"
         status = await self.driver.status()

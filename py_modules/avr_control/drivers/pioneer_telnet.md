@@ -11,13 +11,14 @@
 | Verified on | [assumed] None; the tested VSX-935 does not speak this protocol |
 | Transport | [community] TCP text commands; port 8102 documented for the VSX-529, CRLF terminated; [assumed] port 23 is also probed |
 | Discovery | [assumed] None implemented; enter the receiver host manually |
-| Connections | [assumed] One request per TCP connection; concurrent-client limits unknown |
+| Connections | [assumed] One transaction per TCP connection by default; the shared session keeps the connection open while a watch is subscribed. |
+| State updates | [community][2][assumed, not yet measured] The driver watches unsolicited VOL, MUT and PWR lines on a subscribed connection. |
 
 ## Transport and framing
 
-[community] Commands are ASCII text terminated by `\r\n`; responses are read as lines until the expected reply arrives. The driver tests port 23 then 8102 and remembers the working port in the receiver config. A typical volume exchange is `?V\r\n` → `VOL###`, where `###` is decimal.
+[community] Commands are ASCII text terminated by `\r\n`; responses are read as lines until the expected reply arrives. The driver tests port 23 then 8102 and remembers the working port in the receiver config. A typical volume exchange is `?V\r\n` → `VOL###`, where `###` is decimal. The shared `ReceiverSession` owns the TCP stream and serializes concurrent calls; it closes after a transaction unless a watch is subscribed.
 
-[assumed] This framing and the per-request connection behavior have not been verified on hardware for this project.
+[assumed] This framing and the per-request connection behavior have not been verified on hardware for this project. [community][2][assumed, not yet measured] An open connection may also report `VOL###`, `MUT0|1` and `PWR0|1|2` after remote-control changes; this driver treats these as partial updates, but this push behavior is unverified.
 
 ## Discovery
 
@@ -32,6 +33,8 @@
 | Power | [community] `?P` | [community] `PO` / `PF` | [community] `PWR0` means on and `PWR2` means standby; [assumed] `PWR1` is also treated as off |
 | Listening mode | Unknown | Unsupported | Unknown | [assumed] Not exposed by this driver |
 
+[assumed] Status requires power first; standby reports power alone, while an on receiver is queried for volume and mute. Setters only accept state lines matching the requested value; mismatched reports go to subscribers and the last observed value is returned if confirmation times out.
+
 ## Volume scale
 
 [community] The implementation uses raw 0–185, 0.5 dB per step, with raw 161 equal to 0 dB and a default cap of 161. Published ranges vary: the VSX-529 example reports 000–131.
@@ -41,6 +44,10 @@
 ## Listening modes
 
 [assumed] This driver does not expose listening modes. Whether legacy receivers offer a compatible query/set pair is unknown.
+
+`mode_state()` returns no current or selectable modes with `complete=false`
+without contacting the receiver [assumed]. Unknown display codes use the base
+`Mode {code}` fallback [assumed].
 
 ## Quirks and gotchas
 
@@ -53,6 +60,7 @@
 - [assumed] No real hardware has validated command spelling, line framing, volume scale, mute, power, or the two ports for this implementation.
 - [assumed] Confirm whether the PWR flag mapping and the `PO`/`PF` commands are consistent across supported legacy models.
 - [assumed] Determine whether any legacy model supports listening-mode control and stable-ID discovery.
+- [community/assumed, not yet measured] Tester checklist: change volume with the remote while the panel is open; does the slider follow within 1 s?
 
 ## Sources
 

@@ -1,12 +1,36 @@
 from __future__ import annotations
 
+import inspect
+import math
 import os
+from typing import Any
 
 import decky
 
-from avr_control.controller import Controller
+from avr_control.application import (
+    ConfigureReceiver,
+    ForgetGame,
+    GameStarted,
+    GameStopped,
+    PanelClosed,
+    PanelOpened,
+    RememberForGame,
+    SelectReceiver,
+    SetCaps,
+    SetCurrentGame,
+    SetLateNight,
+    SetMode,
+    SetMute,
+    SetPower,
+    SetSchedule,
+    SetSleepWake,
+    SystemResumed,
+    SystemSuspending,
+    SetVolume,
+    ControlApplication,
+)
 from avr_control.drivers import REGISTRY
-from avr_control.settings import SettingsStore
+from avr_control.settings import FileSettingsStore, SettingsRepository
 
 SETTINGS = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "settings.json")
 LEGACY_SETTINGS = os.path.join(
@@ -14,105 +38,154 @@ LEGACY_SETTINGS = os.path.join(
     "pioneer-volume",
     "settings.json",
 )
-controller = Controller(
-    SettingsStore(SETTINGS, legacy_paths=[LEGACY_SETTINGS], logger=decky.logger),
+secret_keys = {
+    field.key
+    for driver in REGISTRY
+    for field in driver.config_fields
+    if field.secret
+}
+settings_repository = SettingsRepository(
+    FileSettingsStore(SETTINGS, legacy_paths=[LEGACY_SETTINGS]),
     logger=decky.logger,
+    secret_keys=secret_keys,
 )
 
 
+async def _publish_snapshot(snapshot: dict) -> None:
+    emit = getattr(decky, "emit", None)
+    if not callable(emit):
+        raise RuntimeError("Decky event publishing is unavailable")
+    result = emit("avr_snapshot", snapshot)
+    if inspect.isawaitable(result):
+        await result
+
+
+application = ControlApplication(
+    settings_repository,
+    logger=decky.logger,
+    publish=_publish_snapshot if callable(getattr(decky, "emit", None)) else None,
+)
+
+
+def _intent(value: Any):
+    if not isinstance(value, dict):
+        raise ValueError("Intent must be an object")
+    kind = value.get("type")
+    types = {
+        "set_volume": (SetVolume, {"display": "number"}),
+        "set_mute": (SetMute, {"muted": "bool"}),
+        "set_power": (SetPower, {"on": "bool"}),
+        "set_mode": (SetMode, {"code": "string"}),
+        "set_late_night": (SetLateNight, {"on": "bool"}),
+        "set_schedule": (
+            SetSchedule,
+            {
+                "enabled": "bool",
+                "start": "string",
+                "end": "string",
+                "mode": "nullable_string",
+            },
+        ),
+        "set_sleep_wake": (
+            SetSleepWake,
+            {"wake_on_resume": "bool", "off_on_suspend": "bool"},
+        ),
+        "system_resumed": (SystemResumed, {}),
+        "system_suspending": (SystemSuspending, {}),
+        "panel_opened": (PanelOpened, {}),
+        "panel_closed": (PanelClosed, {}),
+        "set_caps": (
+            SetCaps,
+            {"cap_display": "number", "late_cap_display": "number"},
+        ),
+        "configure_receiver": (
+            ConfigureReceiver,
+            {"driver_key": "string", "config": "object"},
+        ),
+        "select_receiver": (SelectReceiver, {"id": "string"}),
+        "game_started": (
+            GameStarted,
+            {"appid": "int", "name": "string"},
+        ),
+        "game_stopped": (GameStopped, {"appid": "int"}),
+        "set_current_game": (
+            SetCurrentGame,
+            {"appid": "int", "name": "string"},
+        ),
+        "remember_for_game": (
+            RememberForGame,
+            {"what": "string", "on": "bool"},
+        ),
+        "forget_game": (ForgetGame, {"appid": "int"}),
+    }
+    if not isinstance(kind, str) or kind not in types:
+        raise ValueError(f"Unknown intent type: {kind!r}")
+    intent_class, fields = types[kind]
+    allowed = {"type", *fields}
+    extra = set(value) - allowed
+    if extra:
+        raise ValueError(f"Unexpected fields for {kind}: {', '.join(sorted(extra))}")
+    missing = set(fields) - set(value)
+    if missing:
+        raise ValueError(f"Missing fields for {kind}: {', '.join(sorted(missing))}")
+    parsed = {}
+    for key, expected in fields.items():
+        item = value[key]
+        if expected == "bool":
+            valid = isinstance(item, bool)
+        elif expected == "string":
+            valid = isinstance(item, str)
+        elif expected == "nullable_string":
+            valid = item is None or isinstance(item, str)
+        elif expected == "object":
+            valid = isinstance(item, dict) and all(
+                isinstance(config_key, str) for config_key in item
+            )
+        elif expected == "int":
+            valid = isinstance(item, int) and not isinstance(item, bool)
+        else:
+            valid = isinstance(item, (int, float)) and not isinstance(item, bool)
+            if valid:
+                try:
+                    valid = math.isfinite(float(item))
+                except (OverflowError, ValueError):
+                    valid = False
+        if not valid:
+            raise ValueError(f"Invalid {key} for {kind}")
+        parsed[key] = item
+    return intent_class(**parsed)
+
+
 class Plugin:
-    async def _delegate(self, method: str, *args):
+    async def snapshot(self) -> dict:
+        return await application.snapshot()
+
+    async def dispatch(self, intent: dict) -> dict:
         try:
-            return await getattr(controller, method)(*args)
+            parsed = _intent(intent)
+        except (TypeError, ValueError) as exc:
+            return {"ok": False, "error": str(exc)}
+        return await application.dispatch(parsed)
+
+    async def discover(self) -> list:
+        return await application.discover()
+
+    async def list_drivers(self) -> list[dict]:
+        return application.drivers()
+
+    async def setup_options(self, driver_key: str, config: dict) -> dict:
+        try:
+            return await application.setup_options(driver_key, config)
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
-    async def get_state(self) -> dict:
-        return await self._delegate("get_state")
-
-    async def set_volume(self, vol: int) -> dict:
-        return await self._delegate("set_volume", vol)
-
-    async def set_mute(self, muted: bool) -> dict:
-        return await self._delegate("set_mute", muted)
-
-    async def get_host(self) -> str:
-        return await self._delegate("get_host")
-
-    async def get_connection(self) -> dict:
-        return await self._delegate("get_connection")
-
-    async def set_host(self, host: str):
-        return await self._delegate("set_host", host)
-
-    async def set_max(self, value: int):
-        return await self._delegate("set_max", value)
-
-    async def set_late_max(self, value: int):
-        return await self._delegate("set_late_max", value)
-
-    async def set_mode(self, code: str) -> dict:
-        return await self._delegate("set_mode", code)
-
-    async def set_late_night(self, on: bool) -> dict:
-        return await self._delegate("set_late_night", on)
-
-    async def discover(self) -> list:
-        return await self._delegate("discover")
-
-    async def select_receiver(self, ip: str, ident: str):
-        return await self._delegate("select_receiver", ip, ident)
-
-    async def set_current_game(self, appid: int, name: str):
-        return await self._delegate("set_current_game", appid, name)
-
-    async def game_started(self, appid: int, name: str) -> dict:
-        return await self._delegate("game_started", appid, name)
-
-    async def game_stopped(self, appid: int):
-        return await self._delegate("game_stopped", appid)
-
-    async def set_game_remember(self, what: str, enabled: bool) -> dict:
-        return await self._delegate("set_game_remember", what, enabled)
-
-    async def list_games(self) -> list:
-        return await self._delegate("list_games")
-
-    async def forget_game(self, appid: int):
-        return await self._delegate("forget_game", appid)
-
-    async def set_power(self, on: bool) -> dict:
-        return await self._delegate("set_power", on)
-
-    async def list_drivers(self) -> list[dict]:
-        return [
-            {
-                "key": driver.key,
-                "label": driver.label,
-                "fields": [
-                    {
-                        "key": field.key,
-                        "label": field.label,
-                        "secret": field.secret,
-                        "required": field.required,
-                    }
-                    for field in driver.config_fields
-                ],
-            }
-            for driver in REGISTRY
-        ]
-
-    async def configure(self, driver_key: str, config: dict) -> dict:
-        return await self._delegate("configure", driver_key, config)
-
     async def _main(self):
+        application.start_periodic()
         decky.logger.info("AVR Control loaded")
 
     async def _unload(self):
-        driver = controller._active_driver
-        if driver is not None:
-            try:
-                await driver.close()
-            except Exception:
-                pass
+        try:
+            await application.close()
+        except Exception:
+            pass
         decky.logger.info("AVR Control unloaded")
