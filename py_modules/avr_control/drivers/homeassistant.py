@@ -86,6 +86,7 @@ def _redact(value: str, token: str) -> str:
 class HomeAssistantDriver(Driver):
     key: ClassVar[str] = "homeassistant"
     label: ClassVar[str] = "Home Assistant"
+    identity_keys: ClassVar[tuple[str, ...]] = ("url", "entity_id")
     config_fields: ClassVar[tuple[ConfigField, ...]] = (
         ConfigField("url", "Home Assistant URL (e.g. http://homeassistant.local:8123)"),
         ConfigField("token", "Long-lived access token", secret=True),

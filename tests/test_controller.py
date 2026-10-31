@@ -23,10 +23,12 @@ from avr_control.drivers.base import (
 )
 from avr_control.drivers.denon import DenonDriver
 from avr_control.drivers.eiscp import EiscpDriver
+from avr_control.drivers.heos import HeosDriver
 from avr_control.drivers.homeassistant import HomeAssistantDriver
 from avr_control.drivers.pioneer_telnet import PioneerTelnetDriver
 from avr_control.drivers.yamaha import YamahaDriver
 from avr_control.settings import SettingsStore
+from tests.test_heos import FakeHeos
 from tests.test_homeassistant import ENTITY_ID, TOKEN, FakeHomeAssistant
 
 
@@ -172,6 +174,42 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(MemoryDriver.state.volume, 100)
         self.assertEqual(self.store.load()["late"], {"active": False})
 
+    async def test_steps_scale_defaults_are_fractions_of_its_range(self):
+        class StepsDriver(Driver):
+            key = "steps"
+            label = "Steps Receiver"
+            capabilities = frozenset({VOLUME})
+            scale = VolumeScale(min=10, max=90, unit="steps")
+
+            async def status(self):
+                return Status(volume=50)
+
+            async def set_volume(self, raw):
+                return raw
+
+        self.controller.registry = [StepsDriver]
+        self.save_settings(
+            {
+                "version": 2,
+                "receiver": {
+                    "driver": "steps",
+                    "config": {"host": "receiver"},
+                    "id": "steps-id",
+                },
+                "cap": None,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {},
+            }
+        )
+
+        state = await self.controller.get_state()
+
+        self.assertEqual(state["scale"]["unit"], "steps")
+        self.assertEqual(state["scale"]["default_cap"], 42)
+        self.assertEqual(state["cap"], 42)
+        self.assertEqual(state["late_cap"], 26)
+
     async def test_late_night_restore_respects_a_lowered_normal_cap(self):
         self.save_settings()
         await self.controller.get_state()
@@ -245,6 +283,142 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(settings["cap"], 50)
         self.assertEqual(settings["late_cap"], 40)
         self.assertEqual(settings["late"], {"active": True, "prev_volume": 100})
+
+    async def test_driver_failover_metadata_does_not_replace_receiver_binding(self):
+        class FailoverDriver(Driver):
+            key = "failover"
+            label = "Failover Receiver"
+            capabilities = frozenset({VOLUME})
+            scale = VolumeScale(min=0, max=100, unit="%", default_cap=100)
+
+            async def status(self):
+                self.config.update({"transport": "http", "http_port": 8080})
+                return Status(volume=55)
+
+        self.controller.registry = [FailoverDriver]
+        self.save_settings(
+            {
+                "version": 2,
+                "receiver": {
+                    "driver": "failover",
+                    "config": {"host": "receiver"},
+                    "id": None,
+                },
+                "cap": 80,
+                "late_cap": 40,
+                "late": {"active": True, "prev_volume": 65},
+                "games": {},
+            }
+        )
+
+        state = await self.controller.get_state()
+        settings = self.store.load()
+
+        self.assertTrue(state["ok"])
+        self.assertEqual(settings["receiver"]["config"]["transport"], "http")
+        self.assertEqual(state["cap"], 80)
+        self.assertEqual(state["late_cap"], 40)
+        self.assertTrue(state["late"])
+        self.assertEqual(settings["late"]["prev_volume"], 65)
+
+    async def test_homeassistant_identity_change_replaces_receiver_binding(self):
+        class HomeAssistantLikeDriver(Driver):
+            key = "ha_like"
+            label = "Home Assistant-like Receiver"
+            identity_keys = ("url", "entity_id")
+            config_fields = ()
+            capabilities = frozenset({VOLUME})
+            scale = VolumeScale(min=0, max=100, unit="%", default_cap=60)
+
+            async def status(self):
+                return Status(volume=50)
+
+        self.controller.registry = [HomeAssistantLikeDriver]
+        self.save_settings(
+            {
+                "version": 2,
+                "receiver": {
+                    "driver": "ha_like",
+                    "config": {
+                        "url": "http://homeassistant.local:8123",
+                        "entity_id": "media_player.living_room",
+                    },
+                    "id": None,
+                },
+                "cap": 80,
+                "late_cap": 40,
+                "late": {"active": True, "prev_volume": 65},
+                "games": {},
+            }
+        )
+        await self.controller.get_state()
+
+        result = await self.controller.configure(
+            "ha_like", {"entity_id": "media_player.bedroom"}
+        )
+        settings = self.store.load()
+
+        self.assertTrue(result["ok"])
+        self.assertIsNone(settings["cap"])
+        self.assertIsNone(settings["late_cap"])
+        self.assertEqual(settings["late"], {"active": False})
+
+    async def test_legacy_config_hash_migrates_without_resetting_receiver_state(self):
+        class LegacyDriver(Driver):
+            key = "legacy"
+            label = "Legacy Receiver"
+            config_fields = ()
+            capabilities = frozenset({VOLUME})
+            scale = VolumeScale(min=0, max=100, unit="%", default_cap=100)
+
+            async def status(self):
+                return Status(volume=55)
+
+        self.controller.registry = [LegacyDriver]
+        legacy_binding = {
+            "driver": "legacy",
+            "config_hash": "f8fca4025c3fcc1e8f60ecc7035093a33e21656184128c532f94dbd2753b7672",
+        }
+        self.save_settings(
+            {
+                "version": 2,
+                "receiver": {
+                    "driver": "legacy",
+                    "config": {
+                        "host": "receiver",
+                        "transport": "http",
+                        "http_port": 8080,
+                    },
+                    "id": None,
+                },
+                "cap": 80,
+                "cap_receiver": legacy_binding,
+                "late_cap": 40,
+                "late_cap_receiver": legacy_binding,
+                "late": {"active": True, "prev_volume": 65},
+                "late_receiver": legacy_binding,
+                "games": {},
+            }
+        )
+
+        state = await self.controller.get_state()
+        settings = self.store.load()
+
+        self.assertEqual(state["cap"], 80)
+        self.assertEqual(state["late_cap"], 40)
+        self.assertTrue(state["late"])
+        self.assertEqual(settings["late"]["prev_volume"], 65)
+        self.assertEqual(
+            settings["cap_receiver"],
+            {
+                "driver": "legacy",
+                "config_hash": "97240f857488c3f87ff7c4624cbd843d92532ae32a25dc3b0518a7dacdbc8fc6",
+            },
+        )
+        self.assertEqual(
+            settings["late_cap_receiver"], settings["cap_receiver"]
+        )
+        self.assertEqual(settings["late_receiver"], settings["cap_receiver"])
 
     async def test_auto_configure_rebinds_state_when_same_host_has_a_new_receiver_id(self):
         old_binding = {"driver": "memory", "id": "STABLE-ID"}
@@ -1496,6 +1670,53 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
                 },
             },
         )
+    async def test_heos_player_change_drops_late_night_and_caps_of_previous_player(self):
+        fake = FakeHeos()
+        port = await fake.start()
+        self.addAsyncCleanup(fake.close)
+        for player in fake.players:
+            player.pop("ip")
+        self.controller.registry = [HeosDriver]
+        heos = {"host": "127.0.0.1", "port": port}
+
+        await self.controller.configure("heos", {**heos, "player": "Living Room"})
+        await self.controller.set_max(100)
+        await self.controller.set_volume(85)
+        await self.controller.set_late_max(40)
+        self.assertTrue((await self.controller.set_late_night(True))["ok"])
+        self.assertEqual(fake.players[0]["level"], 40)
+
+        result = await self.controller.configure("heos", {**heos, "player": "Kitchen"})
+        state = await self.controller.get_state()
+        self.assertTrue(result["ok"])
+        self.assertFalse(state["late"])
+        self.assertEqual(state["cap"], 60)
+
+        self.assertTrue((await self.controller.set_late_night(False))["ok"])
+        self.assertEqual(fake.players[1]["level"], 58)
+        self.assertEqual(fake.players[0]["level"], 40)
+
+    async def test_heos_player_edit_controls_new_player_not_serial_learned_earlier(self):
+        fake = FakeHeos()
+        port = await fake.start()
+        self.addAsyncCleanup(fake.close)
+        for player in fake.players:
+            player.pop("ip")
+        self.controller.registry = [HeosDriver]
+        heos = {"host": "127.0.0.1", "port": port}
+        await self.controller.configure("heos", {**heos, "player": "Living Room"})
+        settings = self.store.load()
+        settings["receiver"]["config"].update(
+            {"serial": "HEOS-101", "serial_for": "living room"}
+        )
+        self.store.save(settings)
+
+        await self.controller.configure("heos", {**heos, "player": "Kitchen"})
+        result = await self.controller.set_volume(50)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(fake.players[1]["level"], 50)
+        self.assertEqual(fake.players[0]["level"], 34)
 
 
 if __name__ == "__main__":

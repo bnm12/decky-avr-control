@@ -42,7 +42,20 @@
 
 [measured] On a Pioneer VSX-935, `MVL30` (hex `0x30`, raw 48) displayed `-58.0 dB`; raw 50 displayed `-57.0 dB`. This establishes 0.5 dB per step and extrapolates 0 dB to raw 164.
 
-[assumed] Driver range is raw 0–185. The historical default slider cap is raw 100, and the historical absolute cap is 185; the driver therefore clamps at 185 even though the ISCP value field can represent through `0xC8`. Other receiver models may use a different useful range.
+The scale table uses the model string from the discovery `ECN` reply (case-insensitive):
+
+| Model | 0 dB raw | Raw steps per displayed unit | Maximum raw | Evidence |
+|---|---:|---:|---:|---|
+| `VSX-935` | 164 | 2 | 185 | [measured] zero and step size; [assumed] 185 is the historical clamp, not a measured receiver limit |
+| Unlisted model | 164 | 2 | 185 | [assumed] compatibility fallback; deliberately retains the original VSX-935-like scale |
+
+[assumed] The default dB cap is `zero_db - 32 * volume_steps`, clamped to the raw range. This is about −30 dB and keeps the existing VSX-935 cap at raw 100. An absolute scale defaults to about 40% of its raw range; the controller's default late-night cap is 20% of the range for step scales.
+
+Manual setup can override `volume_steps` (1 or 2), `zero_db` (blank or `absolute` means absolute display), and `max_volume` (raw maximum). A known `zero_db` is displayed in dB. Absolute scales use `"steps"` and show the receiver's number as-is, regardless of maximum. An absolute scale defaults to `"steps"` even at 0–100 because eISCP does not report whether the receiver presents that number as a percentage. Set optional `volume_unit` to `%` only when the receiver really displays percent; this is accepted only with `max_volume=100`. Since manual setup omits blank optional fields when saving, enter `absolute` in `zero_db` to clear a previously saved dB reference. Invalid values raise a user-facing driver error.
+
+[measured] Discovery carries the ECN model into the receiver config for this lookup. Manual-IP probing does not identify a model, and the driver does not issue an extra `NRIQSTN` query; users can supply a scale override instead.
+
+[community] eISCP volume encodings vary: `miracle2k/onkyo-eiscp` defines command ranges including 0–80, 0–100 and 0–200, while Home Assistant offers volume-resolution choices 50/80/100/200 and configurable `max_volume`. These are family-level options, not verified per-model defaults, so the driver does not infer a maximum from brand or model year.
 
 ## Listening modes
 
@@ -90,5 +103,6 @@
 ## Sources
 
 1. [spec] [Onkyo ISCP protocol specification v1.15 (2009)](https://community.symcon.de/uploads/short-url/7mxbIQ7qRIghfbEQrvcrEkU57ad.pdf)
-2. [community] [miracle2k/onkyo-eiscp](https://github.com/miracle2k/onkyo-eiscp)
+2. [community] [miracle2k/onkyo-eiscp](https://github.com/miracle2k/onkyo-eiscp) (MIT): `eiscp/core.py:322-360,369-398`, `eiscp/commands.py:1479-1491,1675-1688`
 3. [community] [openHAB Pioneer AVR binding](https://www.openhab.org/addons/bindings/pioneeravr/)
+4. [community] [Home Assistant Onkyo integration](https://github.com/home-assistant/core/tree/dev/homeassistant/components/onkyo): volume resolutions and configurable maximum; not a model-specific scale table

@@ -172,9 +172,9 @@ class YamahaDescriptionHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         yxc = (
-            '<yamaha:X_device><yamaha:X_yxcControlURL>'
+            "<yamaha:X_yxcControlURL>"
             "http://127.0.0.1/YamahaExtendedControl/v1/"
-            "</yamaha:X_yxcControlURL></yamaha:X_device>"
+            "</yamaha:X_yxcControlURL>"
             if self.include_yxc
             else ""
         )
@@ -185,7 +185,9 @@ class YamahaDescriptionHandler(BaseHTTPRequestHandler):
             "<device><friendlyName>Living Room</friendlyName>"
             f"<manufacturer>{self.manufacturer}</manufacturer>"
             "<modelName>RX-V6A</modelName><UDN>uuid:yamaha-1234</UDN>"
-            f"{yxc}</device></root>"
+            "<yamaha:X_device><yamaha:X_controlURL>"
+            "/YamahaRemoteControl/ctrl</yamaha:X_controlURL>"
+            f"{yxc}</yamaha:X_device></device></root>"
         ).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/xml")
@@ -360,7 +362,7 @@ class YamahaDriverTests(unittest.IsolatedAsyncioTestCase):
             http_server.server_close()
             thread.join(timeout=2)
 
-    async def test_discovery_rejects_non_yamaha_and_non_yxc_devices(self):
+    async def test_discovery_rejects_non_yamaha_and_legacy_xml_device(self):
         http_server = ThreadingHTTPServer(
             ("127.0.0.1", 0), YamahaDescriptionHandler
         )

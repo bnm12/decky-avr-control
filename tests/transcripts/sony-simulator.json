@@ -1,0 +1,381 @@
+{
+  "schema_version": 1,
+  "source": "simulator",
+  "tool": {
+    "name": "avr_probe",
+    "version": "1.0"
+  },
+  "timestamp": "2026-10-31T17:23:24.493416+00:00",
+  "runtime": {
+    "python": "3.15.2",
+    "os": "Windows-11-10.0.22631-SP0"
+  },
+  "driver": {
+    "key": "sony",
+    "label": "Sony (STR-DN / ES receivers, soundbars)"
+  },
+  "found": {
+    "model": "STR-DN1080 simulator",
+    "id": "RECEIVER_ID_1",
+    "host": "RECEIVER_IP"
+  },
+  "status": {
+    "volume": 30,
+    "muted": false,
+    "power": true,
+    "mode": "stereo"
+  },
+  "capabilities": [
+    "mode",
+    "mute",
+    "power",
+    "volume"
+  ],
+  "scale": {
+    "min": 0,
+    "max": 74,
+    "unit": "steps",
+    "zero": 0,
+    "steps_per_unit": 1,
+    "default_cap": 30
+  },
+  "modes": [
+    {
+      "code": "stereo",
+      "name": "Stereo"
+    },
+    {
+      "code": "movie",
+      "name": "Movie"
+    }
+  ],
+  "modes_error": null,
+  "getters": {
+    "volume": 30,
+    "mute": false,
+    "power": true,
+    "mode": "stereo"
+  },
+  "write_restore_errors": [],
+  "proxy_errors": [],
+  "connections": [
+    {
+      "port": 64092,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.001065,
+          "data_b64": "UE9TVCAvc29ueS9zeXN0ZW0gSFRUUC8xLjENCkFjY2VwdC1FbmNvZGluZzogaWRlbnRpdHkNCkNvbnRlbnQtTGVuZ3RoOiA2OQ0KSG9zdDogSVBYWFhYWFhYOjY0MDkzDQpBY2NlcHQ6IGFwcGxpY2F0aW9uL2pzb24NCkNvbnRlbnQtVHlwZTogYXBwbGljYXRpb24vanNvbg0KVXNlci1BZ2VudDogQVZSIENvbnRyb2wNCkNvbm5lY3Rpb246IGNsb3NlDQoNCnsibWV0aG9kIjogImdldFBvd2VyU3RhdHVzIiwgImlkIjogMSwgInBhcmFtcyI6IFtdLCAidmVyc2lvbiI6ICIxLjEifQ==",
+          "text": "POST /sony/system HTTP/1.1\r\nAccept-Encoding: identity\r\nContent-Length: 69\r\nHost: IPXXXXXXX:64093\r\nAccept: application/json\r\nContent-Type: application/json\r\nUser-Agent: AVR Control\r\nConnection: close\r\n\r\n{\"method\": \"getPowerStatus\", \"id\": 1, \"params\": [], \"version\": \"1.1\"}"
+        },
+        {
+          "dir": "rx",
+          "t": 0.001363,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjQgR01UDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL2pzb24NCkNvbnRlbnQtTGVuZ3RoOiA0Mw0KDQp7ImlkIjogMSwgInJlc3VsdCI6IFt7InN0YXR1cyI6ICJhY3RpdmUifV19",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:24 GMT\r\nContent-Type: application/json\r\nContent-Length: 43\r\n\r\n{\"id\": 1, \"result\": [{\"status\": \"active\"}]}"
+        }
+      ]
+    },
+    {
+      "port": 64092,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.002411,
+          "data_b64": "UE9TVCAvc29ueS9hdWRpbyBIVFRQLzEuMQ0KQWNjZXB0LUVuY29kaW5nOiBpZGVudGl0eQ0KQ29udGVudC1MZW5ndGg6IDg5DQpIb3N0OiBJUFhYWFhYWFg6NjQwOTMNCkFjY2VwdDogYXBwbGljYXRpb24vanNvbg0KQ29udGVudC1UeXBlOiBhcHBsaWNhdGlvbi9qc29uDQpVc2VyLUFnZW50OiBBVlIgQ29udHJvbA0KQ29ubmVjdGlvbjogY2xvc2UNCg0KeyJtZXRob2QiOiAiZ2V0Vm9sdW1lSW5mb3JtYXRpb24iLCAiaWQiOiAxLCAicGFyYW1zIjogW3sib3V0cHV0IjogIiJ9XSwgInZlcnNpb24iOiAiMS4xIn0=",
+          "text": "POST /sony/audio HTTP/1.1\r\nAccept-Encoding: identity\r\nContent-Length: 89\r\nHost: IPXXXXXXX:64093\r\nAccept: application/json\r\nContent-Type: application/json\r\nUser-Agent: AVR Control\r\nConnection: close\r\n\r\n{\"method\": \"getVolumeInformation\", \"id\": 1, \"params\": [{\"output\": \"\"}], \"version\": \"1.1\"}"
+        },
+        {
+          "dir": "rx",
+          "t": 0.00262,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjQgR01UDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL2pzb24NCkNvbnRlbnQtTGVuZ3RoOiAxMTgNCg0K",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:24 GMT\r\nContent-Type: application/json\r\nContent-Length: 118\r\n\r\n"
+        },
+        {
+          "dir": "rx",
+          "t": 0.002745,
+          "data_b64": "eyJpZCI6IDEsICJyZXN1bHQiOiBbeyJ2b2x1bWUiOiAiMzAiLCAibWluVm9sdW1lIjogIjAiLCAibWF4Vm9sdW1lIjogIjc0IiwgInN0ZXAiOiAiMSIsICJtdXRlIjogIm9mZiIsICJvdXRwdXQiOiAiIn1dfQ==",
+          "text": "{\"id\": 1, \"result\": [{\"volume\": \"30\", \"minVolume\": \"0\", \"maxVolume\": \"74\", \"step\": \"1\", \"mute\": \"off\", \"output\": \"\"}]}"
+        }
+      ]
+    },
+    {
+      "port": 64092,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.004028,
+          "data_b64": "UE9TVCAvc29ueS9hdWRpbyBIVFRQLzEuMQ0KQWNjZXB0LUVuY29kaW5nOiBpZGVudGl0eQ0KQ29udGVudC1MZW5ndGg6IDk1DQpIb3N0OiBJUFhYWFhYWFg6NjQwOTMNCkFjY2VwdDogYXBwbGljYXRpb24vanNvbg0KQ29udGVudC1UeXBlOiBhcHBsaWNhdGlvbi9qc29uDQpVc2VyLUFnZW50OiBBVlIgQ29udHJvbA0KQ29ubmVjdGlvbjogY2xvc2UNCg0KeyJtZXRob2QiOiAiZ2V0U291bmRTZXR0aW5ncyIsICJpZCI6IDEsICJwYXJhbXMiOiBbeyJ0YXJnZXQiOiAic291bmRGaWVsZCJ9XSwgInZlcnNpb24iOiAiMS4xIn0=",
+          "text": "POST /sony/audio HTTP/1.1\r\nAccept-Encoding: identity\r\nContent-Length: 95\r\nHost: IPXXXXXXX:64093\r\nAccept: application/json\r\nContent-Type: application/json\r\nUser-Agent: AVR Control\r\nConnection: close\r\n\r\n{\"method\": \"getSoundSettings\", \"id\": 1, \"params\": [{\"target\": \"soundField\"}], \"version\": \"1.1\"}"
+        },
+        {
+          "dir": "rx",
+          "t": 0.004222,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjQgR01UDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL2pzb24NCkNvbnRlbnQtTGVuZ3RoOiAyODANCg0KeyJpZCI6IDEsICJyZXN1bHQiOiBbeyJ0YXJnZXQiOiAic291bmRGaWVsZCIsICJjdXJyZW50VmFsdWUiOiAic3RlcmVvIiwgImNhbmRpZGF0ZSI6IFt7InZhbHVlIjogInN0ZXJlbyIsICJ0aXRsZSI6ICJTdGVyZW8iLCAiaXNBdmFpbGFibGUiOiB0cnVlfSwgeyJ2YWx1ZSI6ICJtb3ZpZSIsICJ0aXRsZSI6ICJNb3ZpZSIsICJpc0F2YWlsYWJsZSI6IHRydWV9LCB7InZhbHVlIjogInVuYXZhaWxhYmxlIiwgInRpdGxlIjogIlVuYXZhaWxhYmxlIiwgImlzQXZhaWxhYmxlIjogZmFsc2V9XX1dfQ==",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:24 GMT\r\nContent-Type: application/json\r\nContent-Length: 280\r\n\r\n{\"id\": 1, \"result\": [{\"target\": \"soundField\", \"currentValue\": \"stereo\", \"candidate\": [{\"value\": \"stereo\", \"title\": \"Stereo\", \"isAvailable\": true}, {\"value\": \"movie\", \"title\": \"Movie\", \"isAvailable\": true}, {\"value\": \"unavailable\", \"title\": \"Unavailable\", \"isAvailable\": false}]}]}"
+        }
+      ]
+    },
+    {
+      "port": 64092,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.005282,
+          "data_b64": "UE9TVCAvc29ueS9hdWRpbyBIVFRQLzEuMQ0KQWNjZXB0LUVuY29kaW5nOiBpZGVudGl0eQ0KQ29udGVudC1MZW5ndGg6IDk1DQpIb3N0OiBJUFhYWFhYWFg6NjQwOTMNCkFjY2VwdDogYXBwbGljYXRpb24vanNvbg0KQ29udGVudC1UeXBlOiBhcHBsaWNhdGlvbi9qc29uDQpVc2VyLUFnZW50OiBBVlIgQ29udHJvbA0KQ29ubmVjdGlvbjogY2xvc2UNCg0KeyJtZXRob2QiOiAiZ2V0U291bmRTZXR0aW5ncyIsICJpZCI6IDEsICJwYXJhbXMiOiBbeyJ0YXJnZXQiOiAic291bmRGaWVsZCJ9XSwgInZlcnNpb24iOiAiMS4xIn0=",
+          "text": "POST /sony/audio HTTP/1.1\r\nAccept-Encoding: identity\r\nContent-Length: 95\r\nHost: IPXXXXXXX:64093\r\nAccept: application/json\r\nContent-Type: application/json\r\nUser-Agent: AVR Control\r\nConnection: close\r\n\r\n{\"method\": \"getSoundSettings\", \"id\": 1, \"params\": [{\"target\": \"soundField\"}], \"version\": \"1.1\"}"
+        },
+        {
+          "dir": "rx",
+          "t": 0.005527,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjQgR01UDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL2pzb24NCkNvbnRlbnQtTGVuZ3RoOiAyODANCg0KeyJpZCI6IDEsICJyZXN1bHQiOiBbeyJ0YXJnZXQiOiAic291bmRGaWVsZCIsICJjdXJyZW50VmFsdWUiOiAic3RlcmVvIiwgImNhbmRpZGF0ZSI6IFt7InZhbHVlIjogInN0ZXJlbyIsICJ0aXRsZSI6ICJTdGVyZW8iLCAiaXNBdmFpbGFibGUiOiB0cnVlfSwgeyJ2YWx1ZSI6ICJtb3ZpZSIsICJ0aXRsZSI6ICJNb3ZpZSIsICJpc0F2YWlsYWJsZSI6IHRydWV9LCB7InZhbHVlIjogInVuYXZhaWxhYmxlIiwgInRpdGxlIjogIlVuYXZhaWxhYmxlIiwgImlzQXZhaWxhYmxlIjogZmFsc2V9XX1dfQ==",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:24 GMT\r\nContent-Type: application/json\r\nContent-Length: 280\r\n\r\n{\"id\": 1, \"result\": [{\"target\": \"soundField\", \"currentValue\": \"stereo\", \"candidate\": [{\"value\": \"stereo\", \"title\": \"Stereo\", \"isAvailable\": true}, {\"value\": \"movie\", \"title\": \"Movie\", \"isAvailable\": true}, {\"value\": \"unavailable\", \"title\": \"Unavailable\", \"isAvailable\": false}]}]}"
+        }
+      ]
+    },
+    {
+      "port": 64092,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.006379,
+          "data_b64": "UE9TVCAvc29ueS9zeXN0ZW0gSFRUUC8xLjENCkFjY2VwdC1FbmNvZGluZzogaWRlbnRpdHkNCkNvbnRlbnQtTGVuZ3RoOiA2OQ0KSG9zdDogSVBYWFhYWFhYOjY0MDkzDQpBY2NlcHQ6IGFwcGxpY2F0aW9uL2pzb24NCkNvbnRlbnQtVHlwZTogYXBwbGljYXRpb24vanNvbg0KVXNlci1BZ2VudDogQVZSIENvbnRyb2wNCkNvbm5lY3Rpb246IGNsb3NlDQoNCnsibWV0aG9kIjogImdldFBvd2VyU3RhdHVzIiwgImlkIjogMSwgInBhcmFtcyI6IFtdLCAidmVyc2lvbiI6ICIxLjEifQ==",
+          "text": "POST /sony/system HTTP/1.1\r\nAccept-Encoding: identity\r\nContent-Length: 69\r\nHost: IPXXXXXXX:64093\r\nAccept: application/json\r\nContent-Type: application/json\r\nUser-Agent: AVR Control\r\nConnection: close\r\n\r\n{\"method\": \"getPowerStatus\", \"id\": 1, \"params\": [], \"version\": \"1.1\"}"
+        },
+        {
+          "dir": "rx",
+          "t": 0.006596,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjQgR01UDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL2pzb24NCkNvbnRlbnQtTGVuZ3RoOiA0Mw0KDQp7ImlkIjogMSwgInJlc3VsdCI6IFt7InN0YXR1cyI6ICJhY3RpdmUifV19",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:24 GMT\r\nContent-Type: application/json\r\nContent-Length: 43\r\n\r\n{\"id\": 1, \"result\": [{\"status\": \"active\"}]}"
+        }
+      ]
+    },
+    {
+      "port": 64092,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.007448,
+          "data_b64": "UE9TVCAvc29ueS9hdWRpbyBIVFRQLzEuMQ0KQWNjZXB0LUVuY29kaW5nOiBpZGVudGl0eQ0KQ29udGVudC1MZW5ndGg6IDg5DQpIb3N0OiBJUFhYWFhYWFg6NjQwOTMNCkFjY2VwdDogYXBwbGljYXRpb24vanNvbg0KQ29udGVudC1UeXBlOiBhcHBsaWNhdGlvbi9qc29uDQpVc2VyLUFnZW50OiBBVlIgQ29udHJvbA0KQ29ubmVjdGlvbjogY2xvc2UNCg0KeyJtZXRob2QiOiAiZ2V0Vm9sdW1lSW5mb3JtYXRpb24iLCAiaWQiOiAxLCAicGFyYW1zIjogW3sib3V0cHV0IjogIiJ9XSwgInZlcnNpb24iOiAiMS4xIn0=",
+          "text": "POST /sony/audio HTTP/1.1\r\nAccept-Encoding: identity\r\nContent-Length: 89\r\nHost: IPXXXXXXX:64093\r\nAccept: application/json\r\nContent-Type: application/json\r\nUser-Agent: AVR Control\r\nConnection: close\r\n\r\n{\"method\": \"getVolumeInformation\", \"id\": 1, \"params\": [{\"output\": \"\"}], \"version\": \"1.1\"}"
+        },
+        {
+          "dir": "rx",
+          "t": 0.00766,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjQgR01UDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL2pzb24NCkNvbnRlbnQtTGVuZ3RoOiAxMTgNCg0KeyJpZCI6IDEsICJyZXN1bHQiOiBbeyJ2b2x1bWUiOiAiMzAiLCAibWluVm9sdW1lIjogIjAiLCAibWF4Vm9sdW1lIjogIjc0IiwgInN0ZXAiOiAiMSIsICJtdXRlIjogIm9mZiIsICJvdXRwdXQiOiAiIn1dfQ==",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:24 GMT\r\nContent-Type: application/json\r\nContent-Length: 118\r\n\r\n{\"id\": 1, \"result\": [{\"volume\": \"30\", \"minVolume\": \"0\", \"maxVolume\": \"74\", \"step\": \"1\", \"mute\": \"off\", \"output\": \"\"}]}"
+        }
+      ]
+    },
+    {
+      "port": 64092,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.029533,
+          "data_b64": "UE9TVCAvc29ueS9hdWRpbyBIVFRQLzEuMQ0KQWNjZXB0LUVuY29kaW5nOiBpZGVudGl0eQ0KQ29udGVudC1MZW5ndGg6IDk1DQpIb3N0OiBJUFhYWFhYWFg6NjQwOTMNCkFjY2VwdDogYXBwbGljYXRpb24vanNvbg0KQ29udGVudC1UeXBlOiBhcHBsaWNhdGlvbi9qc29uDQpVc2VyLUFnZW50OiBBVlIgQ29udHJvbA0KQ29ubmVjdGlvbjogY2xvc2UNCg0K",
+          "text": "POST /sony/audio HTTP/1.1\r\nAccept-Encoding: identity\r\nContent-Length: 95\r\nHost: IPXXXXXXX:64093\r\nAccept: application/json\r\nContent-Type: application/json\r\nUser-Agent: AVR Control\r\nConnection: close\r\n\r\n"
+        },
+        {
+          "dir": "tx",
+          "t": 0.029757,
+          "data_b64": "eyJtZXRob2QiOiAiZ2V0U291bmRTZXR0aW5ncyIsICJpZCI6IDEsICJwYXJhbXMiOiBbeyJ0YXJnZXQiOiAic291bmRGaWVsZCJ9XSwgInZlcnNpb24iOiAiMS4xIn0=",
+          "text": "{\"method\": \"getSoundSettings\", \"id\": 1, \"params\": [{\"target\": \"soundField\"}], \"version\": \"1.1\"}"
+        },
+        {
+          "dir": "rx",
+          "t": 0.02993,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjQgR01UDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL2pzb24NCkNvbnRlbnQtTGVuZ3RoOiAyODANCg0KeyJpZCI6IDEsICJyZXN1bHQiOiBbeyJ0YXJnZXQiOiAic291bmRGaWVsZCIsICJjdXJyZW50VmFsdWUiOiAic3RlcmVvIiwgImNhbmRpZGF0ZSI6IFt7InZhbHVlIjogInN0ZXJlbyIsICJ0aXRsZSI6ICJTdGVyZW8iLCAiaXNBdmFpbGFibGUiOiB0cnVlfSwgeyJ2YWx1ZSI6ICJtb3ZpZSIsICJ0aXRsZSI6ICJNb3ZpZSIsICJpc0F2YWlsYWJsZSI6IHRydWV9LCB7InZhbHVlIjogInVuYXZhaWxhYmxlIiwgInRpdGxlIjogIlVuYXZhaWxhYmxlIiwgImlzQXZhaWxhYmxlIjogZmFsc2V9XX1dfQ==",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:24 GMT\r\nContent-Type: application/json\r\nContent-Length: 280\r\n\r\n{\"id\": 1, \"result\": [{\"target\": \"soundField\", \"currentValue\": \"stereo\", \"candidate\": [{\"value\": \"stereo\", \"title\": \"Stereo\", \"isAvailable\": true}, {\"value\": \"movie\", \"title\": \"Movie\", \"isAvailable\": true}, {\"value\": \"unavailable\", \"title\": \"Unavailable\", \"isAvailable\": false}]}]}"
+        }
+      ]
+    },
+    {
+      "port": 64092,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.031248,
+          "data_b64": "UE9TVCAvc29ueS9zeXN0ZW0gSFRUUC8xLjENCkFjY2VwdC1FbmNvZGluZzogaWRlbnRpdHkNCkNvbnRlbnQtTGVuZ3RoOiA2OQ0KSG9zdDogSVBYWFhYWFhYOjY0MDkzDQpBY2NlcHQ6IGFwcGxpY2F0aW9uL2pzb24NCkNvbnRlbnQtVHlwZTogYXBwbGljYXRpb24vanNvbg0KVXNlci1BZ2VudDogQVZSIENvbnRyb2wNCkNvbm5lY3Rpb246IGNsb3NlDQoNCnsibWV0aG9kIjogImdldFBvd2VyU3RhdHVzIiwgImlkIjogMSwgInBhcmFtcyI6IFtdLCAidmVyc2lvbiI6ICIxLjEifQ==",
+          "text": "POST /sony/system HTTP/1.1\r\nAccept-Encoding: identity\r\nContent-Length: 69\r\nHost: IPXXXXXXX:64093\r\nAccept: application/json\r\nContent-Type: application/json\r\nUser-Agent: AVR Control\r\nConnection: close\r\n\r\n{\"method\": \"getPowerStatus\", \"id\": 1, \"params\": [], \"version\": \"1.1\"}"
+        },
+        {
+          "dir": "rx",
+          "t": 0.031612,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjQgR01UDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL2pzb24NCkNvbnRlbnQtTGVuZ3RoOiA0Mw0KDQp7ImlkIjogMSwgInJlc3VsdCI6IFt7InN0YXR1cyI6ICJhY3RpdmUifV19",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:24 GMT\r\nContent-Type: application/json\r\nContent-Length: 43\r\n\r\n{\"id\": 1, \"result\": [{\"status\": \"active\"}]}"
+        }
+      ]
+    },
+    {
+      "port": 64092,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.032564,
+          "data_b64": "UE9TVCAvc29ueS9hdWRpbyBIVFRQLzEuMQ0KQWNjZXB0LUVuY29kaW5nOiBpZGVudGl0eQ0KQ29udGVudC1MZW5ndGg6IDg5DQpIb3N0OiBJUFhYWFhYWFg6NjQwOTMNCkFjY2VwdDogYXBwbGljYXRpb24vanNvbg0KQ29udGVudC1UeXBlOiBhcHBsaWNhdGlvbi9qc29uDQpVc2VyLUFnZW50OiBBVlIgQ29udHJvbA0KQ29ubmVjdGlvbjogY2xvc2UNCg0KeyJtZXRob2QiOiAiZ2V0Vm9sdW1lSW5mb3JtYXRpb24iLCAiaWQiOiAxLCAicGFyYW1zIjogW3sib3V0cHV0IjogIiJ9XSwgInZlcnNpb24iOiAiMS4xIn0=",
+          "text": "POST /sony/audio HTTP/1.1\r\nAccept-Encoding: identity\r\nContent-Length: 89\r\nHost: IPXXXXXXX:64093\r\nAccept: application/json\r\nContent-Type: application/json\r\nUser-Agent: AVR Control\r\nConnection: close\r\n\r\n{\"method\": \"getVolumeInformation\", \"id\": 1, \"params\": [{\"output\": \"\"}], \"version\": \"1.1\"}"
+        },
+        {
+          "dir": "rx",
+          "t": 0.032732,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjQgR01UDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL2pzb24NCkNvbnRlbnQtTGVuZ3RoOiAxMTgNCg0K",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:24 GMT\r\nContent-Type: application/json\r\nContent-Length: 118\r\n\r\n"
+        },
+        {
+          "dir": "rx",
+          "t": 0.032875,
+          "data_b64": "eyJpZCI6IDEsICJyZXN1bHQiOiBbeyJ2b2x1bWUiOiAiMzAiLCAibWluVm9sdW1lIjogIjAiLCAibWF4Vm9sdW1lIjogIjc0IiwgInN0ZXAiOiAiMSIsICJtdXRlIjogIm9mZiIsICJvdXRwdXQiOiAiIn1dfQ==",
+          "text": "{\"id\": 1, \"result\": [{\"volume\": \"30\", \"minVolume\": \"0\", \"maxVolume\": \"74\", \"step\": \"1\", \"mute\": \"off\", \"output\": \"\"}]}"
+        }
+      ]
+    },
+    {
+      "port": 64092,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.045051,
+          "data_b64": "UE9TVCAvc29ueS9hdWRpbyBIVFRQLzEuMQ0KQWNjZXB0LUVuY29kaW5nOiBpZGVudGl0eQ0KQ29udGVudC1MZW5ndGg6IDk1DQpIb3N0OiBJUFhYWFhYWFg6NjQwOTMNCkFjY2VwdDogYXBwbGljYXRpb24vanNvbg0KQ29udGVudC1UeXBlOiBhcHBsaWNhdGlvbi9qc29uDQpVc2VyLUFnZW50OiBBVlIgQ29udHJvbA0KQ29ubmVjdGlvbjogY2xvc2UNCg0K",
+          "text": "POST /sony/audio HTTP/1.1\r\nAccept-Encoding: identity\r\nContent-Length: 95\r\nHost: IPXXXXXXX:64093\r\nAccept: application/json\r\nContent-Type: application/json\r\nUser-Agent: AVR Control\r\nConnection: close\r\n\r\n"
+        },
+        {
+          "dir": "tx",
+          "t": 0.045255,
+          "data_b64": "eyJtZXRob2QiOiAiZ2V0U291bmRTZXR0aW5ncyIsICJpZCI6IDEsICJwYXJhbXMiOiBbeyJ0YXJnZXQiOiAic291bmRGaWVsZCJ9XSwgInZlcnNpb24iOiAiMS4xIn0=",
+          "text": "{\"method\": \"getSoundSettings\", \"id\": 1, \"params\": [{\"target\": \"soundField\"}], \"version\": \"1.1\"}"
+        },
+        {
+          "dir": "rx",
+          "t": 0.045475,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjQgR01UDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL2pzb24NCkNvbnRlbnQtTGVuZ3RoOiAyODANCg0KeyJpZCI6IDEsICJyZXN1bHQiOiBbeyJ0YXJnZXQiOiAic291bmRGaWVsZCIsICJjdXJyZW50VmFsdWUiOiAic3RlcmVvIiwgImNhbmRpZGF0ZSI6IFt7InZhbHVlIjogInN0ZXJlbyIsICJ0aXRsZSI6ICJTdGVyZW8iLCAiaXNBdmFpbGFibGUiOiB0cnVlfSwgeyJ2YWx1ZSI6ICJtb3ZpZSIsICJ0aXRsZSI6ICJNb3ZpZSIsICJpc0F2YWlsYWJsZSI6IHRydWV9LCB7InZhbHVlIjogInVuYXZhaWxhYmxlIiwgInRpdGxlIjogIlVuYXZhaWxhYmxlIiwgImlzQXZhaWxhYmxlIjogZmFsc2V9XX1dfQ==",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:24 GMT\r\nContent-Type: application/json\r\nContent-Length: 280\r\n\r\n{\"id\": 1, \"result\": [{\"target\": \"soundField\", \"currentValue\": \"stereo\", \"candidate\": [{\"value\": \"stereo\", \"title\": \"Stereo\", \"isAvailable\": true}, {\"value\": \"movie\", \"title\": \"Movie\", \"isAvailable\": true}, {\"value\": \"unavailable\", \"title\": \"Unavailable\", \"isAvailable\": false}]}]}"
+        }
+      ]
+    },
+    {
+      "port": 64092,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.061208,
+          "data_b64": "UE9TVCAvc29ueS9zeXN0ZW0gSFRUUC8xLjENCkFjY2VwdC1FbmNvZGluZzogaWRlbnRpdHkNCkNvbnRlbnQtTGVuZ3RoOiA2OQ0KSG9zdDogSVBYWFhYWFhYOjY0MDkzDQpBY2NlcHQ6IGFwcGxpY2F0aW9uL2pzb24NCkNvbnRlbnQtVHlwZTogYXBwbGljYXRpb24vanNvbg0KVXNlci1BZ2VudDogQVZSIENvbnRyb2wNCkNvbm5lY3Rpb246IGNsb3NlDQoNCg==",
+          "text": "POST /sony/system HTTP/1.1\r\nAccept-Encoding: identity\r\nContent-Length: 69\r\nHost: IPXXXXXXX:64093\r\nAccept: application/json\r\nContent-Type: application/json\r\nUser-Agent: AVR Control\r\nConnection: close\r\n\r\n"
+        },
+        {
+          "dir": "tx",
+          "t": 0.061372,
+          "data_b64": "eyJtZXRob2QiOiAiZ2V0UG93ZXJTdGF0dXMiLCAiaWQiOiAxLCAicGFyYW1zIjogW10sICJ2ZXJzaW9uIjogIjEuMSJ9",
+          "text": "{\"method\": \"getPowerStatus\", \"id\": 1, \"params\": [], \"version\": \"1.1\"}"
+        },
+        {
+          "dir": "rx",
+          "t": 0.061533,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjQgR01UDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL2pzb24NCkNvbnRlbnQtTGVuZ3RoOiA0Mw0KDQp7ImlkIjogMSwgInJlc3VsdCI6IFt7InN0YXR1cyI6ICJhY3RpdmUifV19",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:24 GMT\r\nContent-Type: application/json\r\nContent-Length: 43\r\n\r\n{\"id\": 1, \"result\": [{\"status\": \"active\"}]}"
+        }
+      ]
+    },
+    {
+      "port": 64092,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.06275,
+          "data_b64": "UE9TVCAvc29ueS9hdWRpbyBIVFRQLzEuMQ0KQWNjZXB0LUVuY29kaW5nOiBpZGVudGl0eQ0KQ29udGVudC1MZW5ndGg6IDg5DQpIb3N0OiBJUFhYWFhYWFg6NjQwOTMNCkFjY2VwdDogYXBwbGljYXRpb24vanNvbg0KQ29udGVudC1UeXBlOiBhcHBsaWNhdGlvbi9qc29uDQpVc2VyLUFnZW50OiBBVlIgQ29udHJvbA0KQ29ubmVjdGlvbjogY2xvc2UNCg0KeyJtZXRob2QiOiAiZ2V0Vm9sdW1lSW5mb3JtYXRpb24iLCAiaWQiOiAxLCAicGFyYW1zIjogW3sib3V0cHV0IjogIiJ9XSwgInZlcnNpb24iOiAiMS4xIn0=",
+          "text": "POST /sony/audio HTTP/1.1\r\nAccept-Encoding: identity\r\nContent-Length: 89\r\nHost: IPXXXXXXX:64093\r\nAccept: application/json\r\nContent-Type: application/json\r\nUser-Agent: AVR Control\r\nConnection: close\r\n\r\n{\"method\": \"getVolumeInformation\", \"id\": 1, \"params\": [{\"output\": \"\"}], \"version\": \"1.1\"}"
+        },
+        {
+          "dir": "rx",
+          "t": 0.063025,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjQgR01UDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL2pzb24NCkNvbnRlbnQtTGVuZ3RoOiAxMTgNCg0KeyJpZCI6IDEsICJyZXN1bHQiOiBbeyJ2b2x1bWUiOiAiMzAiLCAibWluVm9sdW1lIjogIjAiLCAibWF4Vm9sdW1lIjogIjc0IiwgInN0ZXAiOiAiMSIsICJtdXRlIjogIm9mZiIsICJvdXRwdXQiOiAiIn1dfQ==",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:24 GMT\r\nContent-Type: application/json\r\nContent-Length: 118\r\n\r\n{\"id\": 1, \"result\": [{\"volume\": \"30\", \"minVolume\": \"0\", \"maxVolume\": \"74\", \"step\": \"1\", \"mute\": \"off\", \"output\": \"\"}]}"
+        }
+      ]
+    },
+    {
+      "port": 64092,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.064121,
+          "data_b64": "UE9TVCAvc29ueS9hdWRpbyBIVFRQLzEuMQ0KQWNjZXB0LUVuY29kaW5nOiBpZGVudGl0eQ0KQ29udGVudC1MZW5ndGg6IDk1DQpIb3N0OiBJUFhYWFhYWFg6NjQwOTMNCkFjY2VwdDogYXBwbGljYXRpb24vanNvbg0KQ29udGVudC1UeXBlOiBhcHBsaWNhdGlvbi9qc29uDQpVc2VyLUFnZW50OiBBVlIgQ29udHJvbA0KQ29ubmVjdGlvbjogY2xvc2UNCg0KeyJtZXRob2QiOiAiZ2V0U291bmRTZXR0aW5ncyIsICJpZCI6IDEsICJwYXJhbXMiOiBbeyJ0YXJnZXQiOiAic291bmRGaWVsZCJ9XSwgInZlcnNpb24iOiAiMS4xIn0=",
+          "text": "POST /sony/audio HTTP/1.1\r\nAccept-Encoding: identity\r\nContent-Length: 95\r\nHost: IPXXXXXXX:64093\r\nAccept: application/json\r\nContent-Type: application/json\r\nUser-Agent: AVR Control\r\nConnection: close\r\n\r\n{\"method\": \"getSoundSettings\", \"id\": 1, \"params\": [{\"target\": \"soundField\"}], \"version\": \"1.1\"}"
+        },
+        {
+          "dir": "rx",
+          "t": 0.06436,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjQgR01UDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL2pzb24NCkNvbnRlbnQtTGVuZ3RoOiAyODANCg0KeyJpZCI6IDEsICJyZXN1bHQiOiBbeyJ0YXJnZXQiOiAic291bmRGaWVsZCIsICJjdXJyZW50VmFsdWUiOiAic3RlcmVvIiwgImNhbmRpZGF0ZSI6IFt7InZhbHVlIjogInN0ZXJlbyIsICJ0aXRsZSI6ICJTdGVyZW8iLCAiaXNBdmFpbGFibGUiOiB0cnVlfSwgeyJ2YWx1ZSI6ICJtb3ZpZSIsICJ0aXRsZSI6ICJNb3ZpZSIsICJpc0F2YWlsYWJsZSI6IHRydWV9LCB7InZhbHVlIjogInVuYXZhaWxhYmxlIiwgInRpdGxlIjogIlVuYXZhaWxhYmxlIiwgImlzQXZhaWxhYmxlIjogZmFsc2V9XX1dfQ==",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:24 GMT\r\nContent-Type: application/json\r\nContent-Length: 280\r\n\r\n{\"id\": 1, \"result\": [{\"target\": \"soundField\", \"currentValue\": \"stereo\", \"candidate\": [{\"value\": \"stereo\", \"title\": \"Stereo\", \"isAvailable\": true}, {\"value\": \"movie\", \"title\": \"Movie\", \"isAvailable\": true}, {\"value\": \"unavailable\", \"title\": \"Unavailable\", \"isAvailable\": false}]}]}"
+        }
+      ]
+    },
+    {
+      "port": 64092,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.077362,
+          "data_b64": "UE9TVCAvc29ueS9zeXN0ZW0gSFRUUC8xLjENCkFjY2VwdC1FbmNvZGluZzogaWRlbnRpdHkNCkNvbnRlbnQtTGVuZ3RoOiA2OQ0KSG9zdDogSVBYWFhYWFhYOjY0MDkzDQpBY2NlcHQ6IGFwcGxpY2F0aW9uL2pzb24NCkNvbnRlbnQtVHlwZTogYXBwbGljYXRpb24vanNvbg0KVXNlci1BZ2VudDogQVZSIENvbnRyb2wNCkNvbm5lY3Rpb246IGNsb3NlDQoNCg==",
+          "text": "POST /sony/system HTTP/1.1\r\nAccept-Encoding: identity\r\nContent-Length: 69\r\nHost: IPXXXXXXX:64093\r\nAccept: application/json\r\nContent-Type: application/json\r\nUser-Agent: AVR Control\r\nConnection: close\r\n\r\n"
+        },
+        {
+          "dir": "tx",
+          "t": 0.077687,
+          "data_b64": "eyJtZXRob2QiOiAiZ2V0UG93ZXJTdGF0dXMiLCAiaWQiOiAxLCAicGFyYW1zIjogW10sICJ2ZXJzaW9uIjogIjEuMSJ9",
+          "text": "{\"method\": \"getPowerStatus\", \"id\": 1, \"params\": [], \"version\": \"1.1\"}"
+        },
+        {
+          "dir": "rx",
+          "t": 0.077892,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjQgR01UDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL2pzb24NCkNvbnRlbnQtTGVuZ3RoOiA0Mw0KDQo=",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:24 GMT\r\nContent-Type: application/json\r\nContent-Length: 43\r\n\r\n"
+        },
+        {
+          "dir": "rx",
+          "t": 0.078039,
+          "data_b64": "eyJpZCI6IDEsICJyZXN1bHQiOiBbeyJzdGF0dXMiOiAiYWN0aXZlIn1dfQ==",
+          "text": "{\"id\": 1, \"result\": [{\"status\": \"active\"}]}"
+        }
+      ]
+    },
+    {
+      "port": 64092,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.079745,
+          "data_b64": "UE9TVCAvc29ueS9hdWRpbyBIVFRQLzEuMQ0KQWNjZXB0LUVuY29kaW5nOiBpZGVudGl0eQ0KQ29udGVudC1MZW5ndGg6IDg5DQpIb3N0OiBJUFhYWFhYWFg6NjQwOTMNCkFjY2VwdDogYXBwbGljYXRpb24vanNvbg0KQ29udGVudC1UeXBlOiBhcHBsaWNhdGlvbi9qc29uDQpVc2VyLUFnZW50OiBBVlIgQ29udHJvbA0KQ29ubmVjdGlvbjogY2xvc2UNCg0KeyJtZXRob2QiOiAiZ2V0Vm9sdW1lSW5mb3JtYXRpb24iLCAiaWQiOiAxLCAicGFyYW1zIjogW3sib3V0cHV0IjogIiJ9XSwgInZlcnNpb24iOiAiMS4xIn0=",
+          "text": "POST /sony/audio HTTP/1.1\r\nAccept-Encoding: identity\r\nContent-Length: 89\r\nHost: IPXXXXXXX:64093\r\nAccept: application/json\r\nContent-Type: application/json\r\nUser-Agent: AVR Control\r\nConnection: close\r\n\r\n{\"method\": \"getVolumeInformation\", \"id\": 1, \"params\": [{\"output\": \"\"}], \"version\": \"1.1\"}"
+        },
+        {
+          "dir": "rx",
+          "t": 0.080008,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjQgR01UDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL2pzb24NCkNvbnRlbnQtTGVuZ3RoOiAxMTgNCg0KeyJpZCI6IDEsICJyZXN1bHQiOiBbeyJ2b2x1bWUiOiAiMzAiLCAibWluVm9sdW1lIjogIjAiLCAibWF4Vm9sdW1lIjogIjc0IiwgInN0ZXAiOiAiMSIsICJtdXRlIjogIm9mZiIsICJvdXRwdXQiOiAiIn1dfQ==",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:24 GMT\r\nContent-Type: application/json\r\nContent-Length: 118\r\n\r\n{\"id\": 1, \"result\": [{\"volume\": \"30\", \"minVolume\": \"0\", \"maxVolume\": \"74\", \"step\": \"1\", \"mute\": \"off\", \"output\": \"\"}]}"
+        }
+      ]
+    },
+    {
+      "port": 64092,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.08132,
+          "data_b64": "UE9TVCAvc29ueS9hdWRpbyBIVFRQLzEuMQ0KQWNjZXB0LUVuY29kaW5nOiBpZGVudGl0eQ0KQ29udGVudC1MZW5ndGg6IDk1DQpIb3N0OiBJUFhYWFhYWFg6NjQwOTMNCkFjY2VwdDogYXBwbGljYXRpb24vanNvbg0KQ29udGVudC1UeXBlOiBhcHBsaWNhdGlvbi9qc29uDQpVc2VyLUFnZW50OiBBVlIgQ29udHJvbA0KQ29ubmVjdGlvbjogY2xvc2UNCg0KeyJtZXRob2QiOiAiZ2V0U291bmRTZXR0aW5ncyIsICJpZCI6IDEsICJwYXJhbXMiOiBbeyJ0YXJnZXQiOiAic291bmRGaWVsZCJ9XSwgInZlcnNpb24iOiAiMS4xIn0=",
+          "text": "POST /sony/audio HTTP/1.1\r\nAccept-Encoding: identity\r\nContent-Length: 95\r\nHost: IPXXXXXXX:64093\r\nAccept: application/json\r\nContent-Type: application/json\r\nUser-Agent: AVR Control\r\nConnection: close\r\n\r\n{\"method\": \"getSoundSettings\", \"id\": 1, \"params\": [{\"target\": \"soundField\"}], \"version\": \"1.1\"}"
+        },
+        {
+          "dir": "rx",
+          "t": 0.081503,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjQgR01UDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL2pzb24NCkNvbnRlbnQtTGVuZ3RoOiAyODANCg0KeyJpZCI6IDEsICJyZXN1bHQiOiBbeyJ0YXJnZXQiOiAic291bmRGaWVsZCIsICJjdXJyZW50VmFsdWUiOiAic3RlcmVvIiwgImNhbmRpZGF0ZSI6IFt7InZhbHVlIjogInN0ZXJlbyIsICJ0aXRsZSI6ICJTdGVyZW8iLCAiaXNBdmFpbGFibGUiOiB0cnVlfSwgeyJ2YWx1ZSI6ICJtb3ZpZSIsICJ0aXRsZSI6ICJNb3ZpZSIsICJpc0F2YWlsYWJsZSI6IHRydWV9LCB7InZhbHVlIjogInVuYXZhaWxhYmxlIiwgInRpdGxlIjogIlVuYXZhaWxhYmxlIiwgImlzQXZhaWxhYmxlIjogZmFsc2V9XX1dfQ==",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:24 GMT\r\nContent-Type: application/json\r\nContent-Length: 280\r\n\r\n{\"id\": 1, \"result\": [{\"target\": \"soundField\", \"currentValue\": \"stereo\", \"candidate\": [{\"value\": \"stereo\", \"title\": \"Stereo\", \"isAvailable\": true}, {\"value\": \"movie\", \"title\": \"Movie\", \"isAvailable\": true}, {\"value\": \"unavailable\", \"title\": \"Unavailable\", \"isAvailable\": false}]}]}"
+        }
+      ]
+    }
+  ],
+  "notes": [
+    "The driver connects to RECEIVER_IP through the proxy; an HTTP driver would therefore send that address in its Host header."
+  ],
+  "raw_discovery": {}
+}

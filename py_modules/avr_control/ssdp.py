@@ -64,6 +64,30 @@ async def search(st: str, timeout: float) -> list[dict]:
         transport.close()
 
 
+async def search_host(
+    host: str, st: str, timeout: float, port: int = 1900
+) -> list[dict]:
+    """Send an M-SEARCH directly to one host (useful when probing a typed IP)."""
+    loop = asyncio.get_running_loop()
+    protocol = _SearchProtocol()
+    transport, _ = await loop.create_datagram_endpoint(
+        lambda: protocol, local_addr=("0.0.0.0", 0)
+    )
+    request = (
+        "M-SEARCH * HTTP/1.1\r\n"
+        f"HOST: {host}:{port}\r\n"
+        'MAN: "ssdp:discover"\r\n'
+        f"MX: {max(1, int(timeout))}\r\n"
+        f"ST: {st}\r\n\r\n"
+    ).encode("ascii")
+    try:
+        transport.sendto(request, (host, port))
+        await asyncio.sleep(max(0.0, timeout))
+        return list(protocol.responses)
+    finally:
+        transport.close()
+
+
 def _fetch(location: str) -> dict[str, Any]:
     request = urllib.request.Request(location, headers={"User-Agent": "AVR Control"})
     with urllib.request.urlopen(request, timeout=5.0) as response:

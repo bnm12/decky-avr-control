@@ -1,0 +1,177 @@
+{
+  "schema_version": 1,
+  "source": "simulator",
+  "tool": {
+    "name": "avr_probe",
+    "version": "1.0"
+  },
+  "timestamp": "2026-10-31T17:23:25.560864+00:00",
+  "runtime": {
+    "python": "3.15.2",
+    "os": "Windows-11-10.0.22631-SP0"
+  },
+  "driver": {
+    "key": "heos",
+    "label": "Denon HEOS (speakers, soundbars, HEOS-built-in)"
+  },
+  "found": {
+    "model": "HEOS AVR simulator",
+    "id": "RECEIVER_ID_1",
+    "host": "RECEIVER_IP"
+  },
+  "status": {
+    "volume": 34,
+    "muted": false,
+    "power": null,
+    "mode": null
+  },
+  "capabilities": [
+    "mute",
+    "volume"
+  ],
+  "scale": {
+    "min": 0,
+    "max": 100,
+    "unit": "%",
+    "zero": 0,
+    "steps_per_unit": 1,
+    "default_cap": 60
+  },
+  "modes": [],
+  "modes_error": null,
+  "getters": {
+    "volume": 34,
+    "mute": false
+  },
+  "write_restore_errors": [],
+  "proxy_errors": [],
+  "connections": [
+    {
+      "port": 64151,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.000774,
+          "data_b64": "aGVvczovL3BsYXllci9nZXRfcGxheWVycw0K",
+          "text": "heos://player/get_players\r\n"
+        },
+        {
+          "dir": "rx",
+          "t": 0.000879,
+          "data_b64": "eyJoZW9zIjogeyJjb21tYW5kIjogInBsYXllci9nZXRfcGxheWVycyIsICJyZXN1bHQiOiAic3VjY2VzcyIsICJtZXNzYWdlIjogImNvbW1hbmQgdW5kZXIgcHJvY2VzcyJ9fQ0KeyJoZW9zIjogeyJjb21tYW5kIjogInBsYXllci9nZXRfcGxheWVycyIsICJyZXN1bHQiOiAic3VjY2VzcyIsICJtZXNzYWdlIjogIiJ9LCAicGF5bG9hZCI6IFt7InBpZCI6IDEwMSwgIm5hbWUiOiAiTGl2aW5nIFJvb20iLCAibW9kZWwiOiAiSEVPUyBBVlIiLCAic2VyaWFsIjogIlJFQ0VJVkVSIiwgImlwIjogIklQWFhYWFhYWCJ9XX0NCg==",
+          "text": "{\"heos\": {\"command\": \"player/get_players\", \"result\": \"success\", \"message\": \"command under process\"}}\r\n{\"heos\": {\"command\": \"player/get_players\", \"result\": \"success\", \"message\": \"\"}, \"payload\": [{\"pid\": 101, \"name\": \"Living Room\", \"model\": \"HEOS AVR\", \"serial\": \"RECEIVER_ID\", \"ip\": \"IPXXXXXXX\"}]}\r\n"
+        },
+        {
+          "dir": "tx",
+          "t": 0.000982,
+          "data_b64": "aGVvczovL3BsYXllci9nZXRfdm9sdW1lP3BpZD0xMDENCg==",
+          "text": "heos://player/get_volume?pid=101\r\n"
+        },
+        {
+          "dir": "rx",
+          "t": 0.001061,
+          "data_b64": "eyJoZW9zIjogeyJjb21tYW5kIjogInBsYXllci9nZXRfdm9sdW1lIiwgInJlc3VsdCI6ICJzdWNjZXNzIiwgIm1lc3NhZ2UiOiAiY29tbWFuZCB1bmRlciBwcm9jZXNzIn19DQp7Imhlb3MiOiB7ImNvbW1hbmQiOiAicGxheWVyL2dldF92b2x1bWUiLCAicmVzdWx0IjogInN1Y2Nlc3MiLCAibWVzc2FnZSI6ICJwaWQ9JzEwMScmbGV2ZWw9JzM0JyJ9fQ0K",
+          "text": "{\"heos\": {\"command\": \"player/get_volume\", \"result\": \"success\", \"message\": \"command under process\"}}\r\n{\"heos\": {\"command\": \"player/get_volume\", \"result\": \"success\", \"message\": \"pid='101'&level='34'\"}}\r\n"
+        },
+        {
+          "dir": "tx",
+          "t": 0.00114,
+          "data_b64": "aGVvczovL3BsYXllci9nZXRfbXV0ZT9waWQ9MTAxDQo=",
+          "text": "heos://player/get_mute?pid=101\r\n"
+        },
+        {
+          "dir": "rx",
+          "t": 0.001211,
+          "data_b64": "eyJoZW9zIjogeyJjb21tYW5kIjogInBsYXllci9nZXRfbXV0ZSIsICJyZXN1bHQiOiAic3VjY2VzcyIsICJtZXNzYWdlIjogImNvbW1hbmQgdW5kZXIgcHJvY2VzcyJ9fQ0KeyJoZW9zIjogeyJjb21tYW5kIjogInBsYXllci9nZXRfbXV0ZSIsICJyZXN1bHQiOiAic3VjY2VzcyIsICJtZXNzYWdlIjogInBpZD0nMTAxJyZzdGF0ZT0nb2ZmJyJ9fQ0K",
+          "text": "{\"heos\": {\"command\": \"player/get_mute\", \"result\": \"success\", \"message\": \"command under process\"}}\r\n{\"heos\": {\"command\": \"player/get_mute\", \"result\": \"success\", \"message\": \"pid='101'&state='off'\"}}\r\n"
+        }
+      ]
+    },
+    {
+      "port": 64151,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.00195,
+          "data_b64": "aGVvczovL3BsYXllci9nZXRfcGxheWVycw0K",
+          "text": "heos://player/get_players\r\n"
+        },
+        {
+          "dir": "rx",
+          "t": 0.002103,
+          "data_b64": "eyJoZW9zIjogeyJjb21tYW5kIjogInBsYXllci9nZXRfcGxheWVycyIsICJyZXN1bHQiOiAic3VjY2VzcyIsICJtZXNzYWdlIjogImNvbW1hbmQgdW5kZXIgcHJvY2VzcyJ9fQ0KeyJoZW9zIjogeyJjb21tYW5kIjogInBsYXllci9nZXRfcGxheWVycyIsICJyZXN1bHQiOiAic3VjY2VzcyIsICJtZXNzYWdlIjogIiJ9LCAicGF5bG9hZCI6IFt7InBpZCI6IDEwMSwgIm5hbWUiOiAiTGl2aW5nIFJvb20iLCAibW9kZWwiOiAiSEVPUyBBVlIiLCAic2VyaWFsIjogIlJFQ0VJVkVSIiwgImlwIjogIklQWFhYWFhYWCJ9XX0NCg==",
+          "text": "{\"heos\": {\"command\": \"player/get_players\", \"result\": \"success\", \"message\": \"command under process\"}}\r\n{\"heos\": {\"command\": \"player/get_players\", \"result\": \"success\", \"message\": \"\"}, \"payload\": [{\"pid\": 101, \"name\": \"Living Room\", \"model\": \"HEOS AVR\", \"serial\": \"RECEIVER_ID\", \"ip\": \"IPXXXXXXX\"}]}\r\n"
+        },
+        {
+          "dir": "tx",
+          "t": 0.002193,
+          "data_b64": "aGVvczovL3BsYXllci9nZXRfdm9sdW1lP3BpZD0xMDENCg==",
+          "text": "heos://player/get_volume?pid=101\r\n"
+        },
+        {
+          "dir": "rx",
+          "t": 0.002268,
+          "data_b64": "eyJoZW9zIjogeyJjb21tYW5kIjogInBsYXllci9nZXRfdm9sdW1lIiwgInJlc3VsdCI6ICJzdWNjZXNzIiwgIm1lc3NhZ2UiOiAiY29tbWFuZCB1bmRlciBwcm9jZXNzIn19DQp7Imhlb3MiOiB7ImNvbW1hbmQiOiAicGxheWVyL2dldF92b2x1bWUiLCAicmVzdWx0IjogInN1Y2Nlc3MiLCAibWVzc2FnZSI6ICJwaWQ9JzEwMScmbGV2ZWw9JzM0JyJ9fQ0K",
+          "text": "{\"heos\": {\"command\": \"player/get_volume\", \"result\": \"success\", \"message\": \"command under process\"}}\r\n{\"heos\": {\"command\": \"player/get_volume\", \"result\": \"success\", \"message\": \"pid='101'&level='34'\"}}\r\n"
+        },
+        {
+          "dir": "tx",
+          "t": 0.002343,
+          "data_b64": "aGVvczovL3BsYXllci9nZXRfbXV0ZT9waWQ9MTAxDQo=",
+          "text": "heos://player/get_mute?pid=101\r\n"
+        },
+        {
+          "dir": "rx",
+          "t": 0.002414,
+          "data_b64": "eyJoZW9zIjogeyJjb21tYW5kIjogInBsYXllci9nZXRfbXV0ZSIsICJyZXN1bHQiOiAic3VjY2VzcyIsICJtZXNzYWdlIjogImNvbW1hbmQgdW5kZXIgcHJvY2VzcyJ9fQ0KeyJoZW9zIjogeyJjb21tYW5kIjogInBsYXllci9nZXRfbXV0ZSIsICJyZXN1bHQiOiAic3VjY2VzcyIsICJtZXNzYWdlIjogInBpZD0nMTAxJyZzdGF0ZT0nb2ZmJyJ9fQ0K",
+          "text": "{\"heos\": {\"command\": \"player/get_mute\", \"result\": \"success\", \"message\": \"command under process\"}}\r\n{\"heos\": {\"command\": \"player/get_mute\", \"result\": \"success\", \"message\": \"pid='101'&state='off'\"}}\r\n"
+        }
+      ]
+    },
+    {
+      "port": 64151,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.003057,
+          "data_b64": "aGVvczovL3BsYXllci9nZXRfcGxheWVycw0K",
+          "text": "heos://player/get_players\r\n"
+        },
+        {
+          "dir": "rx",
+          "t": 0.003202,
+          "data_b64": "eyJoZW9zIjogeyJjb21tYW5kIjogInBsYXllci9nZXRfcGxheWVycyIsICJyZXN1bHQiOiAic3VjY2VzcyIsICJtZXNzYWdlIjogImNvbW1hbmQgdW5kZXIgcHJvY2VzcyJ9fQ0KeyJoZW9zIjogeyJjb21tYW5kIjogInBsYXllci9nZXRfcGxheWVycyIsICJyZXN1bHQiOiAic3VjY2VzcyIsICJtZXNzYWdlIjogIiJ9LCAicGF5bG9hZCI6IFt7InBpZCI6IDEwMSwgIm5hbWUiOiAiTGl2aW5nIFJvb20iLCAibW9kZWwiOiAiSEVPUyBBVlIiLCAic2VyaWFsIjogIlJFQ0VJVkVSIiwgImlwIjogIklQWFhYWFhYWCJ9XX0NCg==",
+          "text": "{\"heos\": {\"command\": \"player/get_players\", \"result\": \"success\", \"message\": \"command under process\"}}\r\n{\"heos\": {\"command\": \"player/get_players\", \"result\": \"success\", \"message\": \"\"}, \"payload\": [{\"pid\": 101, \"name\": \"Living Room\", \"model\": \"HEOS AVR\", \"serial\": \"RECEIVER_ID\", \"ip\": \"IPXXXXXXX\"}]}\r\n"
+        },
+        {
+          "dir": "tx",
+          "t": 0.003285,
+          "data_b64": "aGVvczovL3BsYXllci9nZXRfdm9sdW1lP3BpZD0xMDENCg==",
+          "text": "heos://player/get_volume?pid=101\r\n"
+        },
+        {
+          "dir": "rx",
+          "t": 0.003357,
+          "data_b64": "eyJoZW9zIjogeyJjb21tYW5kIjogInBsYXllci9nZXRfdm9sdW1lIiwgInJlc3VsdCI6ICJzdWNjZXNzIiwgIm1lc3NhZ2UiOiAiY29tbWFuZCB1bmRlciBwcm9jZXNzIn19DQp7Imhlb3MiOiB7ImNvbW1hbmQiOiAicGxheWVyL2dldF92b2x1bWUiLCAicmVzdWx0IjogInN1Y2Nlc3MiLCAibWVzc2FnZSI6ICJwaWQ9JzEwMScmbGV2ZWw9JzM0JyJ9fQ0K",
+          "text": "{\"heos\": {\"command\": \"player/get_volume\", \"result\": \"success\", \"message\": \"command under process\"}}\r\n{\"heos\": {\"command\": \"player/get_volume\", \"result\": \"success\", \"message\": \"pid='101'&level='34'\"}}\r\n"
+        },
+        {
+          "dir": "tx",
+          "t": 0.003427,
+          "data_b64": "aGVvczovL3BsYXllci9nZXRfbXV0ZT9waWQ9MTAxDQo=",
+          "text": "heos://player/get_mute?pid=101\r\n"
+        },
+        {
+          "dir": "rx",
+          "t": 0.003495,
+          "data_b64": "eyJoZW9zIjogeyJjb21tYW5kIjogInBsYXllci9nZXRfbXV0ZSIsICJyZXN1bHQiOiAic3VjY2VzcyIsICJtZXNzYWdlIjogImNvbW1hbmQgdW5kZXIgcHJvY2VzcyJ9fQ0KeyJoZW9zIjogeyJjb21tYW5kIjogInBsYXllci9nZXRfbXV0ZSIsICJyZXN1bHQiOiAic3VjY2VzcyIsICJtZXNzYWdlIjogInBpZD0nMTAxJyZzdGF0ZT0nb2ZmJyJ9fQ0K",
+          "text": "{\"heos\": {\"command\": \"player/get_mute\", \"result\": \"success\", \"message\": \"command under process\"}}\r\n{\"heos\": {\"command\": \"player/get_mute\", \"result\": \"success\", \"message\": \"pid='101'&state='off'\"}}\r\n"
+        }
+      ]
+    }
+  ],
+  "notes": [
+    "The driver connects to RECEIVER_IP through the proxy; an HTTP driver would therefore send that address in its Host header."
+  ],
+  "raw_discovery": {}
+}

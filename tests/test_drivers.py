@@ -5,7 +5,15 @@ import unittest
 
 from tests import PY_MODULES  # noqa: F401
 from tests.fakes import FakeEiscp, FakeEiscpDiscovery, FakePioneerTelnet
-from avr_control.drivers.base import MODE, MUTE, POWER, VOLUME, Refused, Unsupported
+from avr_control.drivers.base import (
+    MODE,
+    MUTE,
+    POWER,
+    VOLUME,
+    DriverError,
+    Refused,
+    Unsupported,
+)
 from avr_control.drivers.eiscp import EiscpDriver
 from avr_control.drivers import eiscp as eiscp_module
 from avr_control.drivers.pioneer_telnet import PioneerTelnetDriver
@@ -35,6 +43,96 @@ class EiscpDriverTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.fake.muted)
         self.assertFalse(self.fake.power)
         self.assertEqual(self.fake.mode, "11")
+
+    def test_scale_defaults_and_model_lookup(self):
+        self.assertTrue(
+            all(
+                not field.required
+                for field in EiscpDriver.config_fields
+                if field.key in {"volume_steps", "zero_db", "max_volume", "volume_unit"}
+            )
+        )
+        unknown = EiscpDriver({"model": "unlisted receiver"}).scale
+        self.assertEqual(
+            (unknown.min, unknown.max, unknown.unit, unknown.zero,
+             unknown.steps_per_unit, unknown.default_cap),
+            (0, 185, "dB", 164, 2, 100),
+        )
+
+        known = EiscpDriver({"model": "vsx-935"}).scale
+        self.assertEqual(
+            (known.zero, known.steps_per_unit, known.max, known.default_cap),
+            (164, 2, 185, 100),
+        )
+
+    async def test_scale_overrides_and_set_volume_clamps_to_configured_max(self):
+        driver = EiscpDriver(
+            {
+                "host": "127.0.0.1",
+                "port": self.port,
+                "model": "other receiver",
+                "volume_steps": "1",
+                "zero_db": "80",
+                "max_volume": "100",
+            }
+        )
+        self.assertEqual(
+            (
+                driver.scale.unit,
+                driver.scale.zero,
+                driver.scale.steps_per_unit,
+                driver.scale.max,
+                driver.scale.default_cap,
+            ),
+            ("dB", 80, 1, 100, 48),
+        )
+        self.assertEqual(await driver.set_volume(200), 100)
+        self.assertEqual(self.fake.volume, 100)
+
+    def test_absolute_scale_defaults_to_steps_and_requires_explicit_percent(self):
+        scale = EiscpDriver(
+            {"zero_db": "", "max_volume": "100"}
+        ).scale
+        scale_with_omitted_zero = EiscpDriver({"max_volume": "100"}).scale
+        scale_with_absolute_sentinel = EiscpDriver(
+            {"zero_db": "absolute", "max_volume": "100"}
+        ).scale
+        percent_scale = EiscpDriver(
+            {"zero_db": "", "max_volume": "100", "volume_unit": "%"}
+        ).scale
+        non_100_steps = EiscpDriver(
+            {"zero_db": "absolute", "max_volume": "80"}
+        ).scale
+        self.assertEqual(
+            (scale.unit, scale.zero, scale.steps_per_unit, scale.max, scale.default_cap),
+            ("steps", 0, 1, 100, 40),
+        )
+        self.assertEqual(scale_with_omitted_zero.unit, "steps")
+        self.assertEqual(scale_with_absolute_sentinel.unit, "steps")
+        self.assertEqual(percent_scale.unit, "%")
+        self.assertEqual(
+            (non_100_steps.unit, non_100_steps.max, non_100_steps.default_cap),
+            ("steps", 80, 32),
+        )
+
+    def test_invalid_scale_overrides_raise_clear_driver_errors(self):
+        invalid = (
+            ({"volume_steps": "3"}, "volume_steps must be an integer from 1 to 2"),
+            ({"zero_db": "nope"}, "zero_db must be an integer from 0 to 255"),
+            ({"max_volume": "0"}, "max_volume must be an integer from 1 to 255"),
+            (
+                {
+                    "zero_db": "",
+                    "max_volume": "80",
+                    "volume_unit": "%",
+                },
+                "volume_unit='%' requires max_volume=100",
+            ),
+        )
+        for config, message in invalid:
+            with self.subTest(config=config):
+                with self.assertRaisesRegex(DriverError, message):
+                    EiscpDriver(config)
 
     async def test_standby_reports_power_without_optional_fields(self):
         self.fake.standby = True
@@ -99,6 +197,7 @@ class EiscpDriverTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(found[0].model, "VSX-935")
         self.assertEqual(found[0].id, "0009B0617D30")
         self.assertEqual(found[0].config["port"], 60128)
+        self.assertEqual(found[0].config["model"], "VSX-935")
         probes = [data[16:].decode() for data in responder.probes]
         self.assertTrue(any("!xECNQSTN" in probe for probe in probes))
         self.assertTrue(any("!pECNQSTN" in probe for probe in probes))

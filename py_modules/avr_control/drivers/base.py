@@ -36,12 +36,13 @@ class VolumeScale:
 
     display = (raw - zero) / steps_per_unit, shown with `unit`.
     eISCP on a VSX-935: zero=164, steps_per_unit=2 (0.5 dB steps).
+    Absolute step displays: unit="steps", zero=0, steps_per_unit=1.
     Percent-only drivers: unit="%", zero=0, steps_per_unit=1.
     """
 
     min: int
     max: int
-    unit: Literal["dB", "%"]
+    unit: Literal["dB", "%", "steps"]
     zero: int = 0
     steps_per_unit: int = 1
     default_cap: int | None = None  # default slider cap; None = max
@@ -54,13 +55,20 @@ class VolumeScale:
         return max(self.min, min(self.max, raw))
 
     def as_dict(self) -> dict:
+        default_cap = self.default_cap
+        if default_cap is None:
+            default_cap = (
+                self.min + round((self.max - self.min) * 0.4)
+                if self.unit in ("%", "steps")
+                else self.max
+            )
         return {
             "min": self.min,
             "max": self.max,
             "unit": self.unit,
             "zero": self.zero,
             "steps_per_unit": self.steps_per_unit,
-            "default_cap": self.default_cap if self.default_cap is not None else self.max,
+            "default_cap": default_cap,
         }
 
 
@@ -115,6 +123,8 @@ class Driver(ABC):
 
     key: ClassVar[str]  # stable id stored in settings, e.g. "eiscp"
     label: ClassVar[str]  # shown in the UI, e.g. "Onkyo / Pioneer / Integra (eISCP)"
+    # Config keys identifying this receiver; exclude learned or transport metadata.
+    identity_keys: ClassVar[tuple[str, ...]] = ("host",)
     config_fields: ClassVar[tuple[ConfigField, ...]] = (
         ConfigField("host", "Receiver IP address"),
     )

@@ -1,0 +1,179 @@
+{
+  "schema_version": 1,
+  "source": "simulator",
+  "tool": {
+    "name": "avr_probe",
+    "version": "1.0"
+  },
+  "timestamp": "2026-10-31T17:23:23.900013+00:00",
+  "runtime": {
+    "python": "3.15.2",
+    "os": "Windows-11-10.0.22631-SP0"
+  },
+  "driver": {
+    "key": "yamaha_ync",
+    "label": "Yamaha (pre-MusicCast, 2010-2016)"
+  },
+  "found": {
+    "model": "RX-V671 simulator",
+    "id": "RECEIVER_ID_1",
+    "host": "RECEIVER_IP"
+  },
+  "status": {
+    "volume": 70,
+    "muted": false,
+    "power": true,
+    "mode": "Hall in Munich"
+  },
+  "capabilities": [
+    "mode",
+    "mute",
+    "power",
+    "volume"
+  ],
+  "scale": {
+    "min": 0,
+    "max": 180,
+    "unit": "dB",
+    "zero": 161,
+    "steps_per_unit": 2,
+    "default_cap": 101
+  },
+  "modes": [
+    {
+      "code": "Straight",
+      "name": "Straight"
+    },
+    {
+      "code": "Hall in Munich",
+      "name": "Hall in Munich"
+    },
+    {
+      "code": "Jazz Club",
+      "name": "Jazz Club"
+    }
+  ],
+  "modes_error": null,
+  "getters": {
+    "volume": 70,
+    "mute": false,
+    "power": true,
+    "mode": "Hall in Munich"
+  },
+  "write_restore_errors": [],
+  "proxy_errors": [],
+  "connections": [
+    {
+      "port": 64071,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.001176,
+          "data_b64": "UE9TVCAvWWFtYWhhUmVtb3RlQ29udHJvbC9jdHJsIEhUVFAvMS4xDQpBY2NlcHQtRW5jb2Rpbmc6IGlkZW50aXR5DQpDb250ZW50LUxlbmd0aDogMTE0DQpIb3N0OiBJUFhYWFhYWFg6NjQwNzINCkNvbnRlbnQtVHlwZTogdGV4dC94bWw7IGNoYXJzZXQ9dXRmLTgNClVzZXItQWdlbnQ6IEFWUiBDb250cm9sDQpDb25uZWN0aW9uOiBjbG9zZQ0KDQo8P3htbCB2ZXJzaW9uPScxLjAnIGVuY29kaW5nPSd1dGYtOCc/Pgo8WUFNQUhBX0FWIGNtZD0iR0VUIj48U3lzdGVtPjxDb25maWc+R2V0UGFyYW08L0NvbmZpZz48L1N5c3RlbT48L1lBTUFIQV9BVj4=",
+          "text": "POST /YamahaRemoteControl/ctrl HTTP/1.1\r\nAccept-Encoding: identity\r\nContent-Length: 114\r\nHost: IPXXXXXXX:64072\r\nContent-Type: text/xml; charset=utf-8\r\nUser-Agent: AVR Control\r\nConnection: close\r\n\r\n<?xml version='1.0' encoding='utf-8'?>\n<YAMAHA_AV cmd=\"GET\"><System><Config>GetParam</Config></System></YAMAHA_AV>"
+        },
+        {
+          "dir": "rx",
+          "t": 0.001555,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjMgR01UDQpDb250ZW50LUxlbmd0aDogMjcyDQpDb250ZW50LVR5cGU6IHRleHQveG1sDQoNCjxZQU1BSEFfQVYgUkM9IjAiPjxTeXN0ZW0+PENvbmZpZz48TW9kZWxfTmFtZT5SWC1WNjcxPC9Nb2RlbF9OYW1lPjxTeXN0ZW1fSUQ+WWFtYWhhLXN5c3RlbS0xMjM8L1N5c3RlbV9JRD48Vm9sdW1lPjxNYXg+OS41PC9NYXg+PFVuaXQ+ZEI8L1VuaXQ+PC9Wb2x1bWU+PFNvdW5kX1Byb2dyYW1fTGlzdD48SXRlbT5IYWxsIGluIE11bmljaDwvSXRlbT48SXRlbT5KYXp6IENsdWI8L0l0ZW0+PC9Tb3VuZF9Qcm9ncmFtX0xpc3Q+PC9Db25maWc+PC9TeXN0ZW0+PC9ZQU1BSEFfQVY+",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:23 GMT\r\nContent-Length: 272\r\nContent-Type: text/xml\r\n\r\n<YAMAHA_AV RC=\"0\"><System><Config><Model_Name>RX-V671</Model_Name><System_ID>Yamaha-system-123</System_ID><Volume><Max>9.5</Max><Unit>dB</Unit></Volume><Sound_Program_List><Item>Hall in Munich</Item><Item>Jazz Club</Item></Sound_Program_List></Config></System></YAMAHA_AV>"
+        }
+      ]
+    },
+    {
+      "port": 64071,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.002888,
+          "data_b64": "UE9TVCAvWWFtYWhhUmVtb3RlQ29udHJvbC9jdHJsIEhUVFAvMS4xDQpBY2NlcHQtRW5jb2Rpbmc6IGlkZW50aXR5DQpDb250ZW50LUxlbmd0aDogMTMyDQpIb3N0OiBJUFhYWFhYWFg6NjQwNzINCkNvbnRlbnQtVHlwZTogdGV4dC94bWw7IGNoYXJzZXQ9dXRmLTgNClVzZXItQWdlbnQ6IEFWUiBDb250cm9sDQpDb25uZWN0aW9uOiBjbG9zZQ0KDQo8P3htbCB2ZXJzaW9uPScxLjAnIGVuY29kaW5nPSd1dGYtOCc/Pgo8WUFNQUhBX0FWIGNtZD0iR0VUIj48TWFpbl9ab25lPjxCYXNpY19TdGF0dXM+R2V0UGFyYW08L0Jhc2ljX1N0YXR1cz48L01haW5fWm9uZT48L1lBTUFIQV9BVj4=",
+          "text": "POST /YamahaRemoteControl/ctrl HTTP/1.1\r\nAccept-Encoding: identity\r\nContent-Length: 132\r\nHost: IPXXXXXXX:64072\r\nContent-Type: text/xml; charset=utf-8\r\nUser-Agent: AVR Control\r\nConnection: close\r\n\r\n<?xml version='1.0' encoding='utf-8'?>\n<YAMAHA_AV cmd=\"GET\"><Main_Zone><Basic_Status>GetParam</Basic_Status></Main_Zone></YAMAHA_AV>"
+        },
+        {
+          "dir": "rx",
+          "t": 0.003191,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjMgR01UDQpDb250ZW50LUxlbmd0aDogMzc2DQpDb250ZW50LVR5cGU6IHRleHQveG1sDQoNCjxZQU1BSEFfQVYgUkM9IjAiPjxNYWluX1pvbmU+PEJhc2ljX1N0YXR1cz48UG93ZXJfQ29udHJvbD48UG93ZXI+T248L1Bvd2VyPjwvUG93ZXJfQ29udHJvbD48Vm9sdW1lPjxMdmw+PFZhbD4tNDU1PC9WYWw+PEV4cD4xPC9FeHA+PFVuaXQ+ZEI8L1VuaXQ+PC9Mdmw+PE11dGU+T2ZmPC9NdXRlPjwvVm9sdW1lPjxTdXJyb3VuZD48UHJvZ3JhbV9TZWw+PEN1cnJlbnQ+PFN0cmFpZ2h0Pk9mZjwvU3RyYWlnaHQ+PFNvdW5kX1Byb2dyYW0+SGFsbCBpbiBNdW5pY2g8L1NvdW5kX1Byb2dyYW0+PEVuaGFuY2VyPk9mZjwvRW5oYW5jZXI+PC9DdXJyZW50PjwvUHJvZ3JhbV9TZWw+PC9TdXJyb3VuZD48L0Jhc2ljX1N0YXR1cz48L01haW5fWm9uZT48L1lBTUFIQV9BVj4=",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:23 GMT\r\nContent-Length: 376\r\nContent-Type: text/xml\r\n\r\n<YAMAHA_AV RC=\"0\"><Main_Zone><Basic_Status><Power_Control><Power>On</Power></Power_Control><Volume><Lvl><Val>-455</Val><Exp>1</Exp><Unit>dB</Unit></Lvl><Mute>Off</Mute></Volume><Surround><Program_Sel><Current><Straight>Off</Straight><Sound_Program>Hall in Munich</Sound_Program><Enhancer>Off</Enhancer></Current></Program_Sel></Surround></Basic_Status></Main_Zone></YAMAHA_AV>"
+        }
+      ]
+    },
+    {
+      "port": 64071,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.004247,
+          "data_b64": "UE9TVCAvWWFtYWhhUmVtb3RlQ29udHJvbC9jdHJsIEhUVFAvMS4xDQpBY2NlcHQtRW5jb2Rpbmc6IGlkZW50aXR5DQpDb250ZW50LUxlbmd0aDogMTMyDQpIb3N0OiBJUFhYWFhYWFg6NjQwNzINCkNvbnRlbnQtVHlwZTogdGV4dC94bWw7IGNoYXJzZXQ9dXRmLTgNClVzZXItQWdlbnQ6IEFWUiBDb250cm9sDQpDb25uZWN0aW9uOiBjbG9zZQ0KDQo8P3htbCB2ZXJzaW9uPScxLjAnIGVuY29kaW5nPSd1dGYtOCc/Pgo8WUFNQUhBX0FWIGNtZD0iR0VUIj48TWFpbl9ab25lPjxCYXNpY19TdGF0dXM+R2V0UGFyYW08L0Jhc2ljX1N0YXR1cz48L01haW5fWm9uZT48L1lBTUFIQV9BVj4=",
+          "text": "POST /YamahaRemoteControl/ctrl HTTP/1.1\r\nAccept-Encoding: identity\r\nContent-Length: 132\r\nHost: IPXXXXXXX:64072\r\nContent-Type: text/xml; charset=utf-8\r\nUser-Agent: AVR Control\r\nConnection: close\r\n\r\n<?xml version='1.0' encoding='utf-8'?>\n<YAMAHA_AV cmd=\"GET\"><Main_Zone><Basic_Status>GetParam</Basic_Status></Main_Zone></YAMAHA_AV>"
+        },
+        {
+          "dir": "rx",
+          "t": 0.004526,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjMgR01UDQpDb250ZW50LUxlbmd0aDogMzc2DQpDb250ZW50LVR5cGU6IHRleHQveG1sDQoNCjxZQU1BSEFfQVYgUkM9IjAiPjxNYWluX1pvbmU+PEJhc2ljX1N0YXR1cz48UG93ZXJfQ29udHJvbD48UG93ZXI+T248L1Bvd2VyPjwvUG93ZXJfQ29udHJvbD48Vm9sdW1lPjxMdmw+PFZhbD4tNDU1PC9WYWw+PEV4cD4xPC9FeHA+PFVuaXQ+ZEI8L1VuaXQ+PC9Mdmw+PE11dGU+T2ZmPC9NdXRlPjwvVm9sdW1lPjxTdXJyb3VuZD48UHJvZ3JhbV9TZWw+PEN1cnJlbnQ+PFN0cmFpZ2h0Pk9mZjwvU3RyYWlnaHQ+PFNvdW5kX1Byb2dyYW0+SGFsbCBpbiBNdW5pY2g8L1NvdW5kX1Byb2dyYW0+PEVuaGFuY2VyPk9mZjwvRW5oYW5jZXI+PC9DdXJyZW50PjwvUHJvZ3JhbV9TZWw+PC9TdXJyb3VuZD48L0Jhc2ljX1N0YXR1cz48L01haW5fWm9uZT48L1lBTUFIQV9BVj4=",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:23 GMT\r\nContent-Length: 376\r\nContent-Type: text/xml\r\n\r\n<YAMAHA_AV RC=\"0\"><Main_Zone><Basic_Status><Power_Control><Power>On</Power></Power_Control><Volume><Lvl><Val>-455</Val><Exp>1</Exp><Unit>dB</Unit></Lvl><Mute>Off</Mute></Volume><Surround><Program_Sel><Current><Straight>Off</Straight><Sound_Program>Hall in Munich</Sound_Program><Enhancer>Off</Enhancer></Current></Program_Sel></Surround></Basic_Status></Main_Zone></YAMAHA_AV>"
+        }
+      ]
+    },
+    {
+      "port": 64071,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.00553,
+          "data_b64": "UE9TVCAvWWFtYWhhUmVtb3RlQ29udHJvbC9jdHJsIEhUVFAvMS4xDQpBY2NlcHQtRW5jb2Rpbmc6IGlkZW50aXR5DQpDb250ZW50LUxlbmd0aDogMTMyDQpIb3N0OiBJUFhYWFhYWFg6NjQwNzINCkNvbnRlbnQtVHlwZTogdGV4dC94bWw7IGNoYXJzZXQ9dXRmLTgNClVzZXItQWdlbnQ6IEFWUiBDb250cm9sDQpDb25uZWN0aW9uOiBjbG9zZQ0KDQo8P3htbCB2ZXJzaW9uPScxLjAnIGVuY29kaW5nPSd1dGYtOCc/Pgo8WUFNQUhBX0FWIGNtZD0iR0VUIj48TWFpbl9ab25lPjxCYXNpY19TdGF0dXM+R2V0UGFyYW08L0Jhc2ljX1N0YXR1cz48L01haW5fWm9uZT48L1lBTUFIQV9BVj4=",
+          "text": "POST /YamahaRemoteControl/ctrl HTTP/1.1\r\nAccept-Encoding: identity\r\nContent-Length: 132\r\nHost: IPXXXXXXX:64072\r\nContent-Type: text/xml; charset=utf-8\r\nUser-Agent: AVR Control\r\nConnection: close\r\n\r\n<?xml version='1.0' encoding='utf-8'?>\n<YAMAHA_AV cmd=\"GET\"><Main_Zone><Basic_Status>GetParam</Basic_Status></Main_Zone></YAMAHA_AV>"
+        },
+        {
+          "dir": "rx",
+          "t": 0.005815,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjMgR01UDQpDb250ZW50LUxlbmd0aDogMzc2DQpDb250ZW50LVR5cGU6IHRleHQveG1sDQoNCjxZQU1BSEFfQVYgUkM9IjAiPjxNYWluX1pvbmU+PEJhc2ljX1N0YXR1cz48UG93ZXJfQ29udHJvbD48UG93ZXI+T248L1Bvd2VyPjwvUG93ZXJfQ29udHJvbD48Vm9sdW1lPjxMdmw+PFZhbD4tNDU1PC9WYWw+PEV4cD4xPC9FeHA+PFVuaXQ+ZEI8L1VuaXQ+PC9Mdmw+PE11dGU+T2ZmPC9NdXRlPjwvVm9sdW1lPjxTdXJyb3VuZD48UHJvZ3JhbV9TZWw+PEN1cnJlbnQ+PFN0cmFpZ2h0Pk9mZjwvU3RyYWlnaHQ+PFNvdW5kX1Byb2dyYW0+SGFsbCBpbiBNdW5pY2g8L1NvdW5kX1Byb2dyYW0+PEVuaGFuY2VyPk9mZjwvRW5oYW5jZXI+PC9DdXJyZW50PjwvUHJvZ3JhbV9TZWw+PC9TdXJyb3VuZD48L0Jhc2ljX1N0YXR1cz48L01haW5fWm9uZT48L1lBTUFIQV9BVj4=",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:23 GMT\r\nContent-Length: 376\r\nContent-Type: text/xml\r\n\r\n<YAMAHA_AV RC=\"0\"><Main_Zone><Basic_Status><Power_Control><Power>On</Power></Power_Control><Volume><Lvl><Val>-455</Val><Exp>1</Exp><Unit>dB</Unit></Lvl><Mute>Off</Mute></Volume><Surround><Program_Sel><Current><Straight>Off</Straight><Sound_Program>Hall in Munich</Sound_Program><Enhancer>Off</Enhancer></Current></Program_Sel></Surround></Basic_Status></Main_Zone></YAMAHA_AV>"
+        }
+      ]
+    },
+    {
+      "port": 64071,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.026662,
+          "data_b64": "UE9TVCAvWWFtYWhhUmVtb3RlQ29udHJvbC9jdHJsIEhUVFAvMS4xDQpBY2NlcHQtRW5jb2Rpbmc6IGlkZW50aXR5DQpDb250ZW50LUxlbmd0aDogMTMyDQpIb3N0OiBJUFhYWFhYWFg6NjQwNzINCkNvbnRlbnQtVHlwZTogdGV4dC94bWw7IGNoYXJzZXQ9dXRmLTgNClVzZXItQWdlbnQ6IEFWUiBDb250cm9sDQpDb25uZWN0aW9uOiBjbG9zZQ0KDQo=",
+          "text": "POST /YamahaRemoteControl/ctrl HTTP/1.1\r\nAccept-Encoding: identity\r\nContent-Length: 132\r\nHost: IPXXXXXXX:64072\r\nContent-Type: text/xml; charset=utf-8\r\nUser-Agent: AVR Control\r\nConnection: close\r\n\r\n"
+        },
+        {
+          "dir": "tx",
+          "t": 0.02704,
+          "data_b64": "PD94bWwgdmVyc2lvbj0nMS4wJyBlbmNvZGluZz0ndXRmLTgnPz4KPFlBTUFIQV9BViBjbWQ9IkdFVCI+PE1haW5fWm9uZT48QmFzaWNfU3RhdHVzPkdldFBhcmFtPC9CYXNpY19TdGF0dXM+PC9NYWluX1pvbmU+PC9ZQU1BSEFfQVY+",
+          "text": "<?xml version='1.0' encoding='utf-8'?>\n<YAMAHA_AV cmd=\"GET\"><Main_Zone><Basic_Status>GetParam</Basic_Status></Main_Zone></YAMAHA_AV>"
+        },
+        {
+          "dir": "rx",
+          "t": 0.027707,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjMgR01UDQpDb250ZW50LUxlbmd0aDogMzc2DQpDb250ZW50LVR5cGU6IHRleHQveG1sDQoNCjxZQU1BSEFfQVYgUkM9IjAiPjxNYWluX1pvbmU+PEJhc2ljX1N0YXR1cz48UG93ZXJfQ29udHJvbD48UG93ZXI+T248L1Bvd2VyPjwvUG93ZXJfQ29udHJvbD48Vm9sdW1lPjxMdmw+PFZhbD4tNDU1PC9WYWw+PEV4cD4xPC9FeHA+PFVuaXQ+ZEI8L1VuaXQ+PC9Mdmw+PE11dGU+T2ZmPC9NdXRlPjwvVm9sdW1lPjxTdXJyb3VuZD48UHJvZ3JhbV9TZWw+PEN1cnJlbnQ+PFN0cmFpZ2h0Pk9mZjwvU3RyYWlnaHQ+PFNvdW5kX1Byb2dyYW0+SGFsbCBpbiBNdW5pY2g8L1NvdW5kX1Byb2dyYW0+PEVuaGFuY2VyPk9mZjwvRW5oYW5jZXI+PC9DdXJyZW50PjwvUHJvZ3JhbV9TZWw+PC9TdXJyb3VuZD48L0Jhc2ljX1N0YXR1cz48L01haW5fWm9uZT48L1lBTUFIQV9BVj4=",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:23 GMT\r\nContent-Length: 376\r\nContent-Type: text/xml\r\n\r\n<YAMAHA_AV RC=\"0\"><Main_Zone><Basic_Status><Power_Control><Power>On</Power></Power_Control><Volume><Lvl><Val>-455</Val><Exp>1</Exp><Unit>dB</Unit></Lvl><Mute>Off</Mute></Volume><Surround><Program_Sel><Current><Straight>Off</Straight><Sound_Program>Hall in Munich</Sound_Program><Enhancer>Off</Enhancer></Current></Program_Sel></Surround></Basic_Status></Main_Zone></YAMAHA_AV>"
+        }
+      ]
+    },
+    {
+      "port": 64071,
+      "exchanges": [
+        {
+          "dir": "tx",
+          "t": 0.028957,
+          "data_b64": "UE9TVCAvWWFtYWhhUmVtb3RlQ29udHJvbC9jdHJsIEhUVFAvMS4xDQpBY2NlcHQtRW5jb2Rpbmc6IGlkZW50aXR5DQpDb250ZW50LUxlbmd0aDogMTMyDQpIb3N0OiBJUFhYWFhYWFg6NjQwNzINCkNvbnRlbnQtVHlwZTogdGV4dC94bWw7IGNoYXJzZXQ9dXRmLTgNClVzZXItQWdlbnQ6IEFWUiBDb250cm9sDQpDb25uZWN0aW9uOiBjbG9zZQ0KDQo8P3htbCB2ZXJzaW9uPScxLjAnIGVuY29kaW5nPSd1dGYtOCc/Pgo8WUFNQUhBX0FWIGNtZD0iR0VUIj48TWFpbl9ab25lPjxCYXNpY19TdGF0dXM+R2V0UGFyYW08L0Jhc2ljX1N0YXR1cz48L01haW5fWm9uZT48L1lBTUFIQV9BVj4=",
+          "text": "POST /YamahaRemoteControl/ctrl HTTP/1.1\r\nAccept-Encoding: identity\r\nContent-Length: 132\r\nHost: IPXXXXXXX:64072\r\nContent-Type: text/xml; charset=utf-8\r\nUser-Agent: AVR Control\r\nConnection: close\r\n\r\n<?xml version='1.0' encoding='utf-8'?>\n<YAMAHA_AV cmd=\"GET\"><Main_Zone><Basic_Status>GetParam</Basic_Status></Main_Zone></YAMAHA_AV>"
+        },
+        {
+          "dir": "rx",
+          "t": 0.029569,
+          "data_b64": "SFRUUC8xLjAgMjAwIE9LDQpTZXJ2ZXI6IEJhc2VIVFRQIFB5dGhvbi8zLjE1LjINCkRhdGU6IFNhdCwgMzEgT2N0IDIwMjYgMTc6MjM6MjMgR01UDQpDb250ZW50LUxlbmd0aDogMzc2DQpDb250ZW50LVR5cGU6IHRleHQveG1sDQoNCjxZQU1BSEFfQVYgUkM9IjAiPjxNYWluX1pvbmU+PEJhc2ljX1N0YXR1cz48UG93ZXJfQ29udHJvbD48UG93ZXI+T248L1Bvd2VyPjwvUG93ZXJfQ29udHJvbD48Vm9sdW1lPjxMdmw+PFZhbD4tNDU1PC9WYWw+PEV4cD4xPC9FeHA+PFVuaXQ+ZEI8L1VuaXQ+PC9Mdmw+PE11dGU+T2ZmPC9NdXRlPjwvVm9sdW1lPjxTdXJyb3VuZD48UHJvZ3JhbV9TZWw+PEN1cnJlbnQ+PFN0cmFpZ2h0Pk9mZjwvU3RyYWlnaHQ+PFNvdW5kX1Byb2dyYW0+SGFsbCBpbiBNdW5pY2g8L1NvdW5kX1Byb2dyYW0+PEVuaGFuY2VyPk9mZjwvRW5oYW5jZXI+PC9DdXJyZW50PjwvUHJvZ3JhbV9TZWw+PC9TdXJyb3VuZD48L0Jhc2ljX1N0YXR1cz48L01haW5fWm9uZT48L1lBTUFIQV9BVj4=",
+          "text": "HTTP/1.0 200 OK\r\nServer: BaseHTTP Python/3.15.2\r\nDate: Sat, 31 Oct 2026 17:23:23 GMT\r\nContent-Length: 376\r\nContent-Type: text/xml\r\n\r\n<YAMAHA_AV RC=\"0\"><Main_Zone><Basic_Status><Power_Control><Power>On</Power></Power_Control><Volume><Lvl><Val>-455</Val><Exp>1</Exp><Unit>dB</Unit></Lvl><Mute>Off</Mute></Volume><Surround><Program_Sel><Current><Straight>Off</Straight><Sound_Program>Hall in Munich</Sound_Program><Enhancer>Off</Enhancer></Current></Program_Sel></Surround></Basic_Status></Main_Zone></YAMAHA_AV>"
+        }
+      ]
+    }
+  ],
+  "notes": [
+    "The driver connects to RECEIVER_IP through the proxy; an HTTP driver would therefore send that address in its Host header."
+  ],
+  "raw_discovery": {}
+}

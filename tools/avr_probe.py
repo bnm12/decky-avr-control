@@ -24,6 +24,10 @@ import socket
 import struct
 import sys
 import time
+import urllib.parse
+import urllib.request
+import xml.etree.ElementTree as ET
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -593,11 +597,28 @@ async def _exercise_writes(driver, status: dict, power: bool) -> list[str]:
 
 
 def _default_port(driver_class, found: Found) -> int | None:
+    if (
+        found.driver == "denon"
+        and str(found.config.get("transport", "")).lower() == "http"
+        and found.config.get("http_port") is not None
+    ):
+        try:
+            return int(found.config["http_port"])
+        except (TypeError, ValueError):
+            return None
     configured = found.config.get("port")
     if configured is not None:
         try:
             return int(configured)
         except (TypeError, ValueError):
+            return None
+    if found.driver == "upnp":
+        try:
+            location = urllib.parse.urlsplit(str(found.config.get("location", "")))
+            if location.port is not None:
+                return location.port
+            return 443 if location.scheme.lower() == "https" else 80
+        except ValueError:
             return None
     for attr in ("EISCP_PORT", "DENON_PORT", "DEFAULT_PORT"):
         value = getattr(sys.modules[driver_class.__module__], attr, None)
@@ -605,6 +626,83 @@ def _default_port(driver_class, found: Found) -> int | None:
             return int(value)
     ports = getattr(sys.modules[driver_class.__module__], "TELNET_PORTS", ())
     return int(ports[0]) if ports else None
+
+
+def _xml_direct_text(element: ET.Element, name: str) -> str:
+    for child in element:
+        if child.tag.rsplit("}", 1)[-1] == name:
+            return (child.text or "").strip()
+    return ""
+
+
+def _upnp_control_endpoint(found: Found) -> tuple[str, int] | None:
+    location = str(found.config.get("location", "")).strip()
+    if not location:
+        return None
+    try:
+        location_parts = urllib.parse.urlsplit(location)
+        location_host = location_parts.hostname or found.host
+        location_port = location_parts.port or (
+            443 if location_parts.scheme.lower() == "https" else 80
+        )
+    except ValueError:
+        return None
+    try:
+        request = urllib.request.Request(
+            location, headers={"User-Agent": "AVR Control", "Accept": "text/xml"}
+        )
+        with urllib.request.urlopen(request, timeout=2.0) as response:
+            root = ET.fromstring(response.read())
+        services: list[tuple[ET.Element, ET.Element]] = []
+        for device in root.iter():
+            if device.tag.rsplit("}", 1)[-1] != "device":
+                continue
+            for child in device:
+                if child.tag.rsplit("}", 1)[-1] != "serviceList":
+                    continue
+                for service in child:
+                    if (
+                        service.tag.rsplit("}", 1)[-1] == "service"
+                        and _xml_direct_text(service, "serviceType")
+                        == "urn:schemas-upnp-org:service:RenderingControl:1"
+                        and _xml_direct_text(service, "controlURL")
+                    ):
+                        services.append((service, device))
+        selected_udn = str(found.config.get("udn", "")).strip()
+        selected = next(
+            (
+                service
+                for service, device in services
+                if not selected_udn
+                or _xml_direct_text(device, "UDN") == selected_udn
+            ),
+            None,
+        )
+        if selected is not None:
+            base = _xml_direct_text(root, "URLBase") or location
+            control_url = urllib.parse.urljoin(
+                base, _xml_direct_text(selected, "controlURL")
+            )
+            parts = urllib.parse.urlsplit(control_url)
+            host = parts.hostname or location_host
+            port = parts.port or (443 if parts.scheme.lower() == "https" else 80)
+            return host, port
+        return location_host, location_port
+    except Exception:
+        return location_host, location_port
+
+
+def _upnp_proxy_location(location: str, proxy_port: int) -> str:
+    parts = urllib.parse.urlsplit(location)
+    return urllib.parse.urlunsplit(
+        (
+            parts.scheme or "http",
+            f"127.0.0.1:{proxy_port}",
+            parts.path,
+            parts.query,
+            parts.fragment,
+        )
+    )
 
 
 async def capture_found(
@@ -615,6 +713,7 @@ async def capture_found(
     power: bool = False,
     include_discovery: bool = False,
     source: str = "contributor-hardware",
+    proxy_started: Callable[[int], None] | None = None,
 ) -> dict:
     """Capture a receiver already resolved to a driver, primarily for tests too."""
     driver_class = get_driver_class(found.driver)
@@ -624,15 +723,44 @@ async def capture_found(
         raise ValueError(
             "Home Assistant is excluded from capture because its token is secret."
         )
+    upnp_endpoint = (
+        await asyncio.to_thread(_upnp_control_endpoint, found)
+        if found.driver == "upnp"
+        else None
+    )
     target_port = _default_port(driver_class, found)
+    if (
+        found.driver == "upnp"
+        and found.config.get("port") is None
+        and upnp_endpoint is not None
+    ):
+        target_port = upnp_endpoint[1]
     if target_port is None:
         raise ValueError("The selected driver did not report a TCP port.")
 
     discovery = await raw_discovery(0.75) if include_discovery else {}
-    recorder = RecordingTcpProxy(found.host, target_port)
+    target_host = (
+        upnp_endpoint[0]
+        if found.driver == "upnp" and upnp_endpoint is not None
+        else found.host
+    )
+    recorder = RecordingTcpProxy(target_host, target_port)
     proxy_port = await recorder.start()
+    if proxy_started is not None:
+        proxy_started(proxy_port)
     config = dict(found.config)
     config.update({"host": "127.0.0.1", "port": proxy_port})
+    if found.driver == "upnp":
+        scheme = urllib.parse.urlsplit(str(config["location"])).scheme or "http"
+        config["location"] = _upnp_proxy_location(
+            str(config["location"]), proxy_port
+        )
+        config["service_proxy_base"] = f"{scheme}://127.0.0.1:{proxy_port}/"
+    if (
+        found.driver == "denon"
+        and str(config.get("transport", "")).lower() == "http"
+    ):
+        config["http_port"] = proxy_port
     driver = driver_class(config)
     readout: dict = {}
     write_errors: list[str] = []

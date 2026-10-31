@@ -5,7 +5,7 @@
     "name": "avr_probe",
     "version": "1.0"
   },
-  "timestamp": "2026-10-31T14:28:57.663365+00:00",
+  "timestamp": "2026-10-31T17:23:23.310034+00:00",
   "runtime": {
     "python": "3.15.2",
     "os": "Windows-11-10.0.22631-SP0"
@@ -104,295 +104,295 @@
   "proxy_errors": [],
   "connections": [
     {
-      "port": 51458,
+      "port": 64040,
       "exchanges": [
         {
           "dir": "tx",
-          "t": 0.001214,
+          "t": 0.000794,
           "data_b64": "UFc/DQ==",
           "text": "PW?\r"
         },
         {
           "dir": "rx",
-          "t": 0.001275,
+          "t": 0.000819,
           "data_b64": "U0lTQVQvQ0JMDQ==",
           "text": "SISAT/CBL\r"
         },
         {
           "dir": "rx",
-          "t": 0.00145,
+          "t": 0.000893,
           "data_b64": "U0lTQVQvQ0JMDVBXT04N",
           "text": "SISAT/CBL\rPWON\r"
         },
         {
           "dir": "tx",
-          "t": 0.06624,
+          "t": 0.053198,
           "data_b64": "TVY/DQ==",
           "text": "MV?\r"
         },
         {
           "dir": "rx",
-          "t": 0.066343,
+          "t": 0.053312,
           "data_b64": "U0lTQVQvQ0JMDU1WNDU1DU1WTUFYIDY5NQ0=",
           "text": "SISAT/CBL\rMV455\rMVMAX 695\r"
         },
         {
           "dir": "tx",
-          "t": 0.128317,
+          "t": 0.115439,
           "data_b64": "TVU/DQ==",
           "text": "MU?\r"
         },
         {
           "dir": "rx",
-          "t": 0.12844,
+          "t": 0.115557,
           "data_b64": "U0lTQVQvQ0JMDU1VT0ZGDQ==",
           "text": "SISAT/CBL\rMUOFF\r"
         },
         {
           "dir": "tx",
-          "t": 0.191134,
+          "t": 0.176623,
           "data_b64": "TVM/DQ==",
           "text": "MS?\r"
         },
         {
           "dir": "rx",
-          "t": 0.191219,
+          "t": 0.176707,
           "data_b64": "U0lTQVQvQ0JMDU1TU1RFUkVPDQ==",
           "text": "SISAT/CBL\rMSSTEREO\r"
         }
       ]
     },
     {
-      "port": 51458,
+      "port": 64040,
       "exchanges": [
         {
           "dir": "tx",
-          "t": 0.192174,
+          "t": 0.178041,
           "data_b64": "UFc/DQ==",
           "text": "PW?\r"
         },
         {
           "dir": "rx",
-          "t": 0.192209,
+          "t": 0.17808,
           "data_b64": "U0lTQVQvQ0JMDQ==",
           "text": "SISAT/CBL\r"
         },
         {
           "dir": "rx",
-          "t": 0.192328,
+          "t": 0.178202,
           "data_b64": "U0lTQVQvQ0JMDVBXT04N",
           "text": "SISAT/CBL\rPWON\r"
         },
         {
           "dir": "tx",
-          "t": 0.254592,
+          "t": 0.237961,
           "data_b64": "TVY/DQ==",
           "text": "MV?\r"
         },
         {
           "dir": "rx",
-          "t": 0.254727,
+          "t": 0.238055,
           "data_b64": "U0lTQVQvQ0JMDU1WNDU1DU1WTUFYIDY5NQ0=",
           "text": "SISAT/CBL\rMV455\rMVMAX 695\r"
         },
         {
           "dir": "tx",
-          "t": 0.316602,
+          "t": 0.300783,
           "data_b64": "TVU/DQ==",
           "text": "MU?\r"
         },
         {
           "dir": "rx",
-          "t": 0.316708,
+          "t": 0.300888,
           "data_b64": "U0lTQVQvQ0JMDU1VT0ZGDQ==",
           "text": "SISAT/CBL\rMUOFF\r"
         },
         {
           "dir": "tx",
-          "t": 0.379147,
+          "t": 0.362361,
           "data_b64": "TVM/DQ==",
           "text": "MS?\r"
         },
         {
           "dir": "rx",
-          "t": 0.379244,
+          "t": 0.362464,
           "data_b64": "U0lTQVQvQ0JMDU1TU1RFUkVPDQ==",
           "text": "SISAT/CBL\rMSSTEREO\r"
         }
       ]
     },
     {
-      "port": 51458,
+      "port": 64040,
       "exchanges": [
         {
           "dir": "tx",
-          "t": 0.380097,
+          "t": 0.363479,
           "data_b64": "UFc/DQ==",
           "text": "PW?\r"
         },
         {
           "dir": "rx",
-          "t": 0.380133,
+          "t": 0.363517,
           "data_b64": "U0lTQVQvQ0JMDQ==",
           "text": "SISAT/CBL\r"
         },
         {
           "dir": "rx",
-          "t": 0.380251,
+          "t": 0.363639,
           "data_b64": "U0lTQVQvQ0JMDVBXT04N",
           "text": "SISAT/CBL\rPWON\r"
         },
         {
           "dir": "tx",
-          "t": 0.441421,
+          "t": 0.424622,
           "data_b64": "TVY/DQ==",
           "text": "MV?\r"
         },
         {
           "dir": "rx",
-          "t": 0.441513,
+          "t": 0.424739,
           "data_b64": "U0lTQVQvQ0JMDU1WNDU1DU1WTUFYIDY5NQ0=",
           "text": "SISAT/CBL\rMV455\rMVMAX 695\r"
         },
         {
           "dir": "tx",
-          "t": 0.503307,
+          "t": 0.486632,
           "data_b64": "TVU/DQ==",
           "text": "MU?\r"
         },
         {
           "dir": "rx",
-          "t": 0.503395,
+          "t": 0.486721,
           "data_b64": "U0lTQVQvQ0JMDU1VT0ZGDQ==",
           "text": "SISAT/CBL\rMUOFF\r"
         },
         {
           "dir": "tx",
-          "t": 0.565981,
+          "t": 0.550361,
           "data_b64": "TVM/DQ==",
           "text": "MS?\r"
         },
         {
           "dir": "rx",
-          "t": 0.566559,
+          "t": 0.550451,
           "data_b64": "U0lTQVQvQ0JMDU1TU1RFUkVPDQ==",
           "text": "SISAT/CBL\rMSSTEREO\r"
         }
       ]
     },
     {
-      "port": 51458,
+      "port": 64040,
       "exchanges": [
         {
           "dir": "tx",
-          "t": 0.567559,
+          "t": 0.551426,
           "data_b64": "UFc/DQ==",
           "text": "PW?\r"
         },
         {
           "dir": "rx",
-          "t": 0.567595,
+          "t": 0.551464,
           "data_b64": "U0lTQVQvQ0JMDQ==",
           "text": "SISAT/CBL\r"
         },
         {
           "dir": "rx",
-          "t": 0.567713,
+          "t": 0.551585,
           "data_b64": "U0lTQVQvQ0JMDVBXT04N",
           "text": "SISAT/CBL\rPWON\r"
         },
         {
           "dir": "tx",
-          "t": 0.62785,
+          "t": 0.612425,
           "data_b64": "TVY/DQ==",
           "text": "MV?\r"
         },
         {
           "dir": "rx",
-          "t": 0.627942,
+          "t": 0.612516,
           "data_b64": "U0lTQVQvQ0JMDU1WNDU1DU1WTUFYIDY5NQ0=",
           "text": "SISAT/CBL\rMV455\rMVMAX 695\r"
         },
         {
           "dir": "tx",
-          "t": 0.690708,
+          "t": 0.672965,
           "data_b64": "TVU/DQ==",
           "text": "MU?\r"
         },
         {
           "dir": "rx",
-          "t": 0.690794,
+          "t": 0.673048,
           "data_b64": "U0lTQVQvQ0JMDU1VT0ZGDQ==",
           "text": "SISAT/CBL\rMUOFF\r"
         },
         {
           "dir": "tx",
-          "t": 0.75381,
+          "t": 0.733696,
           "data_b64": "TVM/DQ==",
           "text": "MS?\r"
         },
         {
           "dir": "rx",
-          "t": 0.753894,
+          "t": 0.733791,
           "data_b64": "U0lTQVQvQ0JMDU1TU1RFUkVPDQ==",
           "text": "SISAT/CBL\rMSSTEREO\r"
         }
       ]
     },
     {
-      "port": 51458,
+      "port": 64040,
       "exchanges": [
         {
           "dir": "tx",
-          "t": 0.754827,
+          "t": 0.734747,
           "data_b64": "UFc/DQ==",
           "text": "PW?\r"
         },
         {
           "dir": "rx",
-          "t": 0.754863,
+          "t": 0.734783,
           "data_b64": "U0lTQVQvQ0JMDQ==",
           "text": "SISAT/CBL\r"
         },
         {
           "dir": "rx",
-          "t": 0.754978,
+          "t": 0.734903,
           "data_b64": "U0lTQVQvQ0JMDVBXT04N",
           "text": "SISAT/CBL\rPWON\r"
         },
         {
           "dir": "tx",
-          "t": 0.817266,
+          "t": 0.796189,
           "data_b64": "TVY/DQ==",
           "text": "MV?\r"
         },
         {
           "dir": "rx",
-          "t": 0.817364,
+          "t": 0.796318,
           "data_b64": "U0lTQVQvQ0JMDU1WNDU1DU1WTUFYIDY5NQ0=",
           "text": "SISAT/CBL\rMV455\rMVMAX 695\r"
         },
         {
           "dir": "tx",
-          "t": 0.880457,
+          "t": 0.85771,
           "data_b64": "TVU/DQ==",
           "text": "MU?\r"
         },
         {
           "dir": "rx",
-          "t": 0.88055,
+          "t": 0.857799,
           "data_b64": "U0lTQVQvQ0JMDU1VT0ZGDQ==",
           "text": "SISAT/CBL\rMUOFF\r"
         },
         {
           "dir": "tx",
-          "t": 0.942294,
+          "t": 0.920496,
           "data_b64": "TVM/DQ==",
           "text": "MS?\r"
         },
         {
           "dir": "rx",
-          "t": 0.942432,
+          "t": 0.920576,
           "data_b64": "U0lTQVQvQ0JMDU1TU1RFUkVPDQ==",
           "text": "SISAT/CBL\rMSSTEREO\r"
         }
