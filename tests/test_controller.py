@@ -312,6 +312,37 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.store.load()["receiver"]["driver"], "memory")
         self.assertEqual(self.store.load()["receiver"]["config"]["port"], 23)
 
+    async def test_configure_keeps_omitted_saved_fields_for_same_driver(self):
+        self.save_settings()
+        data = self.store.load()
+        data["receiver"]["config"].update(
+            {"host": "old-host", "token": "saved-secret", "port": 1234}
+        )
+        self.store.save(data)
+
+        result = await self.controller.configure("memory", {"host": "new-host"})
+
+        self.assertTrue(result["ok"])
+        config = self.store.load()["receiver"]["config"]
+        self.assertEqual(config, {"host": "new-host", "token": "saved-secret", "port": 1234})
+
+    async def test_list_games_includes_profile_driver(self):
+        self.save_settings()
+        data = self.store.load()
+        data["games"] = {
+            "42": {
+                "name": "Example",
+                "driver": "memory",
+                "volume": 100,
+                "mode": None,
+            }
+        }
+        self.store.save(data)
+
+        profiles = await self.controller.list_games()
+
+        self.assertEqual(profiles[0]["driver"], "memory")
+
 
 if __name__ == "__main__":
     unittest.main()

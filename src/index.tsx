@@ -18,34 +18,60 @@ type GameProfile = {
   volume: number | null;
   mode: string | null;
   mode_name?: string | null;
+  driver?: string;
 };
 type ModeOption = { code: string; name: string };
+type VolumeScale = {
+  min: number;
+  max: number;
+  unit: "dB" | "%";
+  zero: number;
+  steps_per_unit: number;
+  default_cap: number;
+};
 type State = {
   ok: boolean;
   volume?: number;
   muted?: boolean;
-  max?: number; // effective slider max (includes late-night cap)
-  cap?: number; // normal cap
+  power?: boolean | null;
+  max?: number;
+  cap?: number;
   late?: boolean;
   late_cap?: number;
-  zero?: number;
-  mode?: string | null; // display name
+  mode?: string | null;
   mode_code?: string | null;
   modes?: ModeOption[];
   game?: Game | null;
+  driver?: string;
+  driver_label?: string;
+  scale?: VolumeScale;
+  capabilities?: string[];
   error?: string;
 };
-type Receiver = { ip: string; model: string; id: string };
+type Receiver = {
+  ip: string;
+  model: string;
+  id: string;
+  label: string;
+  driver: string;
+};
+type ConfigField = {
+  key: string;
+  label: string;
+  secret: boolean;
+  required: boolean;
+};
+type DriverOption = { key: string; label: string; fields: ConfigField[] };
 type Result = { ok: boolean; error?: string };
 
 const getState = callable<[], State>("get_state");
 const setVolume = callable<[number], State>("set_volume");
-const setMute = callable<[boolean], State>("set_mute");
+const setMute = callable<[boolean], Result>("set_mute");
 const getHost = callable<[], string>("get_host");
-const setHost = callable<[string], void>("set_host");
 const setMax = callable<[number], void>("set_max");
 const setLateMax = callable<[number], void>("set_late_max");
 const setMode = callable<[string], Result>("set_mode");
+const setPower = callable<[boolean], Result>("set_power");
 const setLateNight = callable<[boolean], Result>("set_late_night");
 const discover = callable<[], Receiver[]>("discover");
 const selectReceiver = callable<[string, string], void>("select_receiver");
@@ -55,17 +81,31 @@ const gameStopped = callable<[number], void>("game_stopped");
 const setGameRemember = callable<[string, boolean], Result>("set_game_remember");
 const listGames = callable<[], GameProfile[]>("list_games");
 const forgetGame = callable<[number], void>("forget_game");
+const listDrivers = callable<[], DriverOption[]>("list_drivers");
+const configure = callable<[string, Record<string, string>], Result>("configure");
 
-// 0.5 dB per step; `zero` is the raw value that equals 0 dB.
-const toDb = (v: number, zero: number) => {
-  const d = (v - zero) / 2;
-  return `${d > 0 ? "+" : ""}${d.toFixed(1)} dB`;
+const displayValue = (raw: number, scale: VolumeScale): number =>
+  (raw - scale.zero) / scale.steps_per_unit;
+
+const displayText = (raw: number, scale: VolumeScale): string => {
+  const value = displayValue(raw, scale);
+  const rounded = Number(value.toFixed(4));
+  const number = scale.unit === "dB" && rounded > 0 ? `+${rounded}` : `${rounded}`;
+  return `${number} ${scale.unit}`;
 };
-// Caps are entered in dB; the backend stores raw receiver units.
-const fmtDb = (raw: number, zero: number) => String((raw - zero) / 2);
-const dbToRaw = (text: string, zero: number): number | null => {
-  const d = parseFloat(text.replace(",", ".")); // accept 1,5 as well as 1.5
-  return Number.isNaN(d) ? null : Math.round(zero + d * 2);
+
+const displayInput = (raw: number, scale: VolumeScale): string =>
+  `${Number(displayValue(raw, scale).toFixed(4))}`;
+
+const inputToRaw = (text: string, scale: VolumeScale): number | null => {
+  const normalized = text.trim().replace(",", ".");
+  if (!normalized || !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(normalized)) return null;
+  const value = Number(normalized);
+  if (!Number.isFinite(value)) return null;
+  return Math.max(
+    scale.min,
+    Math.min(scale.max, Math.round(scale.zero + value * scale.steps_per_unit)),
+  );
 };
 
 const gameName = (appid: number): string => {
@@ -91,21 +131,26 @@ const syncRunningGame = async () => {
 function Content() {
   const [vol, setVol] = useState(0);
   const [max, setMaxState] = useState(100);
-  const [maxText, setMaxText] = useState("-32");
-  const [lateText, setLateText] = useState("-50");
-  const [zero, setZero] = useState(164);
+  const [maxText, setMaxText] = useState("");
+  const [lateText, setLateText] = useState("");
   const [muted, setMuted] = useState(false);
+  const [power, setPowerState] = useState<boolean | null>(null);
   const [lateOn, setLateOn] = useState(false);
   const [mode, setModeLabel] = useState<string | null>(null);
   const [modeCode, setModeCode] = useState<string | null>(null);
   const [modes, setModes] = useState<ModeOption[]>([]);
   const [game, setGame] = useState<Game | null>(null);
   const [profiles, setProfiles] = useState<GameProfile[]>([]);
+  const [receiverState, setReceiverState] = useState<State | null>(null);
   const [host, setHostState] = useState("");
+  const [drivers, setDrivers] = useState<DriverOption[]>([]);
+  const [selectedDriver, setSelectedDriver] = useState("auto");
+  const [manualConfig, setManualConfig] = useState<Record<string, string>>({});
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [found, setFound] = useState<Receiver[]>([]);
   const [searching, setSearching] = useState(false);
+  const [saving, setSaving] = useState(false);
   const timer = useRef<number | undefined>(undefined);
   const lastLocal = useRef(0); // time of the last change made in this panel
   const savedHost = useRef("");
@@ -115,22 +160,26 @@ function Content() {
     const r = await getState();
     if (!r.ok) {
       if (savedHost.current) setErr(r.error ?? "Unknown error");
+      setReceiverState(null);
       return;
     }
-    const z = r.zero ?? 164;
     setErr(null);
+    setReceiverState(r);
     setVol(r.volume ?? 0);
     setMuted(!!r.muted);
-    setMaxState(r.max ?? 100);
-    setZero(z);
+    setMaxState(r.max ?? r.scale?.max ?? 100);
+    setPowerState(r.power ?? null);
     setModeLabel(r.mode ?? null);
     setModeCode(r.mode_code ?? null);
     setModes(r.modes ?? []);
     setGame(r.game ?? null);
     setLateOn(!!r.late);
     if (full) {
-      setMaxText(fmtDb(r.cap ?? 100, z));
-      setLateText(fmtDb(r.late_cap ?? 64, z));
+      setSelectedDriver(r.driver ?? "auto");
+      if (r.scale) {
+        setMaxText(displayInput(r.cap ?? r.scale.default_cap, r.scale));
+        setLateText(displayInput(r.late_cap ?? r.scale.default_cap, r.scale));
+      }
       setProfiles(await listGames());
     }
   };
@@ -139,6 +188,8 @@ function Content() {
     await selectReceiver(r.ip, r.id);
     savedHost.current = r.ip;
     setHostState(r.ip);
+    setManualConfig({ host: r.ip });
+    setSelectedDriver(r.driver);
     setNote(`Using ${r.model} at ${r.ip}`);
     await refresh(true);
   };
@@ -163,13 +214,16 @@ function Content() {
     let stop = false;
     let t: number | undefined;
     (async () => {
-      const h = await getHost();
+      const [h, availableDrivers] = await Promise.all([getHost(), listDrivers()]);
+      if (stop) return;
       savedHost.current = h;
       setHostState(h);
+      setManualConfig({ host: h });
+      setDrivers(availableDrivers);
       await syncRunningGame();
       if (h) await refresh(true);
       else search(true); // first run: look for the receiver automatically
-      // Live sync: follow changes made with the remote or the Pioneer app.
+      // Live sync: follow changes made with the remote or the receiver app.
       const loop = async () => {
         if (stop) return;
         if (savedHost.current && Date.now() - lastLocal.current > 2000) {
@@ -182,6 +236,7 @@ function Content() {
     return () => {
       stop = true;
       window.clearTimeout(t);
+      window.clearTimeout(timer.current);
     };
   }, []);
 
@@ -208,57 +263,180 @@ function Content() {
     }, 150);
   };
 
+  const saveReceiver = async () => {
+    setSaving(true);
+    setErr(null);
+    const enteredCap = maxText;
+    const enteredLateCap = lateText;
+    const previousScale = receiverState?.scale;
+    const config: Record<string, string> = {};
+    let validationError: string | null = null;
+    if (selectedDriver === "auto") {
+      config.host = host.trim();
+    } else {
+      const driver = drivers.find((item) => item.key === selectedDriver);
+      for (const field of driver?.fields ?? []) {
+        const value = field.key === "host" ? host : manualConfig[field.key] ?? "";
+        const savedSecret =
+          field.secret && receiverState?.driver === selectedDriver;
+        if (field.required && !value.trim() && !savedSecret) {
+          validationError = `${field.label} is required.`;
+          break;
+        }
+        if (value !== "" || (!field.secret && field.required)) {
+          config[field.key] = value;
+        }
+      }
+      if (config.host) config.host = config.host.trim();
+    }
+    if (validationError) {
+      setErr(validationError);
+      setSaving(false);
+      return;
+    }
+    try {
+      const result = await configure(selectedDriver, config);
+      if (!result.ok) {
+        setErr(result.error ?? "Unknown error");
+        return;
+      }
+      savedHost.current = host.trim();
+      setNote("Receiver settings saved.");
+      const connected = await getState();
+      let capError: string | null = null;
+      let capNote: string | null = null;
+      if (
+        previousScale &&
+        connected.ok &&
+        connected.scale &&
+        connected.capabilities?.includes("volume") &&
+        connected.scale.unit === previousScale.unit
+      ) {
+        const cap = inputToRaw(enteredCap, connected.scale);
+        const lateCap = inputToRaw(enteredLateCap, connected.scale);
+        if (cap === null || lateCap === null) {
+          capError = `Enter valid volume caps in ${connected.scale.unit}.`;
+        } else {
+          await setMax(cap);
+          await setLateMax(lateCap);
+        }
+      } else if (
+        previousScale &&
+        connected.ok &&
+        connected.scale &&
+        connected.capabilities?.includes("volume") &&
+        connected.scale.unit !== previousScale.unit
+      ) {
+        capNote = `Receiver settings saved. Set volume caps in ${connected.scale.unit}.`;
+      }
+      await refresh(true);
+      if (capError) setErr(capError);
+      if (capNote) setNote(capNote);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const scale = receiverState?.scale;
+  const capabilities = receiverState?.capabilities ?? [];
+  const hasCapability = (capability: string) => capabilities.includes(capability);
+  const standby = hasCapability("power") && power === false;
+  const selectedFields =
+    selectedDriver === "auto"
+      ? []
+      : drivers.find((item) => item.key === selectedDriver)?.fields ?? [];
+
   return (
     <>
-      <PanelSection title="AVR Volume">
-        <PanelSectionRow>
-          <SliderField
-            label={`Volume (${toDb(vol, zero)})`}
-            value={vol}
-            min={0}
-            max={max}
-            step={1}
-            showValue={false}
-            onChange={onSlide}
-          />
-        </PanelSectionRow>
-        <PanelSectionRow>
-          <ToggleField
-            label="Mute"
-            checked={muted}
-            onChange={async (c: boolean) => {
-              lastLocal.current = Date.now();
-              setMuted(c);
-              const r = await setMute(c);
-              if (!r.ok) setErr(r.error ?? "Unknown error");
-            }}
-          />
-        </PanelSectionRow>
-        <PanelSectionRow>
-          <ToggleField
-            label="Late night mode"
-            description={
-              lateOn
-                ? `Volume capped at ${toDb(max, zero)}`
-                : `Lowers the volume and caps it at ${lateText} dB`
-            }
-            checked={lateOn}
-            onChange={async (c: boolean) => {
-              lastLocal.current = Date.now();
-              setLateOn(c);
-              const r = await setLateNight(c);
-              if (!r.ok) setErr(r.error ?? "Unknown error");
-              await refresh(false);
-            }}
-          />
-        </PanelSectionRow>
-        {modeCode && (
+      <PanelSection title="Receiver">
+        {receiverState?.driver_label && (
+          <PanelSectionRow>
+            <div>
+              {receiverState.driver_label}: {host || receiverState.driver_label}
+            </div>
+          </PanelSectionRow>
+        )}
+        {hasCapability("power") && (
+          <PanelSectionRow>
+            <ToggleField
+              label="Power"
+              checked={!!power}
+              onChange={async (on: boolean) => {
+                lastLocal.current = Date.now();
+                setPowerState(on);
+                const result = await setPower(on);
+                if (!result.ok) {
+                  setErr(result.error ?? "Unknown error");
+                  await refresh(false);
+                } else {
+                  setErr(null);
+                }
+              }}
+            />
+          </PanelSectionRow>
+        )}
+        {standby && (
+          <PanelSectionRow>
+            <div>Receiver is in standby</div>
+          </PanelSectionRow>
+        )}
+        {!standby && hasCapability("volume") && scale && (
+          <PanelSectionRow>
+            <SliderField
+              label={`Volume (${displayText(vol, scale)})`}
+              value={vol}
+              min={scale.min}
+              max={max}
+              step={1}
+              showValue={false}
+              onChange={onSlide}
+            />
+          </PanelSectionRow>
+        )}
+        {!standby && hasCapability("mute") && (
+          <PanelSectionRow>
+            <ToggleField
+              label="Mute"
+              checked={muted}
+              onChange={async (c: boolean) => {
+                lastLocal.current = Date.now();
+                setMuted(c);
+                const r = await setMute(c);
+                if (!r.ok) {
+                  setErr(r.error ?? "Unknown error");
+                  await refresh(false);
+                } else setErr(null);
+              }}
+            />
+          </PanelSectionRow>
+        )}
+        {!standby && hasCapability("volume") && scale && (
+          <PanelSectionRow>
+            <ToggleField
+              label="Late night mode"
+              description={
+                lateOn
+                  ? `Volume capped at ${displayText(receiverState?.late_cap ?? max, scale)}`
+                  : `Lowers the volume and caps it at ${lateText} ${scale.unit}`
+              }
+              checked={lateOn}
+              onChange={async (c: boolean) => {
+                lastLocal.current = Date.now();
+                setLateOn(c);
+                const r = await setLateNight(c);
+                if (!r.ok) setErr(r.error ?? "Unknown error");
+                await refresh(false);
+              }}
+            />
+          </PanelSectionRow>
+        )}
+        {!standby && hasCapability("mode") && modeCode && (
           <PanelSectionRow>
             <DropdownItem
               label="Listening mode"
               rgOptions={[
                 ...modes.map((m) => ({ data: m.code, label: m.name })),
-                // a mode we have no name for: still show it as the current one
+                // A code unknown to this driver still remains visible as current.
                 ...(modes.some((m) => m.code === modeCode)
                   ? []
                   : [{ data: modeCode, label: mode ?? `Mode ${modeCode}` }]),
@@ -279,6 +457,119 @@ function Content() {
         {err && (
           <PanelSectionRow>
             <div style={{ color: "#ff6b6b" }}>{err}</div>
+          </PanelSectionRow>
+        )}
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            disabled={searching}
+            onClick={() => search(false)}
+          >
+            {searching ? "Searching…" : "Search network"}
+          </ButtonItem>
+        </PanelSectionRow>
+        {note && (
+          <PanelSectionRow>
+            <div>{note}</div>
+          </PanelSectionRow>
+        )}
+        {found.map((r) => (
+          <PanelSectionRow key={`${r.driver}:${r.id}`}>
+            <ButtonItem layout="below" onClick={() => choose(r)}>
+              {r.model} ({r.label}, {r.ip})
+            </ButtonItem>
+          </PanelSectionRow>
+        ))}
+        <PanelSectionRow>
+          <DropdownItem
+            label="Connection type"
+            rgOptions={[
+              { data: "auto", label: "Automatic (detect by IP)" },
+              ...drivers.map((driver) => ({ data: driver.key, label: driver.label })),
+            ]}
+            selectedOption={selectedDriver}
+            onChange={(option: { data: string }) => {
+              setSelectedDriver(option.data);
+              setManualConfig({ host });
+            }}
+          />
+        </PanelSectionRow>
+        {selectedDriver === "auto" ? (
+          <PanelSectionRow>
+            <TextField
+              label="Receiver IP address"
+              value={host}
+              onChange={(event) => {
+                setHostState(event.target.value);
+                setManualConfig((current) => ({ ...current, host: event.target.value }));
+              }}
+            />
+          </PanelSectionRow>
+        ) : (
+          selectedFields.map((field) => {
+            const isCurrentDriver = receiverState?.driver === selectedDriver;
+            const value = field.key === "host" ? host : manualConfig[field.key] ?? "";
+            return (
+              <PanelSectionRow key={field.key}>
+                <TextField
+                  label={field.label}
+                  requiredLabel={field.required ? "*" : undefined}
+                  value={value}
+                  placeholder={field.secret && isCurrentDriver ? "(saved)" : ""}
+                  bIsPassword={field.secret}
+                  onChange={(event) => {
+                    if (field.key === "host") setHostState(event.target.value);
+                    setManualConfig((current) => ({
+                      ...current,
+                      [field.key]: event.target.value,
+                    }));
+                  }}
+                />
+              </PanelSectionRow>
+            );
+          })
+        )}
+        {scale && hasCapability("volume") && (
+          <>
+            <PanelSectionRow>
+              <TextField
+                label={`Volume cap (${scale.unit})`}
+                value={maxText}
+                onChange={(event) => setMaxText(event.target.value)}
+              />
+            </PanelSectionRow>
+            <PanelSectionRow>
+              <TextField
+                label={`Late night cap (${scale.unit})`}
+                value={lateText}
+                onChange={(event) => setLateText(event.target.value)}
+              />
+            </PanelSectionRow>
+          </>
+        )}
+        <PanelSectionRow>
+          <ButtonItem layout="below" disabled={saving} onClick={saveReceiver}>
+            {saving ? "Connecting…" : "Save & connect"}
+          </ButtonItem>
+        </PanelSectionRow>
+        {scale && hasCapability("volume") && (
+          <PanelSectionRow>
+            <ButtonItem
+              layout="below"
+              onClick={async () => {
+                const cap = inputToRaw(maxText, scale);
+                const lateCap = inputToRaw(lateText, scale);
+                if (cap === null || lateCap === null) {
+                  setErr(`Enter valid volume caps in ${scale.unit}.`);
+                  return;
+                }
+                await setMax(cap);
+                await setLateMax(lateCap);
+                await refresh(true);
+              }}
+            >
+              Save volume caps
+            </ButtonItem>
           </PanelSectionRow>
         )}
       </PanelSection>
@@ -307,100 +598,48 @@ function Content() {
 
       {profiles.length > 0 && (
         <PanelSection title="Saved game profiles">
-          {profiles.map((p) => (
-            <PanelSectionRow key={p.appid}>
-              <ButtonItem
-                layout="below"
-                description={[
-                  p.volume !== null ? toDb(p.volume, zero) : null,
-                  p.mode ? (p.mode_name ?? `Mode ${p.mode}`) : null,
-                ]
-                  .filter(Boolean)
-                  .join(", ")}
-                onClick={async () => {
-                  await forgetGame(p.appid);
-                  setProfiles(await listGames());
-                  if (game && game.appid === p.appid) {
-                    setGame({ ...game, volume: false, mode: false });
-                  }
-                }}
-              >
-                Forget {p.name}
-              </ButtonItem>
-            </PanelSectionRow>
-          ))}
+          {profiles.map((profile) => {
+            const sameDriver =
+              !!profile.driver && profile.driver === receiverState?.driver && !!scale;
+            const description = [
+              profile.volume !== null
+                ? sameDriver
+                  ? `Volume ${displayText(profile.volume, scale!)}`
+                  : "Volume from other receiver"
+                : null,
+              profile.mode
+                ? profile.mode_name ?? `Mode ${profile.mode}`
+                : null,
+            ]
+              .filter(Boolean)
+              .join(", ");
+            return (
+              <PanelSectionRow key={profile.appid}>
+                <ButtonItem
+                  layout="below"
+                  description={description}
+                  onClick={async () => {
+                    await forgetGame(profile.appid);
+                    setProfiles(await listGames());
+                    if (game && game.appid === profile.appid) {
+                      setGame({ ...game, volume: false, mode: false });
+                    }
+                  }}
+                >
+                  Forget {profile.name}
+                </ButtonItem>
+              </PanelSectionRow>
+            );
+          })}
         </PanelSection>
       )}
-
-      <PanelSection title="Receiver">
-        <PanelSectionRow>
-          <ButtonItem
-            layout="below"
-            disabled={searching}
-            onClick={() => search(false)}
-          >
-            {searching ? "Searching…" : "Search network"}
-          </ButtonItem>
-        </PanelSectionRow>
-        {note && (
-          <PanelSectionRow>
-            <div>{note}</div>
-          </PanelSectionRow>
-        )}
-        {found.map((r) => (
-          <PanelSectionRow key={r.id}>
-            <ButtonItem layout="below" onClick={() => choose(r)}>
-              {r.model} ({r.ip})
-            </ButtonItem>
-          </PanelSectionRow>
-        ))}
-        <PanelSectionRow>
-          <TextField
-            label="AVR IP address"
-            value={host}
-            onChange={(e) => setHostState(e.target.value)}
-          />
-        </PanelSectionRow>
-        <PanelSectionRow>
-          <TextField
-            label="Max volume (dB)"
-            value={maxText}
-            onChange={(e) => setMaxText(e.target.value)}
-          />
-        </PanelSectionRow>
-        <PanelSectionRow>
-          <TextField
-            label="Late night max volume (dB)"
-            value={lateText}
-            onChange={(e) => setLateText(e.target.value)}
-          />
-        </PanelSectionRow>
-        <PanelSectionRow>
-          <ButtonItem
-            layout="below"
-            onClick={async () => {
-              await setHost(host);
-              savedHost.current = host.trim();
-              const n = dbToRaw(maxText, zero);
-              if (n !== null) await setMax(n);
-              const l = dbToRaw(lateText, zero);
-              if (l !== null) await setLateMax(l);
-              await refresh(true);
-            }}
-          >
-            Save &amp; connect
-          </ButtonItem>
-        </PanelSectionRow>
-      </PanelSection>
     </>
   );
 }
 
 export default definePlugin(() => {
-  // Runs for as long as the plugin is loaded, whether or not the panel is open,
-  // so a game's saved profile is applied the moment it launches.
-  // Steam's internal APIs can change between client updates: if game detection
-  // breaks, only the per-game feature stops, and the plugin itself still loads.
+  // Runs as long as the plugin is loaded, whether or not its panel is open.
+  // Steam's internal APIs can change between client updates, so isolate them.
   let reg: { unregister: () => void } | undefined;
   try {
     reg = SteamClient.GameSessions.RegisterForAppLifetimeNotifications((n) => {

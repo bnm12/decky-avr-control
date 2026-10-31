@@ -198,12 +198,14 @@ class Controller:
     async def configure(self, driver_key: str, config: dict) -> dict:
         data = self._settings()
         config = dict(config)
+        receiver = data["receiver"]
+        if driver_key != "auto" and receiver.get("driver") == driver_key:
+            config = {**(receiver.get("config") or {}), **config}
         if config.get("host"):
             config["host"] = str(config["host"]).strip()
         if not config.get("host"):
             return {"ok": False, "error": "Enter the receiver IP address"}
 
-        receiver = data["receiver"]
         receiver["config"] = config
         receiver["id"] = None
         receiver["driver"] = None
@@ -541,6 +543,7 @@ class Controller:
                     "volume": profile.get("volume"),
                     "mode": code,
                     "mode_name": name,
+                    "driver": profile.get("driver"),
                 }
             )
         return results
