@@ -1,0 +1,28 @@
+# Roadmap
+
+Current state and next steps. Update this file at the end of every slice. Decisions go in `docs/adr/`, not here.
+
+## State (v0.3.0 in progress, branch `driver-split`, PR #1)
+
+- Drivers behind one seam (ADR-0009): eISCP (verified on a Pioneer VSX-935), Yamaha YXC, Denon/Marantz, legacy Pioneer telnet and Home Assistant. All drivers except eISCP are simulator-tested only and labelled experimental.
+- Renamed to AVR Control (ADR-0010). Settings migrate from the old `pioneer-volume` folder.
+- The panel follows each driver's scale (dB or %) and capabilities, and has power, listening modes, opt-in game profiles and late night mode.
+- Probe kit and transcript replay tests let owners of other receivers verify drivers (ADR-0013, `CONTRIBUTING.md`).
+- Two full Sol reviews have been fixed. A third, targeted check of those fixes is pending before release.
+
+## Next
+
+1. **Release v0.3.0** once the targeted review is clean and CI passes on Python 3.10.
+2. **Owner hardware check on the VSX-935:** upgrade from Pioneer Volume (settings migration), discovery, power, and that profiles and caps survive. Record anything surprising as **[measured]** in `drivers/eiscp.md`.
+3. **Collect transcripts** from Yamaha, Denon/Marantz and legacy Pioneer owners via Receiver report issues. Promote each driver from experimental once a transcript replays.
+4. **Deepening** (`docs/research/deepening-options.md`, top picks):
+   - a shared, owned TCP session module for eISCP, Denon and Pioneer telnet (connection ownership, serialisation, push events);
+   - one deep application module with a state snapshot and typed intents, shrinking the ~20-method RPC surface.
+5. **Features** in value-per-effort order: soft-start volume ramp; a cancellable sleep timer; checking whether receivers push state changes before replacing the 2 s poll; showing the incoming signal format (eISCP `IFA`, unverified).
+6. **Store submission:** test on SteamOS Stable and Beta, add screenshots, and make sure README claims stay within hardware evidence.
+
+## Not planned
+
+- Per-game input switching. Video passes through the AVR, so it is already on the right input (ADR-0001).
+- Patching Steam's native volume UI. It's fragile across client updates. A supported global input hook could be revisited.
+- LG ThinQ (cloud). The local webOS SSAP route is possible but is TV control, not receiver control (`docs/research/avr-brand-feasibility.md`).
