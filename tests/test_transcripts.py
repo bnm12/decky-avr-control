@@ -325,6 +325,35 @@ class TranscriptReplayTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
+    async def test_upnp_capture_preserves_relative_service_path_from_description(self):
+        receiver = FakeUpnpRenderer(
+            description_path="/base/description.xml",
+            control_url="control",
+            include_url_base=False,
+            expected_control_path="/base/control",
+        )
+        port = await receiver.start()
+        location = f"http://127.0.0.1:{port}/base/description.xml"
+        found = await UpnpDriver.probe(
+            {"host": "127.0.0.1", "location": location}
+        )
+        self.assertIsNotNone(found)
+
+        try:
+            transcript = await capture_found(found)
+        finally:
+            await receiver.close()
+
+        requests = [
+            base64.b64decode(exchange["data_b64"])
+            for connection in transcript["connections"]
+            for exchange in connection["exchanges"]
+            if exchange["dir"] == "tx"
+        ]
+        self.assertTrue(
+            any(request.startswith(b"POST /base/control ") for request in requests)
+        )
+
     async def test_recording_proxy_captures_both_directions(self):
         async def echo(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
             try:

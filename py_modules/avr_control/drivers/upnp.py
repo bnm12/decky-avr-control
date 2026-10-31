@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
+import socket
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -26,6 +28,7 @@ SERVICE_TYPE = "urn:schemas-upnp-org:service:RenderingControl:1"
 SOAP_NS = "http://schemas.xmlsoap.org/soap/envelope/"
 DEFAULT_SONOS_PORT = 1400
 REQUEST_TIMEOUT = 2.0
+HOST_RESOLUTION_TIMEOUT = 0.5
 DEFAULT_MIN_VOLUME = 0
 DEFAULT_MAX_VOLUME = 100
 DEFAULT_VOLUME_STEP = 1
@@ -197,15 +200,52 @@ def _url_host(url: str) -> str:
         return ""
 
 
-def _same_host(left: str, right: str) -> bool:
-    return left.strip().strip("[]").lower() == right.strip().strip("[]").lower()
+def _normalized_ip(host: str) -> str | None:
+    host = host.strip().strip("[]").split("%", 1)[0]
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return None
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+        address = address.ipv4_mapped
+    return address.compressed
+
+
+async def _host_addresses(host: str) -> set[str]:
+    host = host.strip().strip("[]")
+    if not host:
+        return set()
+    literal = _normalized_ip(host)
+    if literal:
+        return {literal}
+    try:
+        results = await asyncio.wait_for(
+            asyncio.get_running_loop().getaddrinfo(
+                host, 0, type=socket.SOCK_STREAM
+            ),
+            timeout=HOST_RESOLUTION_TIMEOUT,
+        )
+    except (OSError, ValueError, asyncio.TimeoutError):
+        return set()
+    return {
+        address
+        for result in results
+        if (address := _normalized_ip(result[4][0])) is not None
+    }
+
+
+async def _same_host(left: str, right: str) -> bool:
+    left_addresses, right_addresses = await asyncio.gather(
+        _host_addresses(left), _host_addresses(right)
+    )
+    return bool(left_addresses.intersection(right_addresses))
 
 
 def _proxy_service_url(url: str, proxy_base: str) -> str:
     parsed = urllib.parse.urlsplit(url)
     proxy = urllib.parse.urlsplit(proxy_base)
     return urllib.parse.urlunsplit(
-        (proxy.scheme, proxy.netloc, parsed.path, parsed.query, parsed.fragment)
+        (parsed.scheme, proxy.netloc, parsed.path, parsed.query, parsed.fragment)
     )
 
 
@@ -245,10 +285,7 @@ class UpnpDriver(Driver):
     @property
     def location(self) -> str:
         location = str(self.config.get("location", "")).strip()
-        location_host = _url_host(location)
-        if not location_host or not self.host or not _same_host(
-            location_host, self.host
-        ):
+        if not _url_host(location) or not self.host:
             return ""
         return location
 
@@ -323,14 +360,13 @@ class UpnpDriver(Driver):
         control_url = _direct_text(service, "controlURL")
         scpd_url = _direct_text(service, "SCPDURL")
         base = (
-            str(self.config.get("service_url_base", "")).strip()
-            or _direct_text(root, "URLBase")
+            _direct_text(root, "URLBase")
             or location
         )
         try:
             self._control_url = urllib.parse.urljoin(base, control_url)
             self._scpd_url = urllib.parse.urljoin(base, scpd_url) if scpd_url else ""
-            proxy_base = str(self.config.get("service_url_base", "")).strip()
+            proxy_base = str(self.config.get("service_proxy_base", "")).strip()
             if proxy_base:
                 self._control_url = _proxy_service_url(self._control_url, proxy_base)
                 if self._scpd_url:
@@ -370,7 +406,7 @@ class UpnpDriver(Driver):
         self._service_loaded = True
 
     async def _ensure_service(self) -> None:
-        if self._service_loaded and _same_host(self._service_host, self.host):
+        if self._service_loaded and await _same_host(self._service_host, self.host):
             return
         if self._service_loaded:
             self._service_loaded = False
@@ -387,10 +423,13 @@ class UpnpDriver(Driver):
             if hasattr(self, "_volume_step"):
                 del self._volume_step
         async with self._service_lock:
-            if self._service_loaded and _same_host(self._service_host, self.host):
+            if self._service_loaded and await _same_host(
+                self._service_host, self.host
+            ):
                 return
-            if self.location:
-                await self._load_description(self.location)
+            location = self.location
+            if location and await _same_host(_url_host(location), self.host):
+                await self._load_description(location)
                 return
             if not self.host:
                 raise DriverError("UPnP receiver host is missing")
@@ -422,7 +461,9 @@ class UpnpDriver(Driver):
                 results = []
             for item in results:
                 location = str(item.get("location", ""))
-                if not location or not _same_host(_url_host(location), self.host):
+                if not location or not await _same_host(
+                    _url_host(location), self.host
+                ):
                     continue
                 try:
                     await self._load_description(location)
@@ -521,7 +562,7 @@ class UpnpDriver(Driver):
 
     @classmethod
     async def _discover_location(cls, host: str, location: str) -> list[Found]:
-        if not _same_host(_url_host(location), host):
+        if not await _same_host(_url_host(location), host):
             return []
         description_driver = cls({"host": host, "location": location})
         try:
@@ -570,7 +611,7 @@ class UpnpDriver(Driver):
             return None
         location = str(config.get("location", "")).strip()
         udn = str(config.get("udn", "")).strip()
-        if location and _same_host(_url_host(location), host):
+        if location and await _same_host(_url_host(location), host):
             return await cls._probe_location(host, location, udn)
 
         try:
@@ -596,7 +637,7 @@ class UpnpDriver(Driver):
             return None
         for response in responses:
             candidate = str(response.get("location", "")).strip()
-            if candidate and _same_host(_url_host(candidate), host):
+            if candidate and await _same_host(_url_host(candidate), host):
                 result = await cls._probe_location(host, candidate, udn)
                 if result is not None:
                     return result

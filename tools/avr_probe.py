@@ -755,7 +755,7 @@ async def capture_found(
         config["location"] = _upnp_proxy_location(
             str(config["location"]), proxy_port
         )
-        config["service_url_base"] = f"{scheme}://127.0.0.1:{proxy_port}/"
+        config["service_proxy_base"] = f"{scheme}://127.0.0.1:{proxy_port}/"
     if (
         found.driver == "denon"
         and str(config.get("transport", "")).lower() == "http"

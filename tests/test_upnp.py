@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import socket
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -29,6 +30,10 @@ class FakeUpnpRenderer:
         fault: tuple[str, str] | None = None,
         volume_range: tuple[int, int, int] = (0, 100, 1),
         host: str = "127.0.0.1",
+        description_path: str = "/device.xml",
+        control_url: str | None = None,
+        include_url_base: bool = True,
+        expected_control_path: str = "",
     ):
         self.nested = nested
         self.multiple_nested = multiple_nested
@@ -37,6 +42,10 @@ class FakeUpnpRenderer:
         self.fault = fault
         self.volume_range = volume_range
         self.host = host
+        self.description_path = description_path
+        self.control_url = control_url
+        self.include_url_base = include_url_base
+        self.expected_control_path = expected_control_path
         self.volume = 35
         self.nested_volumes = {"living": 35, "kitchen": 75}
         self.muted = False
@@ -56,7 +65,7 @@ class FakeUpnpRenderer:
                 "<SCPDURL>/scpd.xml</SCPDURL></service>"
             )
 
-        living_control = (
+        living_control = self.control_url or (
             "/MediaRenderer/RenderingControl/Control"
             if self.sonos
             else "/control/living" if self.multiple_nested else "/control"
@@ -84,10 +93,10 @@ class FakeUpnpRenderer:
             if self.nested
             else renderer
         )
+        url_base = f"<URLBase>{base}</URLBase>" if self.include_url_base else ""
         return (
             '<?xml version="1.0"?>'
-            f'<root xmlns="{DEVICE_NS}"><URLBase>{base}</URLBase>'
-            f"{device}</root>"
+            f'<root xmlns="{DEVICE_NS}">{url_base}{device}</root>'
         ).encode()
 
     def scpd(self) -> bytes:
@@ -151,7 +160,7 @@ class FakeUpnpRenderer:
             def do_GET(self):
                 if self.path == "/scpd.xml":
                     body = renderer.scpd()
-                elif self.path == "/device.xml" or (
+                elif self.path == renderer.description_path or (
                     renderer.sonos and self.path == "/xml/device_description.xml"
                 ):
                     base = f"http://{renderer.host}:{renderer.server.server_port}/"
@@ -166,6 +175,12 @@ class FakeUpnpRenderer:
                 self.wfile.write(body)
 
             def do_POST(self):
+                if (
+                    renderer.expected_control_path
+                    and self.path != renderer.expected_control_path
+                ):
+                    self.send_error(404)
+                    return
                 action_header = self.headers.get("SOAPACTION", "")
                 action = action_header.strip('"').rsplit("#", 1)[-1]
                 renderer.requests.append((action, self.path))
@@ -183,7 +198,13 @@ class FakeUpnpRenderer:
             def log_message(self, _format, *args):
                 pass
 
-        self.server = ThreadingHTTPServer((self.host, 0), Handler)
+        server_class = ThreadingHTTPServer
+        if ":" in self.host:
+            class IPv6ThreadingHTTPServer(ThreadingHTTPServer):
+                address_family = socket.AF_INET6
+
+            server_class = IPv6ThreadingHTTPServer
+        self.server = server_class((self.host, 0), Handler)
         self.server.daemon_threads = True
         thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         thread.start()
@@ -365,6 +386,40 @@ class UpnpDriverTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await previous.close()
             await current.close()
+
+    async def test_discovery_accepts_location_hostname_matching_sender_address(self):
+        await self.fake.close()
+        self.fake = FakeUpnpRenderer()
+        self.port = await self.fake.start()
+        location = f"http://localhost:{self.port}/device.xml"
+        loop = asyncio.get_running_loop()
+        transport, _ = await loop.create_datagram_endpoint(
+            lambda: FakeSsdpResponder(location),
+            local_addr=("127.0.0.1", 0),
+        )
+        old_address = ssdp.SSDP_ADDRESS
+        try:
+            ssdp.SSDP_ADDRESS = transport.get_extra_info("sockname")
+            found = await UpnpDriver.discover(0.1)
+            self.assertEqual(
+                [(item.id, item.host) for item in found],
+                [("uuid:RINCON_123456789", "127.0.0.1")],
+            )
+        finally:
+            ssdp.SSDP_ADDRESS = old_address
+            transport.close()
+
+    async def test_probe_accepts_equivalent_expanded_ipv6_location(self):
+        await self.fake.close()
+        self.fake = FakeUpnpRenderer(host="::1")
+        self.port = await self.fake.start()
+        location = f"http://[0:0:0:0:0:0:0:1]:{self.port}/device.xml"
+
+        found = await UpnpDriver.probe({"host": "::1", "location": location})
+
+        self.assertIsNotNone(found)
+        self.assertEqual(found.host, "::1")
+        self.assertEqual(found.id, "uuid:RINCON_123456789")
 
     async def test_non_renderers_are_not_probed_or_discovered(self):
         await self.fake.close()
