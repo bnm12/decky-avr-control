@@ -5,10 +5,20 @@ from __future__ import annotations
 import asyncio
 
 from .base import Driver, Found
+from .denon import DenonDriver
 from .eiscp import EiscpDriver
+from .homeassistant import HomeAssistantDriver
 from .pioneer_telnet import PioneerTelnetDriver
 
-REGISTRY: list[type[Driver]] = [EiscpDriver, PioneerTelnetDriver]
+# Probe order: specific ports first; Denon and legacy Pioneer both use port 23,
+# and Denon's `PW?` is the more specific question. Home Assistant only probes
+# when it has a URL and token, so it goes last.
+REGISTRY: list[type[Driver]] = [
+    EiscpDriver,
+    DenonDriver,
+    PioneerTelnetDriver,
+    HomeAssistantDriver,
+]
 
 
 def get_driver_class(key: str) -> type[Driver] | None:

@@ -45,7 +45,12 @@ class MainSmokeTests(unittest.TestCase):
                 plugin = module.Plugin()
                 state = asyncio.run(plugin.get_state())
                 self.assertFalse(state["ok"])
-                self.assertEqual(len(asyncio.run(plugin.list_drivers())), 2)
+                from avr_control.drivers import REGISTRY
+
+                drivers = asyncio.run(plugin.list_drivers())
+                self.assertEqual(
+                    [d["key"] for d in drivers], [d.key for d in REGISTRY]
+                )
                 asyncio.run(plugin._main())
                 asyncio.run(plugin._unload())
             finally:
