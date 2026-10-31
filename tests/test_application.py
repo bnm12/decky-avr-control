@@ -2647,6 +2647,26 @@ class ApplicationTests(unittest.IsolatedAsyncioTestCase):
             self.store.load()["schedule"]["last_late_window"], "2026-10-31"
         )
 
+    async def test_schedule_refusals_count_toward_the_retry_limit(self):
+        self.save_settings()
+
+        class RefusingScheduleDriver(MemoryDriver):
+            volume_attempts = 0
+
+            async def set_volume(self, raw):
+                type(self).volume_attempts += 1
+                raise Refused("not now")
+
+        RefusingScheduleDriver.volume_attempts = 0
+        self.application.registry = [RefusingScheduleDriver]
+        self.local_time.set(2026, 10, 31, 22, 0)
+        await self.application.dispatch(SetSchedule(True, "22:00", "23:00", None))
+
+        for _ in range(12):
+            await self.application.tick()
+
+        self.assertEqual(RefusingScheduleDriver.volume_attempts, 3)
+
     async def test_game_mode_profile_overrides_schedule_mode_and_late_volume_is_not_saved(self):
         self.save_settings()
         await self.application.dispatch(SetSchedule(True, "22:00", "23:00", "11"))

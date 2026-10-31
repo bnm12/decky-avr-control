@@ -585,6 +585,7 @@ class ControlApplication:
             return
 
         generation = self._receiver_generation
+        pending_op: str | None = None
         try:
             driver = await self._get_driver(generation)
             if not self._is_current(generation, driver):
@@ -633,12 +634,14 @@ class ControlApplication:
                         ):
                             return
                         if self._begin_schedule_attempt(window_key, "volume"):
+                            pending_op = "volume"
                             observed_volume = await self._run(
                                 "set_volume",
                                 cap,
                                 generation=generation,
                                 driver=driver,
                             )
+                            pending_op = None
                             if not self._is_current(generation, driver) or not self._schedule_operation_is_current(
                                 schedule_generation, config, window_key, active=True
                             ):
@@ -685,9 +688,11 @@ class ControlApplication:
                 return
             if not self._begin_schedule_attempt(window_key, "mode"):
                 return
+            pending_op = "mode"
             observed_mode = await self._run(
                 "set_mode", mode, generation=generation, driver=driver
             )
+            pending_op = None
             if (
                 not self._is_current(generation, driver)
                 or not self._schedule_operation_is_current(
@@ -703,6 +708,15 @@ class ControlApplication:
                 self._log_schedule_unconfirmed(
                     window_key, "mode", observed_mode, mode
                 )
+        except (Refused, Unsupported) as exc:
+            # The receiver understood and said no: count it against the bounded
+            # budget. Only transport failures retry on every tick.
+            if pending_op is not None:
+                self._log_schedule_unconfirmed(
+                    window_key, pending_op, f"refused ({exc})", "change"
+                )
+            else:
+                self._log("error", f"Applying time-of-day profile failed: {exc}")
         except Exception as exc:
             self._log("error", f"Applying time-of-day profile failed: {exc}")
 
