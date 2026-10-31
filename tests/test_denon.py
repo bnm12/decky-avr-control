@@ -23,15 +23,17 @@ def decode_volume(value: str) -> int:
 
 
 class FakeDenon:
-    def __init__(self):
+    def __init__(self, *, strict_single_client: bool = False):
         self.volume = 91
         self.maximum = 139
         self.muted = False
         self.power = True
         self.mode = "STEREO"
         self.refused_mode = False
+        self.strict_single_client = strict_single_client
         self.commands: list[str] = []
         self.connections = 0
+        self.rejected_connections = 0
         self.active_connections = 0
         self.max_active_connections = 0
         self.server = None
@@ -57,6 +59,12 @@ class FakeDenon:
         self.max_active_connections = max(
             self.max_active_connections, self.active_connections
         )
+        if self.strict_single_client and self.active_connections > 1:
+            self.rejected_connections += 1
+            writer.close()
+            await writer.wait_closed()
+            self.active_connections -= 1
+            return
         await self.send(writer, "SISAT/CBL")
         try:
             while True:
@@ -286,6 +294,56 @@ class DenonDriverTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status.volume, 91)
         self.assertEqual(status.mode, "STEREO")
         self.assertNotIn("SISAT/CBL", self.fake.commands)
+
+    async def test_status_and_command_share_one_receiver_connection_at_a_time(self):
+        fake = FakeDenon(strict_single_client=True)
+        port = await fake.start()
+        try:
+            config = {"host": "127.0.0.1", "port": port}
+            status_driver = DenonDriver(config)
+            command_driver = DenonDriver(config)
+            status, muted = await asyncio.gather(
+                status_driver.status(), command_driver.set_mute(True)
+            )
+
+            self.assertTrue(status.power)
+            self.assertTrue(muted)
+            self.assertEqual(fake.rejected_connections, 0)
+            self.assertEqual(fake.max_active_connections, 1)
+            self.assertIn("MUON", fake.commands)
+        finally:
+            await fake.close()
+
+    async def test_decoder_specific_modes_report_a_settable_canonical_mode(self):
+        mapped_modes = (
+            ("DOLBY D+ +DSUR", "DOLBY DIGITAL", "Dolby Digital"),
+            ("DTS HD+DSUR", "DTS SURROUND", "DTS Surround"),
+            ("DOLBY PLII MUSIC", "MUSIC", "Music"),
+            ("DTS NEO:X C", "MOVIE", "Movie"),
+            ("MULTI CH STEREO", "MCH STEREO", "Multi-Channel Stereo"),
+            ("AUTO", "AUTO", "Auto"),
+        )
+        for reported, canonical, name in mapped_modes:
+            with self.subTest(reported=reported):
+                self.fake.mode = reported
+                status = await self.driver.status()
+                self.assertEqual(status.mode, canonical)
+                self.assertEqual(self.driver.mode_name(status.mode), name)
+
+        self.assertEqual(await self.driver.set_mode("DOLBY DIGITAL"), "DOLBY DIGITAL")
+        self.assertIn("MSDOLBY DIGITAL", self.fake.commands)
+
+    async def test_unknown_mode_is_sent_and_only_refused_by_receiver(self):
+        self.fake.mode = "CUSTOM MODE"
+        status = await self.driver.status()
+        self.assertEqual(status.mode, "CUSTOM MODE")
+        self.assertEqual(await self.driver.set_mode(status.mode), "CUSTOM MODE")
+        self.assertIn("MSCUSTOM MODE", self.fake.commands)
+
+        self.fake.refused_mode = True
+        with self.assertRaisesRegex(Refused, "didn't accept"):
+            await self.driver.set_mode("CUSTOM MODE")
+        self.assertEqual(self.fake.commands.count("MSCUSTOM MODE"), 2)
 
 
 if __name__ == "__main__":

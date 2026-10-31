@@ -19,7 +19,7 @@
 
 [spec] Status reads use `GET /api/states/<entity_id>`. Setters call `POST /api/services/media_player/<service>` with an entity target and the service data. Requests are ordinary HTTP messages; there is no protocol-specific packet framing.
 
-[assumed] The driver uses Python's default TLS certificate verification for HTTPS. Self-signed certificates are unsupported unless the certificate is trusted by the host. A service call may return before the entity state reflects the change, so the driver polls state for up to about 1.5 seconds and then returns the requested value if it has not observed confirmation.
+[assumed] The driver uses Python's default TLS certificate verification for HTTPS. Self-signed certificates are unsupported unless the certificate is trusted by the host. A service call may return before the entity state reflects the change, so the driver polls state for up to about 1.5 seconds and then returns the last observed value if it has not observed confirmation.
 
 ## Discovery
 
@@ -49,7 +49,8 @@
 - [spec] Home Assistant's media-player building block is provided by other integrations; not every integration exposes every capability. Supported feature flags govern which controls are available.
 - [spec] Sound modes appear only when an entity advertises `SELECT_SOUND_MODE` and supplies `sound_mode_list`; no concrete AVR integration has been measured here.
 - [spec] The Home Assistant user needs permission to read and control the selected entity.
-- [assumed] HA state updates may lag service responses. The driver polls briefly; if state does not match by the deadline, it returns the requested value rather than treating the service call as failed.
+- [assumed] Redirects to another scheme, host, or port (including HTTPS-to-HTTP downgrades) are rejected; enter the final URL directly.
+- [assumed] HA state updates may lag service responses. The driver polls briefly; if state does not match by the deadline, setters return the last observed value, which may differ from the requested value.
 - [assumed] HTTPS uses the standard Python trust store. Self-signed certificates must be trusted by the system.
 
 ## Unknowns and open questions

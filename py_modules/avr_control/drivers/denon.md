@@ -19,6 +19,8 @@
 
 [community] The receiver can also push unsolicited event lines on an open Telnet connection. The driver ignores lines that do not match a requested response, and uses a fresh connection for each operation rather than keeping a subscription open.
 
+[community] Because receivers may reject a second Telnet client, a minimal class-level lock registry serializes operations across driver instances for the same host and port. It is scoped by event loop so each `asyncio.Lock` is used only on its owning loop; weak loop keys and weak lock values release registry state when the loop or its active operations end.
+
 [spec] Leave at least 50 ms between successive commands sent on the same connection. `status()` sends its four queries with this spacing. [community] The port-23 interface is Telnet-compatible raw TCP and does not require a login handshake.
 
 ## Discovery
@@ -48,7 +50,9 @@
 
 [community] The common settable list is `MOVIE`, `MUSIC`, `GAME`, `DIRECT`, `PURE DIRECT`, `STEREO`, `AUTO`, `DOLBY DIGITAL`, `DOLBY SURROUND`, `DTS SURROUND`, `DTS NEURAL:X`, `MCH STEREO`, and `VIRTUAL`. Friendly names are provided for these codes.
 
-[community] Mode availability depends on model, input, and signal. The reported mode can be decoder-specific (for example `DOLBY D+ +DSUR`) rather than the set-command code; other `MS` replies are shown using a readable fallback name.
+[community] Mode availability depends on model, input, and signal. `status()` canonicalizes recognized decoder-specific reports to settable commands: Dolby report variants (such as `DOLBY D+ +DSUR`) to `DOLBY DIGITAL`, DTS variants (such as `DTS HD+DSUR`) to `DTS SURROUND`, decoder reports with Music/Movie/Game suffixes to their matching settable modes, multi-channel stereo reports to `MCH STEREO`, and `AUTO`/`NONE` to `AUTO`. The mode code returned by status can therefore be restored with `set_mode()`. Unrecognized values remain available to display and are sent without a local mode whitelist (after trimming and uppercasing); a refusal is reported only if the receiver does not confirm the command.
+
+[community] This grouping follows `denonavr`'s `SOUND_MODE_MAPPING`: decoder-specific Dolby and DTS values are grouped under the corresponding settable sound mode, `MCH STEREO` / `MULTI CH STEREO` map to `MCH STEREO`, and `None` maps to `AUTO`. The source is MIT-licensed; see [denonavr `const.py`](https://github.com/ol-iver/denonavr/blob/master/denonavr/const.py) and [LICENSE](https://github.com/ol-iver/denonavr/blob/master/LICENSE).
 
 ## Quirks and gotchas
 
@@ -72,5 +76,5 @@
 1. [spec] [Denon AVR-1713 / AVR-1613 Control Protocol v8.6.0 (official PDF)](https://assets.denon.com/DocumentMaster/UK/AVR1713_AVR1613_PROTOCOL_V860.pdf)
 2. [spec] [Denon FY23-CY2022 AVR Control Protocol (PDF mirror)](https://allonis.com/media/kunena/attachments/814/DenonFY23-CY2022_AVR_PROTOCOL_V0221.pdf)
 3. [community] [Marantz / Denon AVR TCP Port 23 Control Guide](https://github.com/alsak0de/marantz-denon-mqtt/blob/main/docs/telnet/MARANTZ_DENON_TELNET_PROTOCOL.md)
-4. [community] [ol-iver/denonavr](https://github.com/ol-iver/denonavr)
+4. [community] [ol-iver/denonavr sound-mode mapping (`const.py`, MIT)](https://github.com/ol-iver/denonavr/blob/master/denonavr/const.py)
 5. [community] [openHAB Denon / Marantz binding](https://www.openhab.org/addons/bindings/denonmarantz/)

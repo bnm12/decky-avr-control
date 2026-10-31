@@ -95,57 +95,36 @@ def _number(value) -> float | None:
 def _range_entries(zone: dict) -> dict[str, dict]:
     raw = zone.get("range_step", [])
     entries: dict[str, dict] = {}
-    if isinstance(raw, dict):
-        for key, value in raw.items():
-            if isinstance(value, dict):
-                entry = dict(value)
-                entry.setdefault("id", key)
-                entries[str(entry["id"]).lower()] = entry
-    elif isinstance(raw, list):
-        for value in raw:
-            if not isinstance(value, dict):
-                continue
-            key = value.get("id", value.get("name", value.get("mode", "")))
-            if key:
-                entries[str(key).lower()] = value
+    if not isinstance(raw, list):
+        return entries
+    for value in raw:
+        if not isinstance(value, dict):
+            continue
+        key = value.get("id")
+        if isinstance(key, str) and key:
+            entries[key.lower()] = value
     return entries
 
 
 def _function_names(zone: dict) -> set[str]:
     raw = zone.get("func_list", [])
-    names: set[str] = set()
-    if isinstance(raw, dict):
-        names.update(str(key).lower() for key, value in raw.items() if value)
-    elif isinstance(raw, list):
-        for entry in raw:
-            if isinstance(entry, str):
-                names.add(entry.lower())
-            elif isinstance(entry, dict):
-                for key in ("id", "name", "func", "key"):
-                    if entry.get(key):
-                        names.add(str(entry[key]).lower())
-    return names
+    if not isinstance(raw, list):
+        return set()
+    return {entry.lower() for entry in raw if isinstance(entry, str)}
 
 
 def _programs(zone: dict) -> list[Mode]:
     raw = zone.get("sound_program_list", [])
-    if isinstance(raw, dict):
-        raw = list(raw)
     if not isinstance(raw, list):
         return []
     modes: list[Mode] = []
     seen: set[str] = set()
     for entry in raw:
-        if isinstance(entry, str):
-            code = entry
-        elif isinstance(entry, dict):
-            code = entry.get("id", entry.get("code", entry.get("program", "")))
-        else:
+        if not isinstance(entry, str):
             continue
-        code = str(code)
-        if code and code not in seen:
-            modes.append(Mode(code, _pretty_mode(code)))
-            seen.add(code)
+        if entry and entry not in seen:
+            modes.append(Mode(entry, _pretty_mode(entry)))
+            seen.add(entry)
     return modes
 
 
@@ -292,16 +271,7 @@ class YamahaDriver(Driver):
         raw_step = max(1, raw_step or 1)
         self._volume_range = (raw_min, raw_max, raw_step)
 
-        db_range = None
-        for key in ("actual_volume_db", "actual_volume"):
-            entry = ranges.get(key)
-            if entry and (
-                key.endswith("_db")
-                or str(entry.get("mode", "")).lower() == "db"
-                or str(entry.get("unit", "")).lower() == "db"
-            ):
-                db_range = entry
-                break
+        db_range = ranges.get("actual_volume_db")
 
         db_min = _number(db_range.get("min")) if db_range else None
         db_max = _number(db_range.get("max")) if db_range else None
@@ -346,10 +316,19 @@ class YamahaDriver(Driver):
             if self._features_loaded:
                 return
             response = await self._api("system/getFeatures")
-            zones = response.get("zone", {})
-            zone = zones.get("main", {}) if isinstance(zones, dict) else {}
-            if not isinstance(zone, dict):
-                zone = {}
+            zones = response.get("zone", [])
+            zone = (
+                next(
+                    (
+                        item
+                        for item in zones
+                        if isinstance(item, dict) and item.get("id") == "main"
+                    ),
+                    {},
+                )
+                if isinstance(zones, list)
+                else {}
+            )
             self._zone_features = zone
             functions = _function_names(zone)
             ranges = _range_entries(zone)

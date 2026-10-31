@@ -37,8 +37,45 @@ TURN_OFF = 256
 SELECT_SOUND_MODE = 65536
 
 
-def _read_response(request: urllib.request.Request, timeout: float) -> bytes:
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+def _url_origin(url: str) -> tuple[str, str, int] | None:
+    try:
+        parsed = urllib.parse.urlsplit(url)
+        scheme = parsed.scheme.lower()
+        host = parsed.hostname
+        if scheme not in {"http", "https"} or not host:
+            return None
+        port = parsed.port
+    except ValueError:
+        return None
+    if port is None:
+        port = 443 if scheme == "https" else 80
+    return scheme, host.lower(), port
+
+
+class _SameOriginRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def __init__(self, origin: tuple[str, str, int]):
+        super().__init__()
+        self._origin = origin
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        target_origin = _url_origin(newurl)
+        is_https_downgrade = (
+            self._origin[0] == "https"
+            and target_origin is not None
+            and target_origin[0] == "http"
+        )
+        if target_origin != self._origin or is_https_downgrade:
+            raise DriverError(
+                "Home Assistant redirected to another address; enter the final URL"
+            )
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _read_response(
+    request: urllib.request.Request, timeout: float, origin: tuple[str, str, int]
+) -> bytes:
+    opener = urllib.request.build_opener(_SameOriginRedirectHandler(origin))
+    with opener.open(request, timeout=timeout) as response:
         return response.read()
 
 
@@ -104,9 +141,11 @@ class HomeAssistantDriver(Driver):
         token = self.token
         try:
             parsed = urllib.parse.urlsplit(base_url)
+            origin = _url_origin(base_url)
             if (
                 parsed.scheme not in {"http", "https"}
                 or not parsed.hostname
+                or origin is None
                 or parsed.username is not None
                 or parsed.password is not None
                 or parsed.query
@@ -130,8 +169,10 @@ class HomeAssistantDriver(Driver):
             raise DriverError("Invalid Home Assistant request") from None
         try:
             body = await asyncio.get_running_loop().run_in_executor(
-                None, _read_response, request, REQUEST_TIMEOUT
+                None, _read_response, request, REQUEST_TIMEOUT, origin
             )
+        except DriverError:
+            raise
         except urllib.error.HTTPError as exc:
             exc.close()
             if exc.code in (401, 403):
@@ -231,20 +272,22 @@ class HomeAssistantDriver(Driver):
 
     async def _confirm(self, field: str, requested):
         deadline = asyncio.get_running_loop().time() + CONFIRM_TIMEOUT
+        last_observed = None
         while True:
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
-                return requested
+                return last_observed
             try:
                 snapshot = await asyncio.wait_for(self.status(), remaining)
             except asyncio.TimeoutError:
-                return requested
+                return last_observed
             confirmed = getattr(snapshot, field)
+            last_observed = confirmed
             if confirmed == requested:
                 return confirmed
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
-                return requested
+                return last_observed
             await asyncio.sleep(min(CONFIRM_INTERVAL, remaining))
 
     async def set_volume(self, raw: int) -> int:

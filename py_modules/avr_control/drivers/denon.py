@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import weakref
 from typing import ClassVar
 
 from .. import ssdp
@@ -47,7 +48,68 @@ MODE_NAMES = [
     ("VIRTUAL", "Virtual"),
 ]
 _MODE_NAME_BY_CODE = dict(MODE_NAMES)
-_SETTABLE_MODES = frozenset(_MODE_NAME_BY_CODE)
+
+_DOLBY_REPORT_PREFIXES = (
+    "DOLBY ",
+    "DOLBY AUDIO",
+    "STANDARD(DOLBY)",
+    "AAC+DSUR",
+    "AAC+DOLBY",
+    "AAC+PL2Z",
+    "M CH IN+DOLBY",
+    "M CH IN+DSUR",
+    "M CH IN+PL2Z",
+    "MULTI IN + DOLBY",
+    "MULTI IN + DSUR",
+)
+_DTS_REPORT_PREFIXES = (
+    "DTS ",
+    "DTS+",
+    "DTS-",
+    "DTS:",
+    "AAC+VIRTUAL:X",
+    "IMAX DTS",
+    "STANDARD(DTS)",
+    "NEURAL:X",
+    "M CH IN+NEURAL:X",
+    "M CH IN+VIRTUAL:X",
+    "MULTI IN + NEURAL:X",
+    "MULTI IN + VIRTUAL:X",
+    "MULTI CH IN",
+)
+
+
+def _canonical_mode(code: str) -> str:
+    """Translate decoder-specific status codes to settable mode commands."""
+    original = code.strip().upper()
+    normalized = re.sub(r"\s+", " ", original.replace("_", " "))
+    if normalized in _MODE_NAME_BY_CODE:
+        return normalized
+    if normalized in {"AUTO", "NONE"}:
+        return "AUTO"
+    if normalized in {"MCH STEREO", "MULTI CH STEREO"}:
+        return "MCH STEREO"
+    if normalized.startswith(
+        ("AAC+", "DOLBY ", "DTS ", "DTS+", "DTS-", "DTS:", "M CH IN", "MULTI IN")
+    ):
+        for suffix, canonical in (
+            (" CINEMA", "MOVIE"),
+            (" MOVIE", "MOVIE"),
+            (" C", "MOVIE"),
+            (" MUSIC", "MUSIC"),
+            (" M", "MUSIC"),
+            (" GAME", "GAME"),
+            (" G", "GAME"),
+        ):
+            if normalized.endswith(suffix):
+                return canonical
+    if normalized.startswith(_DOLBY_REPORT_PREFIXES):
+        return "DOLBY DIGITAL"
+    if normalized == "NEURAL" or normalized.startswith(
+        _DTS_REPORT_PREFIXES
+    ) or normalized == "AAC+NEURAL:X":
+        return "DTS SURROUND"
+    return original
 
 
 def _decode_volume(token: str) -> int:
@@ -90,6 +152,7 @@ class DenonDriver(Driver):
     key: ClassVar[str] = "denon"
     label: ClassVar[str] = "Denon / Marantz"
     capabilities = frozenset({VOLUME, MUTE, POWER, MODE})
+    _operation_locks: ClassVar[weakref.WeakKeyDictionary] = weakref.WeakKeyDictionary()
 
     def __init__(self, config: dict):
         super().__init__(config)
@@ -115,6 +178,19 @@ class DenonDriver(Driver):
     def scale(self) -> VolumeScale:
         return self._scale
 
+    def _operation_lock(self) -> asyncio.Lock:
+        loop = asyncio.get_running_loop()
+        locks = self._operation_locks.get(loop)
+        if locks is None:
+            locks = weakref.WeakValueDictionary()
+            self._operation_locks[loop] = locks
+        receiver = (self.host, self.port)
+        lock = locks.get(receiver)
+        if lock is None:
+            lock = asyncio.Lock()
+            locks[receiver] = lock
+        return lock
+
     def _record_max_volume(self, line: str) -> None:
         match = _MAX_VOLUME_LINE.fullmatch(line)
         if not match:
@@ -133,6 +209,22 @@ class DenonDriver(Driver):
         )
 
     async def _single(
+        self,
+        command: str,
+        matches,
+        *,
+        timeout: float = _REPLY_TIMEOUT,
+        trailing_grace: float = 0.07,
+    ) -> str:
+        async with self._operation_lock():
+            return await self._single_serialized(
+                command,
+                matches,
+                timeout=timeout,
+                trailing_grace=trailing_grace,
+            )
+
+    async def _single_serialized(
         self,
         command: str,
         matches,
@@ -182,6 +274,10 @@ class DenonDriver(Driver):
             await _close(writer)
 
     async def status(self) -> Status:
+        async with self._operation_lock():
+            return await self._status_serialized()
+
+    async def _status_serialized(self) -> Status:
         reader, writer = await _open(self.host, self.port)
         power: bool | None = None
         volume: int | None = None
@@ -230,7 +326,7 @@ class DenonDriver(Driver):
 
                 mode_match = _MODE_LINE.fullmatch(line)
                 if mode_match and mode_match.group(1) != "?":
-                    mode = mode_match.group(1).strip()
+                    mode = _canonical_mode(mode_match.group(1))
 
                 if power is True and all(
                     value is not None for value in (volume, muted, mode)
@@ -285,9 +381,7 @@ class DenonDriver(Driver):
         return reply == "PWON"
 
     async def set_mode(self, code: str) -> str:
-        normalized = str(code).strip().upper()
-        if normalized not in _SETTABLE_MODES:
-            raise Refused("That listening mode isn't in the Denon/Marantz settable mode list")
+        normalized = _canonical_mode(str(code))
         try:
             reply = await self._single(f"MS{normalized}", _MODE_LINE.fullmatch)
         except asyncio.TimeoutError as exc:
@@ -295,7 +389,7 @@ class DenonDriver(Driver):
                 "The receiver didn't accept that listening mode (it may be unavailable "
                 "for the current input or signal)"
             ) from exc
-        actual = reply[2:].strip()
+        actual = _canonical_mode(reply[2:])
         if actual in {"", "?", "ERROR"}:
             raise Refused(
                 "The receiver didn't accept that listening mode (it may be unavailable "

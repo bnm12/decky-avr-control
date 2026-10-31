@@ -23,14 +23,22 @@ from avr_control.drivers.yamaha import YamahaDriver
 
 
 class FakeYamahaYXC:
-    def __init__(self, *, actual_volume: bool = True, raw_max: int = 161):
+    def __init__(self, *, actual_volume: bool = True, raw_max: int = 194):
         self.actual_volume = actual_volume
         self.raw_max = raw_max
-        self.volume = 101 if raw_max == 161 else 70
+        self.volume = 101 if raw_max == 194 else 70
         self.mute = False
         self.power = "on"
         self.sound_program = "straight"
-        self.functions = ["volume", "mute", "power", "sound_program"]
+        self.functions = [
+            "power",
+            "sleep",
+            "volume",
+            "mute",
+            "sound_program",
+            "actual_volume",
+        ]
+        self.zone_order = ["main", "zone2"]
         self.requests: list[tuple[str, dict[str, list[str]]]] = []
         self.server = None
 
@@ -38,23 +46,51 @@ class FakeYamahaYXC:
         ranges = [{"id": "volume", "min": 0, "max": self.raw_max, "step": 1}]
         if self.actual_volume:
             ranges.append(
-                {"id": "actual_volume_db", "min": -80.5, "max": 0, "step": 0.5}
+                {"id": "actual_volume_db", "min": -80.5, "max": 16.5, "step": 0.5}
             )
+            ranges.append(
+                {
+                    "id": "actual_volume_numeric",
+                    "min": 0.0,
+                    "max": 97.0,
+                    "step": 0.5,
+                }
+            )
+        zones = {
+            "main": {
+                "id": "main",
+                "func_list": [
+                    function
+                    for function in self.functions
+                    if function != "actual_volume" or self.actual_volume
+                ],
+                "sound_program_list": [
+                    "munich",
+                    "vienna",
+                    "straight",
+                    "7ch_stereo",
+                    "surr_decoder",
+                    "sci-fi",
+                    "hall_in_munich",
+                ],
+                "range_step": ranges,
+            },
+            "zone2": {
+                "id": "zone2",
+                "zone_b": False,
+                "func_list": ["power", "sleep", "volume", "mute"],
+                "range_step": [
+                    {"id": "volume", "min": 0, "max": 194, "step": 1}
+                ],
+            },
+        }
         return {
             "response_code": 0,
-            "zone": {
-                "main": {
-                    "func_list": self.functions,
-                    "range_step": ranges,
-                    "sound_program_list": [
-                        "straight",
-                        "7ch_stereo",
-                        "surr_decoder",
-                        "sci-fi",
-                        "hall_in_munich",
-                    ],
-                }
+            "system": {
+                "func_list": ["wired_lan", "network_standby"],
+                "zone_num": 2,
             },
+            "zone": [zones[zone_id] for zone_id in self.zone_order],
         }
 
     def response(self, path: str, query: dict[str, list[str]]) -> dict:
@@ -178,7 +214,7 @@ class YamahaDriverTests(unittest.IsolatedAsyncioTestCase):
             (101, False, True, "straight"),
         )
         self.assertEqual(self.driver.scale.unit, "dB")
-        self.assertEqual((self.driver.scale.min, self.driver.scale.max), (0, 161))
+        self.assertEqual((self.driver.scale.min, self.driver.scale.max), (0, 194))
         self.assertEqual(self.driver.scale.zero, 161)
         self.assertEqual(self.driver.scale.steps_per_unit, 2)
         self.assertEqual(self.driver.scale.display(status.volume), -30)
@@ -188,6 +224,8 @@ class YamahaDriverTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [(mode.code, mode.name) for mode in modes],
             [
+                ("munich", "Munich"),
+                ("vienna", "Vienna"),
                 ("straight", "Straight"),
                 ("7ch_stereo", "7ch Stereo"),
                 ("surr_decoder", "Surround Decoder"),
@@ -205,6 +243,29 @@ class YamahaDriverTests(unittest.IsolatedAsyncioTestCase):
             (self.fake.volume, self.fake.mute, self.fake.power, self.fake.sound_program),
             (120, True, "standby", "7ch_stereo"),
         )
+
+    async def test_spec_shaped_features_select_main_zone_by_id(self):
+        self.fake.zone_order = ["zone2", "main"]
+        driver = YamahaDriver({"host": "127.0.0.1", "port": self.port})
+
+        status = await driver.status()
+        self.assertEqual(status.mode, "straight")
+        self.assertEqual(driver.capabilities, {VOLUME, MUTE, POWER, MODE})
+        self.assertEqual((driver.scale.min, driver.scale.max), (0, 194))
+        self.assertEqual(driver.scale.zero, 161)
+        self.assertEqual(
+            [mode.code for mode in await driver.list_modes()],
+            [
+                "munich",
+                "vienna",
+                "straight",
+                "7ch_stereo",
+                "surr_decoder",
+                "sci-fi",
+                "hall_in_munich",
+            ],
+        )
+        self.assertEqual(await driver.set_volume(120), 120)
 
     async def test_percent_scale_without_actual_volume_and_response_errors(self):
         self.fake.actual_volume = False

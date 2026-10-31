@@ -35,6 +35,7 @@ ALL_FEATURES = VOLUME_SET | VOLUME_MUTE | TURN_ON | TURN_OFF | SELECT_SOUND_MODE
 class FakeHomeAssistant:
     def __init__(self):
         self.state = "playing"
+        self.confirm_volume = True
         self.attributes = {
             "friendly_name": "Living Room Receiver",
             "volume_level": 0.42,
@@ -103,7 +104,8 @@ class FakeHomeAssistant:
                 service = path.rsplit("/", 1)[-1]
                 fake.services.append((service, dict(payload)))
                 if service == "volume_set":
-                    fake.attributes["volume_level"] = payload["volume_level"]
+                    if fake.confirm_volume:
+                        fake.attributes["volume_level"] = payload["volume_level"]
                 elif service == "volume_mute":
                     fake.attributes["is_volume_muted"] = payload["is_volume_muted"]
                 elif service == "turn_on":
@@ -201,6 +203,11 @@ class HomeAssistantDriverTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.fake.services[1][1]["is_volume_muted"])
         self.assertEqual(self.fake.services[-1][1]["sound_mode"], "Direct")
 
+    async def test_volume_set_returns_stale_observed_value(self):
+        self.fake.confirm_volume = False
+
+        self.assertEqual(await self.driver.set_volume(20), 42)
+
     async def test_modes_and_unknown_mode_refusal(self):
         modes = await self.driver.list_modes()
         self.assertEqual([(mode.code, mode.name) for mode in modes],
@@ -250,6 +257,74 @@ class HomeAssistantDriverTests(unittest.IsolatedAsyncioTestCase):
         found = await HomeAssistantDriver.probe(self.config)
         self.assertEqual(found.model, "Receiver [redacted]")
         self.assertNotIn(TOKEN, found.model)
+
+    async def test_cross_origin_redirect_is_refused_without_forwarding_token(self):
+        received_authorization = []
+
+        class CaptureHandler(BaseHTTPRequestHandler):
+            def log_message(self, _format, *_args):
+                return
+
+            def do_GET(self):
+                received_authorization.append(self.headers.get("Authorization"))
+                body = json.dumps(
+                    {
+                        "state": "playing",
+                        "attributes": {
+                            "volume_level": 0.42,
+                            "supported_features": ALL_FEATURES,
+                        },
+                    }
+                ).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        capture_server = ThreadingHTTPServer(("127.0.0.1", 0), CaptureHandler)
+        capture_thread = threading.Thread(
+            target=capture_server.serve_forever, daemon=True
+        )
+        capture_thread.start()
+        target_url = f"http://127.0.0.1:{capture_server.server_address[1]}"
+
+        class RedirectHandler(BaseHTTPRequestHandler):
+            def log_message(self, _format, *_args):
+                return
+
+            def do_GET(self):
+                self.send_response(302)
+                self.send_header("Location", f"{target_url}{self.path}")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+        redirect_server = ThreadingHTTPServer(("127.0.0.1", 0), RedirectHandler)
+        redirect_thread = threading.Thread(
+            target=redirect_server.serve_forever, daemon=True
+        )
+        redirect_thread.start()
+
+        try:
+            driver = HomeAssistantDriver(
+                {
+                    **self.config,
+                    "url": f"http://127.0.0.1:{redirect_server.server_address[1]}",
+                }
+            )
+            with self.assertRaisesRegex(
+                DriverError,
+                "Home Assistant redirected to another address; enter the final URL",
+            ):
+                await driver.status()
+            self.assertEqual(received_authorization, [])
+        finally:
+            redirect_server.shutdown()
+            redirect_server.server_close()
+            redirect_thread.join(timeout=2)
+            capture_server.shutdown()
+            capture_server.server_close()
+            capture_thread.join(timeout=2)
 
 
 if __name__ == "__main__":
