@@ -27,6 +27,18 @@
 
 [spec] Manual probing calls `GET /api/` and then reads the configured entity state. The resulting ID is `ha:<entity_id>`; it is stable as long as that entity ID remains unchanged.
 
+## Setup options and onboarding
+
+[spec] Create a long-lived access token in the Home Assistant user's profile under **Security → Long-lived access tokens**. Select **Home Assistant** as the connection type, enter the server URL (for example `http://homeassistant.local:8123`) and token, then choose **Find media players**.
+
+[spec] Setup options call the read-only `GET /api/states` endpoint with the same bearer authentication, timeout, URL validation, redirect protection, and user-facing errors as other driver requests. Missing URL or token returns no options.
+
+[assumed] The driver offers only `media_player.*` entities, sorted by friendly name, with the entity ID in each label. Entities without the `VOLUME_SET` feature are marked “no volume control”; this is an onboarding hint, not a filter. The user can choose a result or type an entity ID manually.
+
+[spec] Home Assistant's advertised `supported_features` determine which controls AVR Control exposes after connection. An entity may have no volume capability even though it is a media player.
+
+[assumed] The panel never fills the token back into the form. It is sent only to the Home Assistant URL the user entered; that URL may be outside the local network.
+
 ## Commands
 
 | Capability | Query | Set | Reply | Notes |

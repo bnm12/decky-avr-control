@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   ButtonItem,
   DropdownItem,
@@ -5,11 +6,17 @@ import {
   PanelSectionRow,
   TextField,
 } from "@decky/ui";
+import { getSetupOptions } from "../api";
 import { useAvr } from "../hooks/useAvr";
 
 type Props = { avr: ReturnType<typeof useAvr> };
 
 export function ReceiverSection({ avr }: Props) {
+  const [haOptions, setHaOptions] = useState<
+    { value: string; label: string }[]
+  >([]);
+  const [haSetupError, setHaSetupError] = useState<string | null>(null);
+  const [haSetupLoading, setHaSetupLoading] = useState(false);
   const { snapshot } = avr;
   const connection = snapshot?.connection;
   const fields =
@@ -83,6 +90,8 @@ export function ReceiverSection({ avr }: Props) {
           onChange={(option: { data: string }) => {
             avr.setSelectedDriver(option.data);
             avr.setManualConfig({ host: avr.host });
+            setHaOptions([]);
+            setHaSetupError(null);
           }}
         />
       </PanelSectionRow>
@@ -122,11 +131,110 @@ export function ReceiverSection({ avr }: Props) {
                     ...current,
                     [field.key]: event.target.value,
                   }));
+                  if (
+                    avr.selectedDriver === "homeassistant" &&
+                    (field.key === "url" || field.key === "token")
+                  ) {
+                    setHaOptions([]);
+                    setHaSetupError(null);
+                  }
                 }}
               />
             </PanelSectionRow>
           );
         })
+      )}
+      {avr.selectedDriver === "homeassistant" && (
+        <>
+          <PanelSectionRow>
+            <div>
+              Create a long-lived access token in Home Assistant under your
+              profile → Security → Long-lived access tokens. The URL is often
+              like http://homeassistant.local:8123.
+            </div>
+          </PanelSectionRow>
+          <PanelSectionRow>
+            <ButtonItem
+              layout="below"
+              disabled={avr.saving || haSetupLoading}
+              onClick={() => {
+                const url = avr.manualConfig.url?.trim() ?? "";
+                const token = avr.manualConfig.token ?? "";
+                setHaOptions([]);
+                setHaSetupError(null);
+                if (!url) {
+                  setHaSetupError("Enter the Home Assistant URL first.");
+                  return;
+                }
+                if (!token.trim()) {
+                  const savedToken =
+                    connection?.configured &&
+                    connection.driver === "homeassistant";
+                  setHaSetupError(
+                    savedToken
+                      ? "Re-enter the token to find media players; setup lookup can't use the saved token yet."
+                      : "Enter a long-lived access token to find media players.",
+                  );
+                  return;
+                }
+
+                setHaSetupLoading(true);
+                void getSetupOptions("homeassistant", { url, token })
+                  .then((response) => {
+                    const result = response as unknown as {
+                      error?: unknown;
+                      entity_id?: { value: string; label: string }[];
+                    };
+                    if (typeof result.error === "string") {
+                      setHaSetupError(result.error);
+                      return;
+                    }
+                    const options = result.entity_id ?? [];
+                    setHaOptions(options);
+                    if (options.length === 0) {
+                      setHaSetupError("No Home Assistant media players found.");
+                    }
+                  })
+                  .catch((error: unknown) => {
+                    setHaSetupError(
+                      error instanceof Error
+                        ? error.message
+                        : "Couldn't find Home Assistant media players.",
+                    );
+                  })
+                  .finally(() => setHaSetupLoading(false));
+              }}
+            >
+              {haSetupLoading ? "Finding media players…" : "Find media players"}
+            </ButtonItem>
+          </PanelSectionRow>
+          {haOptions.length > 0 && (
+            <PanelSectionRow>
+              <DropdownItem
+                label="Found media players"
+                rgOptions={[
+                  { data: "", label: "Select a media player" },
+                  ...haOptions.map((option) => ({
+                    data: option.value,
+                    label: option.label,
+                  })),
+                ]}
+                selectedOption={avr.manualConfig.entity_id ?? ""}
+                onChange={(option: { data: string }) =>
+                  avr.setManualConfig((current) => ({
+                    ...current,
+                    entity_id: option.data,
+                  }))
+                }
+              />
+            </PanelSectionRow>
+          )}
+          {haSetupError && (
+            <PanelSectionRow>
+              <div style={{ color: "#ff6b6b" }}>{haSetupError}</div>
+            </PanelSectionRow>
+          )}
+        </>
       )}
       <PanelSectionRow>
         <ButtonItem layout="below" disabled={avr.saving} onClick={save}>

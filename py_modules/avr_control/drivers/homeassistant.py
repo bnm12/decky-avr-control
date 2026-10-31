@@ -22,6 +22,7 @@ from .base import (
     Mode,
     ModeState,
     Refused,
+    SetupOption,
     Status,
     Unsupported,
     VolumeScale,
@@ -367,6 +368,59 @@ class HomeAssistantDriver(Driver):
     @classmethod
     async def discover(cls, timeout: float) -> list[Found]:
         return []
+
+    @classmethod
+    async def setup_options(cls, config: dict) -> dict[str, list[SetupOption]]:
+        url = config.get("url")
+        token = config.get("token")
+        if (
+            not isinstance(url, str)
+            or not url.strip()
+            or not isinstance(token, str)
+            or not token.strip()
+        ):
+            return {}
+
+        response = await cls(config)._request_json("/api/states")
+        if not isinstance(response, list):
+            raise DriverError("Home Assistant returned an invalid entity list")
+
+        entities: list[tuple[str, str, SetupOption]] = []
+        for state in response:
+            if not isinstance(state, dict):
+                continue
+            entity_id = state.get("entity_id")
+            if not isinstance(entity_id, str) or not entity_id.startswith(
+                "media_player."
+            ):
+                continue
+
+            attributes = state.get("attributes")
+            if not isinstance(attributes, dict):
+                attributes = {}
+            friendly_name = attributes.get("friendly_name")
+            if not isinstance(friendly_name, str) or not friendly_name.strip():
+                friendly_name = entity_id
+            else:
+                friendly_name = friendly_name.strip()
+            try:
+                features = int(attributes.get("supported_features", 0))
+            except (TypeError, ValueError, OverflowError):
+                features = 0
+
+            label = f"{friendly_name} ({entity_id})"
+            if not features & VOLUME_SET:
+                label += " (no volume control)"
+            entities.append(
+                (
+                    friendly_name.casefold(),
+                    entity_id.casefold(),
+                    SetupOption(entity_id, label),
+                )
+            )
+
+        entities.sort(key=lambda item: (item[0], item[1]))
+        return {"entity_id": [item[2] for item in entities]}
 
     @classmethod
     async def probe(cls, config: dict) -> Found | None:
