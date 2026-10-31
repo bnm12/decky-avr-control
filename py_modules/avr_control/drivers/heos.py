@@ -4,42 +4,34 @@ from __future__ import annotations
 
 import asyncio
 import json
-import weakref
 import xml.etree.ElementTree as ET
-from typing import Awaitable, Callable, ClassVar
+from typing import ClassVar
 from urllib.parse import parse_qs, urlencode
 
 from .. import ssdp
 from .base import MUTE, VOLUME, ConfigField, Driver, DriverError, Found, Status, VolumeScale
+from .receiver_session import ReceiverSessionError, shared_session
 
 HEOS_PORT = 1255
 HEOS_SSDP_ST = "urn:schemas-denon-com:device:ACT-Denon:1"
 _REPLY_TIMEOUT = 2.0
-_OPERATION_LOCKS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 
-async def _open(
-    host: str, port: int
-) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
-    if not host:
-        raise DriverError("Enter the IP address of a HEOS device")
+async def _read_json_line(reader: asyncio.StreamReader) -> dict:
+    line = await reader.readline()
+    if not line:
+        raise DriverError("HEOS closed the connection before replying")
     try:
-        return await asyncio.wait_for(asyncio.open_connection(host, port), _REPLY_TIMEOUT)
-    except Exception as exc:
-        raise DriverError(f"Can't reach HEOS device at {host}:{port}: {exc}") from exc
-
-
-async def _close(writer: asyncio.StreamWriter) -> None:
-    writer.close()
-    try:
-        await writer.wait_closed()
-    except Exception:
-        pass
+        response = json.loads(line.decode("ascii"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise DriverError("HEOS returned an invalid JSON response") from exc
+    if not isinstance(response, dict) or not isinstance(response.get("heos"), dict):
+        raise DriverError("HEOS returned an invalid response")
+    return response
 
 
 async def _request(
-    reader: asyncio.StreamReader,
-    writer: asyncio.StreamWriter,
+    session,
     command: str,
     args: dict[str, str | int] | None = None,
     *,
@@ -48,34 +40,26 @@ async def _request(
     request = f"heos://{command}"
     if args:
         request += "?" + urlencode(args)
-    writer.write((request + "\r\n").encode("ascii"))
-    await writer.drain()
-
-    deadline = asyncio.get_running_loop().time() + timeout
-    while True:
-        remaining = deadline - asyncio.get_running_loop().time()
-        if remaining <= 0:
-            raise asyncio.TimeoutError()
-        line = await asyncio.wait_for(reader.readline(), remaining)
-        if not line:
-            raise DriverError("HEOS closed the connection before replying")
-        try:
-            response = json.loads(line.decode("ascii"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise DriverError("HEOS returned an invalid JSON response") from exc
-        if not isinstance(response, dict) or not isinstance(response.get("heos"), dict):
-            raise DriverError("HEOS returned an invalid response")
+    def classify(response: dict) -> str | None:
         metadata = response["heos"]
         message = str(metadata.get("message", ""))
         if message.strip().casefold() == "command under process":
-            continue
+            return "interim"
         response_command = "".join(str(metadata.get("command", "")).split())
         if response_command != command:
-            continue
+            return None
         if str(metadata.get("result", "")).casefold() != "success":
             detail = message or str(metadata.get("result", "unknown error"))
             raise DriverError(f"HEOS command {command} failed: {detail}")
-        return response
+        return "response"
+
+    frames = await session.transact(
+        [(request + "\r\n").encode("ascii")],
+        classify,
+        frozenset({"response"}),
+        timeout=timeout,
+    )
+    return frames["response"]
 
 
 def _response_values(response: dict) -> dict:
@@ -127,6 +111,10 @@ class HeosDriver(Driver):
         min=0, max=100, unit="%", zero=0, steps_per_unit=1, default_cap=60
     )
 
+    def __init__(self, config: dict):
+        super().__init__(config)
+        self._session = None
+
     @property
     def host(self) -> str:
         return str(self.config.get("host", "")).strip()
@@ -141,40 +129,43 @@ class HeosDriver(Driver):
             raise DriverError("Invalid HEOS device port")
         return port
 
-    def _operation_lock(self) -> asyncio.Lock:
-        loop = asyncio.get_running_loop()
-        locks = _OPERATION_LOCKS.get(loop)
-        if locks is None:
-            locks = weakref.WeakValueDictionary()
-            _OPERATION_LOCKS[loop] = locks
-        key = (self.host, self.port)
-        lock = locks.get(key)
-        if lock is None:
-            lock = asyncio.Lock()
-            locks[key] = lock
-        return lock
+    def _receiver_session(self):
+        if not self.host:
+            raise DriverError("Enter the IP address of a HEOS device")
+        if self._session is None:
+            self._session = shared_session(self.host, self.port, _read_json_line)
+        return self._session
 
-    async def _transaction(
-        self, action: Callable[[asyncio.StreamReader, asyncio.StreamWriter], Awaitable]
-    ):
+    async def _transaction(self, action):
         try:
-            async with self._operation_lock():
-                reader, writer = await _open(self.host, self.port)
-                try:
-                    return await action(reader, writer)
-                finally:
-                    await _close(writer)
+            async with self._receiver_session()._transaction_group():
+                return await action()
+        except ReceiverSessionError as exc:
+            if exc.kind == "timeout":
+                raise DriverError("HEOS did not reply in time") from exc
+            if exc.kind == "connect":
+                raise DriverError(
+                    f"Can't reach HEOS device at {self.host}:{self.port}: {exc}"
+                ) from exc
+            if exc.kind == "eof":
+                raise DriverError("HEOS closed the connection before replying") from exc
+            raise
         except DriverError:
             raise
-        except asyncio.TimeoutError as exc:
-            raise DriverError("HEOS did not reply in time") from exc
         except Exception as exc:
             raise DriverError(f"HEOS request failed: {exc}") from exc
 
-    async def _players(
-        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
-    ) -> list[dict]:
-        response = await _request(reader, writer, "player/get_players")
+    async def _request(
+        self,
+        command: str,
+        args: dict[str, str | int] | None = None,
+        *,
+        timeout: float = _REPLY_TIMEOUT,
+    ) -> dict:
+        return await _request(self._receiver_session(), command, args, timeout=timeout)
+
+    async def _players(self) -> list[dict]:
+        response = await self._request("player/get_players")
         payload = response.get("payload")
         if isinstance(payload, dict):
             payload = payload.get("players")
@@ -240,10 +231,8 @@ class HeosDriver(Driver):
             f"Available players: {_player_names(players)}"
         )
 
-    async def _target_pid(
-        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
-    ) -> str:
-        player = self._resolve_player(await self._players(reader, writer))
+    async def _target_pid(self) -> str:
+        player = self._resolve_player(await self._players())
         self._learn_serial(player)
         pid = player.get("pid")
         if pid is None or str(pid).strip() == "":
@@ -260,9 +249,9 @@ class HeosDriver(Driver):
             self.config.pop("serial_for", None)
 
     async def _get_volume(
-        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, pid: str
+        self, pid: str
     ) -> int:
-        response = await _request(reader, writer, "player/get_volume", {"pid": pid})
+        response = await self._request("player/get_volume", {"pid": pid})
         try:
             value = int(_response_values(response)["level"])
         except (KeyError, TypeError, ValueError) as exc:
@@ -272,9 +261,9 @@ class HeosDriver(Driver):
         return value
 
     async def _get_mute(
-        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, pid: str
+        self, pid: str
     ) -> bool:
-        response = await _request(reader, writer, "player/get_mute", {"pid": pid})
+        response = await self._request("player/get_mute", {"pid": pid})
         values = _response_values(response)
         state = values.get("state", values.get("mute"))
         if isinstance(state, bool):
@@ -287,10 +276,10 @@ class HeosDriver(Driver):
         raise DriverError("HEOS returned an invalid mute state")
 
     async def status(self) -> Status:
-        async def read(reader, writer):
-            pid = await self._target_pid(reader, writer)
-            volume = await self._get_volume(reader, writer, pid)
-            muted = await self._get_mute(reader, writer, pid)
+        async def read():
+            pid = await self._target_pid()
+            volume = await self._get_volume(pid)
+            muted = await self._get_mute(pid)
             return Status(volume=volume, muted=muted)
 
         return await self._transaction(read)
@@ -301,25 +290,23 @@ class HeosDriver(Driver):
         except (TypeError, ValueError) as exc:
             raise DriverError("Invalid HEOS volume value") from exc
 
-        async def write(reader, writer):
-            pid = await self._target_pid(reader, writer)
-            await _request(
-                reader, writer, "player/set_volume", {"pid": pid, "level": value}
+        async def write():
+            pid = await self._target_pid()
+            await self._request(
+                "player/set_volume", {"pid": pid, "level": value}
             )
-            return await self._get_volume(reader, writer, pid)
+            return await self._get_volume(pid)
 
         return await self._transaction(write)
 
     async def set_mute(self, muted: bool) -> bool:
-        async def write(reader, writer):
-            pid = await self._target_pid(reader, writer)
-            await _request(
-                reader,
-                writer,
+        async def write():
+            pid = await self._target_pid()
+            await self._request(
                 "player/set_mute",
                 {"pid": pid, "state": "on" if muted else "off"},
             )
-            return await self._get_mute(reader, writer, pid)
+            return await self._get_mute(pid)
 
         return await self._transaction(write)
 
@@ -384,16 +371,11 @@ class HeosDriver(Driver):
         driver = cls(config)
 
         async def identify() -> dict:
-            async with driver._operation_lock():
-                reader, writer = await _open(host, driver.port)
-                try:
-                    await _request(
-                        reader, writer, "system/heart_beat", timeout=_REPLY_TIMEOUT
-                    )
-                    player = driver._resolve_player(await driver._players(reader, writer))
-                finally:
-                    await _close(writer)
-                return player
+            async with driver._receiver_session()._transaction_group():
+                await driver._request(
+                    "system/heart_beat", timeout=_REPLY_TIMEOUT
+                )
+                return driver._resolve_player(await driver._players())
 
         try:
             player = await asyncio.wait_for(identify(), _REPLY_TIMEOUT)

@@ -11,11 +11,11 @@
 | Verified on | [assumed] None; the tested VSX-935 does not speak this protocol |
 | Transport | [community] TCP text commands; port 8102 documented for the VSX-529, CRLF terminated; [assumed] port 23 is also probed |
 | Discovery | [assumed] None implemented; enter the receiver host manually |
-| Connections | [assumed] One request per TCP connection; concurrent-client limits unknown |
+| Connections | [assumed] One transaction per TCP connection; the shared session serializes transactions for the same host and port |
 
 ## Transport and framing
 
-[community] Commands are ASCII text terminated by `\r\n`; responses are read as lines until the expected reply arrives. The driver tests port 23 then 8102 and remembers the working port in the receiver config. A typical volume exchange is `?V\r\n` → `VOL###`, where `###` is decimal.
+[community] Commands are ASCII text terminated by `\r\n`; responses are read as lines until the expected reply arrives. The driver tests port 23 then 8102 and remembers the working port in the receiver config. A typical volume exchange is `?V\r\n` → `VOL###`, where `###` is decimal. The shared `ReceiverSession` owns each transaction's TCP stream, serializes concurrent calls, and closes the stream after the reply or failure.
 
 [assumed] This framing and the per-request connection behavior have not been verified on hardware for this project.
 

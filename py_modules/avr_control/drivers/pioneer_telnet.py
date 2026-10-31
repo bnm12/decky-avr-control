@@ -7,42 +7,31 @@ import re
 from typing import ClassVar
 
 from .base import MUTE, POWER, VOLUME, Driver, DriverError, Found, Status, VolumeScale
+from .receiver_session import shared_session
 
 TELNET_PORTS = (23, 8102)
 
 
+async def _read_line(reader: asyncio.StreamReader) -> str:
+    line = await reader.readline()
+    if not line:
+        raise DriverError("AVR closed the connection")
+    return line.decode("ascii", errors="ignore")
+
+
 async def _request(host: str, port: int, command: str, pattern: str):
-    try:
-        reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), 2.0)
-    except Exception as exc:
-        raise DriverError(f"Can't reach AVR at {host}:{port}: {exc}") from exc
-    try:
-        writer.write((command + "\r\n").encode("ascii"))
-        await writer.drain()
-        matcher = re.compile(pattern)
+    matcher = re.compile(pattern)
 
-        async def receive():
-            while True:
-                line = await reader.readline()
-                if not line:
-                    raise DriverError("AVR closed the connection")
-                match = matcher.search(line.decode("ascii", errors="ignore"))
-                if match:
-                    return match
+    def classify(line: str) -> str | None:
+        return "reply" if matcher.search(line) else None
 
-        return await asyncio.wait_for(receive(), 2.0)
-    except (asyncio.TimeoutError, asyncio.IncompleteReadError):
-        raise
-    except DriverError:
-        raise
-    except Exception as exc:
-        raise DriverError(f"Pioneer text request failed: {exc}") from exc
-    finally:
-        writer.close()
-        try:
-            await writer.wait_closed()
-        except Exception:
-            pass
+    frames = await shared_session(host, port, _read_line).transact(
+        [(command + "\r\n").encode("ascii")],
+        classify,
+        frozenset({"reply"}),
+        timeout=2.0,
+    )
+    return matcher.search(frames["reply"])
 
 
 class PioneerTelnetDriver(Driver):

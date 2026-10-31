@@ -23,6 +23,7 @@ from .base import (
     Status,
     VolumeScale,
 )
+from .receiver_session import ReceiverSessionError, shared_session
 
 EISCP_PORT = 60128
 DISCOVERY_TARGETS: list[tuple[str, int]] | None = None
@@ -79,42 +80,21 @@ async def _read_packet(reader: asyncio.StreamReader) -> str:
     return (await reader.readexactly(data_size)).decode("ascii", errors="ignore")
 
 
-async def _open(host: str, port: int) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
-    try:
-        return await asyncio.wait_for(asyncio.open_connection(host, port), 2.0)
-    except Exception as exc:
-        raise DriverError(f"Can't reach AVR at {host}:{port}: {exc}") from exc
-
-
 async def _query(host: str, port: int, command: str, pattern: str, timeout: float = 2.0):
-    reader, writer = await _open(host, port)
-    try:
-        writer.write(packet(f"!1{command}\r"))
-        await writer.drain()
-        matcher = re.compile(pattern)
-        deadline = asyncio.get_running_loop().time() + timeout
-        while True:
-            remaining = deadline - asyncio.get_running_loop().time()
-            if remaining <= 0:
-                raise asyncio.TimeoutError()
-            payload = await asyncio.wait_for(_read_packet(reader), remaining)
-            if _NJAPUSH.search(payload):
-                continue
-            match = matcher.search(payload)
-            if match:
-                return match
-    except (asyncio.TimeoutError, asyncio.IncompleteReadError):
-        raise
-    except DriverError:
-        raise
-    except Exception as exc:
-        raise DriverError(f"eISCP request failed: {exc}") from exc
-    finally:
-        writer.close()
-        try:
-            await writer.wait_closed()
-        except Exception:
-            pass
+    matcher = re.compile(pattern)
+
+    def classify(payload: str) -> str | None:
+        if _NJAPUSH.search(payload):
+            return None
+        return "reply" if matcher.search(payload) else None
+
+    frames = await shared_session(host, port, _read_packet).transact(
+        [packet(f"!1{command}\r")],
+        classify,
+        frozenset({"reply"}),
+        timeout=timeout,
+    )
+    return matcher.search(frames["reply"])
 
 
 async def _multi(
@@ -126,62 +106,55 @@ async def _multi(
     complete_when: Callable[[list[re.Match[str] | None]], bool] | None = None,
     grace_indices: set[int] | None = None,
 ) -> list[re.Match[str] | None]:
-    reader, writer = await _open(host, port)
-    try:
-        for command, _, _ in queries:
-            writer.write(packet(f"!1{command}\r"))
-        await writer.drain()
-        patterns = [re.compile(pattern) for _, pattern, _ in queries]
-        result: list[re.Match[str] | None] = [None] * len(queries)
-        required = {i for i, query in enumerate(queries) if query[2]}
-        optional = {i for i, query in enumerate(queries) if not query[2]}
-        deadline = asyncio.get_running_loop().time() + required_timeout
+    patterns = [re.compile(pattern) for _, pattern, _ in queries]
+    result: list[re.Match[str] | None] = [None] * len(queries)
+    if complete_when is None:
+        required_indices = {i for i, query in enumerate(queries) if query[2]}
+    else:
+        required_indices = set()
+    optional_indices = (
+        set(grace_indices)
+        if grace_indices is not None
+        else {i for i, query in enumerate(queries) if not query[2]}
+    )
+    optional_keys = frozenset(f"reply-{index}" for index in optional_indices)
 
-        while (
-            not complete_when(result)
-            if complete_when is not None
-            else any(result[i] is None for i in required)
-        ):
-            remaining = deadline - asyncio.get_running_loop().time()
-            if remaining <= 0:
-                raise asyncio.TimeoutError()
-            payload = await asyncio.wait_for(_read_packet(reader), remaining)
-            if _NJAPUSH.search(payload):
+    def classify(payload: str) -> str | None:
+        if _NJAPUSH.search(payload):
+            return None
+        for index, pattern in enumerate(patterns):
+            if result[index] is not None:
                 continue
-            for i, pattern in enumerate(patterns):
-                if result[i] is None:
-                    result[i] = pattern.search(payload)
+            match = pattern.search(payload)
+            if match is None:
+                continue
+            was_complete = (
+                complete_when(result) if complete_when is not None else False
+            )
+            result[index] = match
+            if (
+                complete_when is not None
+                and not was_complete
+                and complete_when(result)
+            ):
+                return "complete"
+            return f"reply-{index}"
+        return None
 
-        if grace_indices is not None:
-            optional = grace_indices
-        if optional and any(result[i] is None for i in optional):
-            deadline = asyncio.get_running_loop().time() + grace
-            while any(result[i] is None for i in optional):
-                remaining = deadline - asyncio.get_running_loop().time()
-                if remaining <= 0:
-                    break
-                try:
-                    payload = await asyncio.wait_for(_read_packet(reader), remaining)
-                except (asyncio.TimeoutError, asyncio.IncompleteReadError, OSError):
-                    break
-                if _NJAPUSH.search(payload):
-                    continue
-                for i in optional:
-                    if result[i] is None:
-                        result[i] = patterns[i].search(payload)
-        return result
-    except (asyncio.TimeoutError, asyncio.IncompleteReadError):
-        raise
-    except DriverError:
-        raise
-    except Exception as exc:
-        raise DriverError(f"eISCP status request failed: {exc}") from exc
-    finally:
-        writer.close()
-        try:
-            await writer.wait_closed()
-        except Exception:
-            pass
+    required_keys = (
+        frozenset({"complete"})
+        if complete_when is not None
+        else frozenset(f"reply-{index}" for index in required_indices)
+    )
+    await shared_session(host, port, _read_packet).transact(
+        [packet(f"!1{command}\r") for command, _, _ in queries],
+        classify,
+        required_keys,
+        timeout=required_timeout,
+        optional=optional_keys,
+        optional_grace=grace,
+    )
+    return result
 
 
 def _local_prefix() -> str | None:
@@ -396,7 +369,7 @@ class EiscpDriver(Driver):
                 or (result[0] is not None and result[1] is not None),
                 grace_indices={2, 3},
             )
-        except (asyncio.TimeoutError, asyncio.IncompleteReadError) as exc:
+        except ReceiverSessionError as exc:
             raise DriverError("AVR didn't report its power state") from exc
         return Status(
             volume=int(volume.group(1), 16) if volume else None,
@@ -408,7 +381,7 @@ class EiscpDriver(Driver):
     async def _set(self, command: str, pattern: str) -> re.Match[str]:
         try:
             return await _query(self.host, self.port, command, pattern)
-        except (asyncio.TimeoutError, asyncio.IncompleteReadError) as exc:
+        except ReceiverSessionError as exc:
             raise DriverError("AVR didn't confirm the command") from exc
 
     async def set_volume(self, raw: int) -> int:
@@ -434,7 +407,7 @@ class EiscpDriver(Driver):
             match = await _query(
                 self.host, self.port, f"LMD{code}", r"LMD([0-9A-F]{2,4})"
             )
-        except (asyncio.TimeoutError, asyncio.IncompleteReadError) as exc:
+        except ReceiverSessionError as exc:
             raise Refused(REFUSED_MODE_MESSAGE) from exc
         return match.group(1).upper()
 

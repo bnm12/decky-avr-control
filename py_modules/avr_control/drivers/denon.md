@@ -11,19 +11,19 @@
 | Verified on | none (simulator only) |
 | Transport | [spec] Telnet-compatible TCP port 23; [community] HTTP/XML status and control, normally port 80 or 8080 depending on model year. Telnet is preferred when it answers; HTTP is the fallback. |
 | Discovery | [assumed] SSDP M-SEARCH for MediaRenderer and root-device advertisements; description UDN is the preferred stable ID. |
-| Connections | [community] Receivers commonly allow one active Telnet client; this driver opens and closes one connection per operation. |
+| Connections | [community] Receivers commonly allow one active Telnet client; a shared TCP session serializes drivers for the same host and port and closes after each transaction. |
 
 ## Transport and framing
 
 [spec] Send plain ASCII commands terminated by carriage return (`\r`, byte `0x0d`) to TCP port 23. Replies are CR-terminated ASCII lines; a line-feed, if present, is ignored. For example, send `PW?\r` and expect `PWON\r` or `PWSTANDBY\r`.
 
-[community] The receiver can also push unsolicited event lines on an open Telnet connection. The driver ignores lines that do not match a requested response, and uses a fresh connection for each operation rather than keeping a subscription open.
+[community] The receiver can also push unsolicited event lines on an open Telnet connection. The shared `ReceiverSession` routes lines that do not match a transaction to subscribers; this driver does not currently subscribe. It uses a fresh connection for each transaction rather than keeping a subscription open.
 
 [community] The driver first checks Telnet TCP 23 and prefers it if it returns a Denon power reply. When Telnet is unavailable, busy, or disabled, it tries HTTP on the configured `http_port`, then ports 80 and 8080. The selected transport and HTTP port are retained in receiver config.
 
 [community] The HTTP adapter reads `/goform/formMainZone_MainZoneXmlStatus.xml` (and falls back to `/goform/formMainZone_MainZoneXml.xml`) and parses the main-zone Power, MasterVolume, VolumeDisplay, Mute and surround-mode XML fields. The fallback page can report its mode as `selectSurround` ([AVR-1912 recording](https://github.com/ol-iver/denonavr/blob/12b5cf70efe843a81276cfab56311de88c7fe489/tests/xml/AVR-1912-formMainZone_MainZoneXml.xml)). Setters use `/goform/formiPhoneAppDirect.xml?<command>` with the same Telnet-style command strings, then query the XML status page to confirm the new value. The library's AppCommand interface is another HTTP/XML option (`POST /goform/AppCommand.xml`) with `GetAllZonePowerStatus`, `GetAllZoneVolume`, `GetAllZoneMuteStatus` and `GetSurroundModeStatus`; this driver uses the status pages instead of AppCommand because they expose the needed state in one response and are also used as the library's fallback for receivers with incomplete AppCommand responses.
 
-[community] Because receivers may reject a second Telnet client, a per-receiver lock serializes Telnet operations across driver instances. HTTP does not hold the Telnet slot and can coexist with other apps' Telnet clients.
+[community] Because receivers may reject a second Telnet client, the shared session keyed by host and port serializes Telnet operations across driver instances. HTTP does not hold the Telnet slot and can coexist with other apps' Telnet clients.
 
 [spec] Leave at least 50 ms between successive commands sent on the same connection. `status()` sends its four queries with this spacing. [community] The port-23 interface is Telnet-compatible raw TCP and does not require a login handshake.
 

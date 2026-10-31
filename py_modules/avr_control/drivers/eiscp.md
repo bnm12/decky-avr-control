@@ -11,13 +11,13 @@
 | Verified on | [measured] Pioneer VSX-935 |
 | Transport | [measured] TCP and UDP over IPv4; TCP port 60128; ISCP packet framing |
 | Discovery | [measured] UDP broadcasts to port 60128; stable ID is the receiver's ECN identifier (looks like a MAC address) |
-| Connections | [measured] A VSX-935 accepts roughly one control client reliably; close the Pioneer app while collecting modes |
+| Connections | [measured] A VSX-935 accepts roughly one control client reliably; the shared TCP session serializes driver operations and closes after each transaction |
 
 ## Transport and framing
 
-[spec] An eISCP packet is `ISCP`, a 16-byte header, then the payload. The header includes its own length, payload length, and version; control payloads are ASCII and end in carriage return. A command starts with `!1`, for example `!1MVLQSTN\r`. Requests use one TCP connection; status requests are batched on a single connection.
+[spec] An eISCP packet is `ISCP`, a 16-byte header, then the payload. The header includes its own length, payload length, and version; control payloads are ASCII and end in carriage return. A command starts with `!1`, for example `!1MVLQSTN\r`. Status requests are batched on one TCP connection. Connection ownership, transaction serialization, deadlines and cleanup are handled by the shared `ReceiverSession`, keyed by host, port and framing adapter; its default closes the stream after each transaction.
 
-[measured] A VSX-935 sends an unsolicited `!1NJA2-http://<ip>/album_art.cgi` packet on connect. It must be skipped while waiting for replies. The response terminator observed after MVL data is `\x1a\r\n`.
+[measured] A VSX-935 sends an unsolicited `!1NJA2-http://<ip>/album_art.cgi` packet on connect. It is not a command reply; the session routes unclassified frames to subscribers and otherwise ignores them. The response terminator observed after MVL data is `\x1a\r\n`.
 
 [measured] The exact payload length matters: a wrong declared length for `!1MVLQSTN\r` made the VSX-935 wait indefinitely. The driver reads the exact declared payload length and ignores unrelated pushes.
 

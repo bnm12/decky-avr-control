@@ -7,7 +7,6 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
-import weakref
 import xml.etree.ElementTree as ET
 from typing import ClassVar
 
@@ -25,6 +24,7 @@ from .base import (
     Status,
     VolumeScale,
 )
+from .receiver_session import ReceiverSessionError, shared_session
 
 DENON_PORT = 23
 COMMAND_INTERVAL = 0.05
@@ -135,113 +135,65 @@ def _encode_volume(raw: int) -> str:
     return f"{whole:02d}{'5' if half else ''}"
 
 
-async def _open(
-    host: str, port: int
-) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
-    try:
-        return await asyncio.wait_for(asyncio.open_connection(host, port), 2.0)
-    except Exception as exc:
-        raise DriverError(f"Can't reach Denon/Marantz receiver at {host}:{port}: {exc}") from exc
-
-
-async def _read_line(reader: asyncio.StreamReader, timeout: float) -> str:
-    data = await asyncio.wait_for(reader.readuntil(b"\r"), timeout)
+async def _read_telnet_line(reader: asyncio.StreamReader) -> str:
+    data = await reader.readuntil(b"\r")
     return data[:-1].decode("ascii", errors="ignore").strip()
 
 
-async def _close(writer: asyncio.StreamWriter) -> None:
-    writer.close()
-    try:
-        await writer.wait_closed()
-    except Exception:
-        pass
-
-
 class TelnetTransport:
-    """Short-lived Telnet connections, serialized for single-client receivers."""
+    """Denon command grammar over the shared owned TCP session."""
 
-    def __init__(self, host: str, port: int, lock: asyncio.Lock):
-        self.host = host
-        self.port = port
-        self.lock = lock
+    def __init__(self, host: str, port: int):
+        self.session = shared_session(host, port, _read_telnet_line)
 
     async def query(self, commands: tuple[str, ...]) -> list[str]:
-        async with self.lock:
-            reader, writer = await _open(self.host, self.port)
-            lines: list[str] = []
-            try:
-                for index, command in enumerate(commands):
-                    if index:
-                        await asyncio.sleep(COMMAND_INTERVAL)
-                    writer.write(command.encode("ascii") + b"\r")
-                    await writer.drain()
+        lines: list[str] = []
 
-                deadline = asyncio.get_running_loop().time() + _STATUS_TIMEOUT
-                while True:
-                    remaining = deadline - asyncio.get_running_loop().time()
-                    if remaining <= 0:
-                        break
-                    try:
-                        line = await _read_line(reader, remaining)
-                    except asyncio.TimeoutError:
-                        break
-                    if line:
-                        lines.append(line)
-                        if self._query_complete(commands, lines):
-                            break
-            except DriverError:
-                raise
-            except Exception as exc:
-                raise DriverError(
-                    f"Denon/Marantz status request failed: {exc}"
-                ) from exc
-            finally:
-                await _close(writer)
-            return lines
+        def classify(line: str) -> str | None:
+            if not line:
+                return None
+            lines.append(line)
+            if self._query_complete(commands, lines):
+                return "complete"
+            if any(
+                matcher.fullmatch(line)
+                for matcher in (_POWER_LINE, _VOLUME_TOKEN, _MUTE_LINE, _MODE_LINE)
+            ):
+                return "progress"
+            return None
+
+        await self.session.transact(
+            [command.encode("ascii") + b"\r" for command in commands],
+            classify,
+            frozenset({"complete"}),
+            timeout=_STATUS_TIMEOUT,
+            min_interval=COMMAND_INTERVAL,
+        )
+        return lines
 
     async def send(self, command: str) -> list[str]:
-        async with self.lock:
-            reader, writer = await _open(self.host, self.port)
-            lines: list[str] = []
-            matches = self._reply_matcher(command)
-            try:
-                writer.write(command.encode("ascii") + b"\r")
-                await writer.drain()
-                deadline = asyncio.get_running_loop().time() + _REPLY_TIMEOUT
-                while True:
-                    remaining = deadline - asyncio.get_running_loop().time()
-                    if remaining <= 0:
-                        raise asyncio.TimeoutError()
-                    line = await _read_line(reader, remaining)
-                    if not line:
-                        continue
-                    lines.append(line)
-                    if matches(line):
-                        grace_deadline = min(
-                            deadline,
-                            asyncio.get_running_loop().time() + 0.07,
-                        )
-                        while grace_deadline > asyncio.get_running_loop().time():
-                            try:
-                                line = await _read_line(
-                                    reader,
-                                    grace_deadline - asyncio.get_running_loop().time(),
-                                )
-                            except asyncio.TimeoutError:
-                                break
-                            if line:
-                                lines.append(line)
-                        return lines
-            except asyncio.TimeoutError:
-                raise
-            except DriverError:
-                raise
-            except Exception as exc:
-                raise DriverError(
-                    f"Denon/Marantz command {command!r} failed: {exc}"
-                ) from exc
-            finally:
-                await _close(writer)
+        lines: list[str] = []
+        matcher = self._reply_matcher(command)
+        optional = frozenset({"max"}) if command.startswith("MV") else frozenset()
+
+        def classify(line: str) -> str | None:
+            if matcher(line):
+                lines.append(line)
+                return "reply"
+            if _MAX_VOLUME_LINE.fullmatch(line):
+                lines.append(line)
+                return "max"
+            return None
+
+        await self.session.transact(
+            [command.encode("ascii") + b"\r"],
+            classify,
+            frozenset({"reply"}),
+            timeout=_REPLY_TIMEOUT,
+            optional=optional,
+            optional_grace=0.07 if optional else 0,
+        )
+        return lines
 
     @staticmethod
     def _reply_matcher(command: str):
@@ -325,7 +277,6 @@ class DenonDriver(Driver):
     key: ClassVar[str] = "denon"
     label: ClassVar[str] = "Denon / Marantz"
     capabilities = frozenset({VOLUME, MUTE, POWER, MODE})
-    _operation_locks: ClassVar[weakref.WeakKeyDictionary] = weakref.WeakKeyDictionary()
 
     def __init__(self, config: dict):
         super().__init__(config)
@@ -351,19 +302,6 @@ class DenonDriver(Driver):
     @property
     def scale(self) -> VolumeScale:
         return self._scale
-
-    def _operation_lock(self) -> asyncio.Lock:
-        loop = asyncio.get_running_loop()
-        locks = self._operation_locks.get(loop)
-        if locks is None:
-            locks = weakref.WeakValueDictionary()
-            self._operation_locks[loop] = locks
-        receiver = (self.host, self.port)
-        lock = locks.get(receiver)
-        if lock is None:
-            lock = asyncio.Lock()
-            locks[receiver] = lock
-        return lock
 
     def _record_max_volume(self, line: str) -> None:
         match = _MAX_VOLUME_LINE.fullmatch(line)
@@ -412,7 +350,7 @@ class DenonDriver(Driver):
             raise DriverError("Invalid Denon transport")
 
         if configured != "http":
-            telnet = TelnetTransport(self.host, self.port, self._operation_lock())
+            telnet = TelnetTransport(self.host, self.port)
             try:
                 lines = await telnet.query(("PW?",))
                 if not any(_POWER_LINE.fullmatch(line) for line in lines):
@@ -545,7 +483,7 @@ class DenonDriver(Driver):
         if configured not in {"", "telnet", "http"}:
             raise DriverError("Invalid Denon transport")
         if configured != "http":
-            telnet = TelnetTransport(self.host, self.port, self._operation_lock())
+            telnet = TelnetTransport(self.host, self.port)
             try:
                 status = self._parse_telnet_status(await telnet.query(commands))
                 self._remember_transport(telnet, "telnet", self.port)
@@ -608,7 +546,7 @@ class DenonDriver(Driver):
             raise DriverError("Invalid Denon volume value") from exc
         try:
             transport, lines = await self._send_command(f"MV{_encode_volume(value)}")
-        except asyncio.TimeoutError as exc:
+        except ReceiverSessionError as exc:
             raise DriverError("Denon/Marantz didn't confirm the volume") from exc
         for line in lines:
             self._record_max_volume(line)
@@ -642,7 +580,7 @@ class DenonDriver(Driver):
             transport, lines = await self._send_command(
                 "MUON" if muted else "MUOFF"
             )
-        except asyncio.TimeoutError as exc:
+        except ReceiverSessionError as exc:
             raise DriverError("Denon/Marantz didn't confirm mute") from exc
         if isinstance(transport, HttpTransport):
             confirmed = (await self.status()).muted
@@ -656,7 +594,7 @@ class DenonDriver(Driver):
         command = "PWON" if on else "PWSTANDBY"
         try:
             transport, lines = await self._send_command(command)
-        except asyncio.TimeoutError as exc:
+        except ReceiverSessionError as exc:
             raise DriverError("Denon/Marantz didn't confirm power") from exc
         if isinstance(transport, HttpTransport):
             confirmed = (await self.status()).power
@@ -670,7 +608,7 @@ class DenonDriver(Driver):
         normalized = _canonical_mode(str(code))
         try:
             transport, lines = await self._send_command(f"MS{normalized}")
-        except asyncio.TimeoutError as exc:
+        except ReceiverSessionError as exc:
             raise Refused(
                 "The receiver didn't accept that listening mode (it may be unavailable "
                 "for the current input or signal)"
