@@ -43,7 +43,7 @@ The CLI must initialize its player list after a connection is opened; the spec s
 | Power | — | — | — | Unsupported |
 | Listening mode | — | — | — | Unsupported |
 
-`player/get_players` supplies the player names, models, PIDs and, in later spec versions, serials and IPs [spec, 1, p. 10; spec, 2, fields as cited in review, page not checked]. Any field may be absent: the spec allows a player without an `ip`. The driver picks one player in this order [assumed implementation policy]:
+`player/get_players` supplies player names, models and PIDs; the v1.14 spec also includes serial and IP fields [spec, 1, p. 10; spec, 2]. Any field may be absent, including `ip`. The driver picks one player in this order [assumed implementation policy]:
 
 1. the player whose `serial` equals the configured `serial`, but only when `serial_for` equals the current selector (the casefolded `player`, or `host` when no player is set). A serial learned for another selector, or a legacy serial with no `serial_for`, is ignored, so changing the selected player always re-resolves;
 2. the player whose `name` equals the configured `player` (case-insensitive; a renamed player is not found by name). A configured name wins over the IP because any one HEOS device controls the whole system, so `host` may be a different player;
@@ -69,8 +69,8 @@ unknown code [assumed].
 - HEOS volume is the HEOS player's volume. On a Denon/Marantz AVR with HEOS built in, this is **not necessarily the AVR's main-zone master volume** [assumed; not verified on hardware]. Use the Denon driver for AVR master-volume control.
 - The HEOS CLI controls the whole system through a connection to one HEOS device; do not open a separate connection to each player [spec, 1, p. 5].
 - Duplicate names or multiple candidates are errors rather than an arbitrary selection [assumed implementation policy].
-- Configs saved before the `player`/`serial` keys existed carry `name` instead, which is no longer read. Run the search again to rewrite them; until then, a system with several players that have no `ip` field reports "Multiple HEOS players found".
-- Configs with a `serial` but no `serial_for` (saved before this rule) ignore that serial. Name resolution then applies, so a renamed player needs a new search or probe to be found by serial again.
+- A `name` field does not select a player; use `player`. If a system has several players without `ip` fields, an unmatched configured player name reports "Multiple HEOS players found".
+- A `serial` identifies a player only when `serial_for` matches the current selector. Otherwise selection falls back to the configured player name or host.
 
 ## Unknowns and open questions
 

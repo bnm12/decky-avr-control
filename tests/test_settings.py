@@ -33,19 +33,14 @@ class Logger:
 
 
 class SettingsRepositoryTests(unittest.TestCase):
-    def _stores(self, root, data=None, legacy_data=None):
-        memory = MemorySettingsStore(data, legacy_data=legacy_data)
+    def _stores(self, root, data=None):
+        memory = MemorySettingsStore(data)
         path = os.path.join(root, "avr-control", "settings.json")
-        legacy_path = os.path.join(root, "pioneer-volume", "settings.json")
         if data is not None:
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w", encoding="utf-8") as file:
                 json.dump(data, file)
-        file_store = FileSettingsStore(path, legacy_paths=[legacy_path])
-        if legacy_data is not None:
-            os.makedirs(os.path.dirname(legacy_path), exist_ok=True)
-            with open(legacy_path, "w", encoding="utf-8") as file:
-                json.dump(legacy_data, file)
+        file_store = FileSettingsStore(path)
         return (("memory", memory), ("filesystem", file_store))
 
     def _exercise_both(self, callback):
@@ -217,11 +212,11 @@ class SettingsRepositoryTests(unittest.TestCase):
 
         self._exercise_both(verify)
 
-    def test_v1_migration_is_ordered_current_and_idempotent(self):
+    def test_unversioned_flat_settings_load_as_defaults(self):
         flat = {
             "host": "192.0.2.1",
             "port": 60128,
-            "proto": "eiscp",
+            "proto": "telnet",
             "id": "ABC",
             "max": 100,
             "late_max": 64,
@@ -229,29 +224,22 @@ class SettingsRepositoryTests(unittest.TestCase):
             "games": {"10": {"name": "Game", "volume": "80", "mode": "00"}},
             "future_setting": "preserved",
         }
-        migrated_once = migrate(flat)
-        self.assertEqual(migrated_once["version"], CURRENT_VERSION)
-        self.assertEqual(migrate(migrated_once), migrated_once)
-        self.assertEqual(migrated_once["receiver"]["driver"], "eiscp")
-        self.assertEqual(migrated_once["receiver"]["config"]["host"], "192.0.2.1")
-        self.assertEqual(migrated_once["games"]["10"]["driver"], "eiscp")
-        self.assertFalse(migrated_once["schedule"]["enabled"])
-        self.assertFalse(migrated_once["sleep_wake"]["wake_on_resume"])
+        self.assertEqual(migrate(flat), {})
 
-        def verify(store, _root):
-            store.save(flat)
-            loaded = SettingsRepository(store).load()
-            self.assertEqual(loaded.version, CURRENT_VERSION)
-            self.assertEqual(loaded.receiver.id, "ABC")
-            self.assertEqual(loaded.cap.cap, 100)
-            self.assertEqual(loaded.late.cap, 64)
-            self.assertEqual(loaded.late.prev_volume, 90)
-            self.assertEqual(loaded.games["10"].volume, 80)
-            self.assertEqual(loaded.extra["future_setting"], "preserved")
-            self.assertFalse(loaded.schedule.enabled)
-            self.assertFalse(loaded.sleep_wake.wake_on_resume)
-            self.assertEqual(SettingsRepository(store).load().to_dict(), loaded.to_dict())
-        self._exercise_both(verify)
+        with tempfile.TemporaryDirectory() as root:
+            for name, store in self._stores(root, data=flat):
+                with self.subTest(adapter=name):
+                    loaded = SettingsRepository(store).load()
+                    self.assertEqual(loaded.version, CURRENT_VERSION)
+                    self.assertIsNone(loaded.receiver.driver)
+                    self.assertEqual(loaded.receiver.config, {})
+                    self.assertIsNone(loaded.receiver.id)
+                    self.assertIsNone(loaded.cap.cap)
+                    self.assertIsNone(loaded.late.cap)
+                    self.assertEqual(loaded.games, {})
+                    self.assertFalse(loaded.late.active)
+                    self.assertFalse(loaded.schedule.enabled)
+                    self.assertFalse(loaded.sleep_wake.wake_on_resume)
 
     def test_v3_migration_adds_opt_ins_and_preserves_schedule_values(self):
         data = {
@@ -279,28 +267,19 @@ class SettingsRepositoryTests(unittest.TestCase):
         self.assertTrue(settings.sleep_wake.wake_on_resume)
         self.assertFalse(settings.sleep_wake.off_on_suspend)
 
-    def test_legacy_folder_adoption_uses_injected_path_for_both_adapters(self):
-        legacy = {"host": "192.0.2.9", "proto": "telnet", "max": 140}
-
-        with tempfile.TemporaryDirectory() as root:
-            for name, store in self._stores(root, legacy_data=legacy):
-                with self.subTest(adapter=name):
-                    settings = SettingsRepository(store).load()
-                    self.assertEqual(settings.receiver.driver, "pioneer_telnet")
-                    self.assertEqual(settings.cap.cap, 140)
-                    if isinstance(store, FileSettingsStore):
-                        self.assertTrue(os.path.isfile(store.path))
-                        with open(store.path, "r", encoding="utf-8") as file:
-                            self.assertEqual(json.load(file)["version"], CURRENT_VERSION)
-
     def test_failed_migration_save_keeps_normalized_settings_in_memory(self):
-        legacy = {
-            "host": "192.0.2.7",
-            "proto": "eiscp",
-            "private_credential": "never-log-this",
+        data = {
+            "version": 3,
+            "receiver": {
+                "driver": "eiscp",
+                "config": {
+                    "host": "192.0.2.7",
+                    "private_credential": "never-log-this",
+                },
+            },
         }
         with tempfile.TemporaryDirectory() as root:
-            for name, store in self._stores(root, legacy_data=legacy):
+            for name, store in self._stores(root, data=data):
                 with self.subTest(adapter=name):
                     logger = Logger()
                     repository = SettingsRepository(

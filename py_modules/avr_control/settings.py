@@ -14,17 +14,6 @@ CURRENT_SCHEMA_VERSION = CURRENT_VERSION
 _SECRET_NAMES = frozenset(
     {"token", "password", "secret", "api_key", "access_token", "authorization"}
 )
-_V1_KEYS = {
-    "version",
-    "host",
-    "port",
-    "proto",
-    "id",
-    "max",
-    "late_max",
-    "late",
-    "games",
-}
 _V2_KEYS = {
     "version",
     "receiver",
@@ -281,69 +270,6 @@ class Settings:
         )
 
 
-def _known_driver(proto: Any) -> str | None:
-    if proto == "telnet":
-        return "pioneer_telnet"
-    if proto in ("eiscp", "pioneer_telnet"):
-        return proto
-    return None
-
-
-def _migrate_v1_to_v2(data: dict[str, Any]) -> dict[str, Any]:
-    proto = data.get("proto")
-    driver = _known_driver(proto)
-    receiver_config: dict[str, Any] = {}
-    if data.get("host"):
-        receiver_config["host"] = data["host"]
-    if data.get("port") is not None:
-        receiver_config["port"] = data["port"]
-
-    old_late = data.get("late") if isinstance(data.get("late"), dict) else {}
-    late = {
-        key: copy.deepcopy(value)
-        for key, value in old_late.items()
-        if key not in {"active", "prev_volume"}
-    }
-    late["active"] = old_late.get("active", False)
-    if old_late.get("prev_volume") is not None:
-        late["prev_volume"] = old_late["prev_volume"]
-
-    games: dict[str, dict[str, Any]] = {}
-    old_games = data.get("games") if isinstance(data.get("games"), dict) else {}
-    for appid, old_profile in old_games.items():
-        if not isinstance(old_profile, dict):
-            continue
-        profile: dict[str, Any] = {
-            key: copy.deepcopy(value)
-            for key, value in old_profile.items()
-            if key not in {"name", "volume", "mode"}
-        }
-        profile.update({"name": old_profile.get("name", ""), "driver": driver})
-        for key in ("volume", "mode"):
-            if old_profile.get(key) is not None:
-                profile[key] = old_profile[key]
-        games[str(appid)] = profile
-
-    migrated: dict[str, Any] = {
-        key: copy.deepcopy(value)
-        for key, value in data.items()
-        if key not in _V1_KEYS
-    }
-    migrated.update(
-        {
-            "version": 2,
-            "receiver": {"driver": driver, "config": receiver_config},
-            "cap": data.get("max"),
-            "late_cap": data.get("late_max"),
-            "late": late,
-            "games": games,
-        }
-    )
-    if data.get("id") is not None:
-        migrated["receiver"]["id"] = data["id"]
-    return migrated
-
-
 def _migrate_v2_to_v3(data: dict[str, Any]) -> dict[str, Any]:
     migrated = copy.deepcopy(data)
     migrated["version"] = 3
@@ -372,24 +298,19 @@ def _migrate_v3_to_v4(data: dict[str, Any]) -> dict[str, Any]:
 
 def migrate(data: Any) -> dict[str, Any]:
     """Apply ordered, idempotent migrations to the current settings schema."""
-    result = copy.deepcopy(data) if isinstance(data, dict) else {}
-    version = result.get("version", 1)
+    if not isinstance(data, dict):
+        return {}
+    version = data.get("version")
     if not isinstance(version, int) or isinstance(version, bool):
-        version = (
-            2
-            if isinstance(result.get("receiver"), dict)
-            else 1
-        )
-    if version < 2:
-        result = _migrate_v1_to_v2(result)
-        version = 2
+        return {}
+    if version not in (2, 3, CURRENT_VERSION):
+        return {}
+    result = copy.deepcopy(data)
     if version < 3:
         result = _migrate_v2_to_v3(result)
         version = 3
     if version < CURRENT_VERSION:
         result = _migrate_v3_to_v4(result)
-    elif version > CURRENT_VERSION:
-        result["version"] = CURRENT_VERSION
     return result
 
 
@@ -537,33 +458,20 @@ def _settings_from_data(data: dict[str, Any], secret_keys: frozenset[str]) -> Se
 
 
 class FileSettingsStore:
-    """Filesystem adapter; writes JSON atomically and adopts injected legacy paths."""
+    """Filesystem adapter that writes JSON atomically."""
 
-    def __init__(
-        self, path: str, legacy_paths: list[str] | tuple[str, ...] = ()
-    ):
+    def __init__(self, path: str):
         self.path = os.fspath(path)
-        self.legacy_paths = tuple(os.fspath(item) for item in legacy_paths)
-        self.adopted_legacy = False
 
     def load(self) -> dict[str, Any]:
-        self.adopted_legacy = False
         try:
             with open(self.path, "r", encoding="utf-8") as settings_file:
                 data = json.load(settings_file)
             return data if isinstance(data, dict) else {}
         except FileNotFoundError:
-            for legacy_path in self.legacy_paths:
-                try:
-                    with open(legacy_path, "r", encoding="utf-8") as legacy_file:
-                        legacy_data = json.load(legacy_file)
-                except (OSError, ValueError, TypeError):
-                    continue
-                self.adopted_legacy = True
-                return legacy_data if isinstance(legacy_data, dict) else {}
+            return {}
         except (OSError, ValueError, TypeError):
             return {}
-        return {}
 
     def save(self, data: dict[str, Any]) -> None:
         directory = os.path.dirname(os.path.abspath(self.path))
@@ -583,7 +491,6 @@ class FileSettingsStore:
                 settings_file.flush()
                 os.fsync(settings_file.fileno())
             os.replace(temporary_path, self.path)
-            self.adopted_legacy = False
         finally:
             if temporary_path and os.path.exists(temporary_path):
                 try:
@@ -595,27 +502,14 @@ class FileSettingsStore:
 class MemorySettingsStore:
     """In-memory persistence adapter with the same raw-data contract as the file store."""
 
-    def __init__(
-        self,
-        data: dict[str, Any] | None = None,
-        legacy_data: dict[str, Any] | None = None,
-    ):
+    def __init__(self, data: dict[str, Any] | None = None):
         self.data = copy.deepcopy(data) if isinstance(data, dict) else {}
-        self._has_data = isinstance(data, dict)
-        self.legacy_data = copy.deepcopy(legacy_data)
-        self.adopted_legacy = False
 
     def load(self) -> dict[str, Any]:
-        self.adopted_legacy = False
-        if not self._has_data and self.legacy_data is not None:
-            self.adopted_legacy = True
-            return copy.deepcopy(self.legacy_data)
         return copy.deepcopy(self.data)
 
     def save(self, data: dict[str, Any]) -> None:
         self.data = copy.deepcopy(data)
-        self._has_data = True
-        self.adopted_legacy = False
 
 
 class SettingsStoreAdapter(Protocol):
@@ -632,7 +526,6 @@ class SettingsRepository:
         store: SettingsStoreAdapter | str | os.PathLike | None = None,
         *,
         path: str | os.PathLike | None = None,
-        legacy_paths: list[str] | tuple[str, ...] = (),
         logger=None,
         secret_keys: set[str] | frozenset[str] = frozenset(),
     ):
@@ -642,7 +535,7 @@ class SettingsRepository:
         if store is None:
             if path is None:
                 raise TypeError("SettingsRepository requires a store or path")
-            store = FileSettingsStore(os.fspath(path), legacy_paths)
+            store = FileSettingsStore(os.fspath(path))
         self.store = store
         self.logger = logger
         self.secret_keys = frozenset(secret_keys)
@@ -658,9 +551,7 @@ class SettingsRepository:
         migrated = migrate(raw_data)
         settings = _settings_from_data(migrated, self.secret_keys)
         canonical = settings.to_dict()
-        if migrated != raw_data or getattr(self.store, "adopted_legacy", False):
-            self._save_migration(settings)
-        elif canonical != raw_data:
+        if migrated != raw_data or canonical != raw_data:
             self._save_migration(settings)
         return settings
 
@@ -688,10 +579,3 @@ class SettingsRepository:
 
 class SettingsStore(FileSettingsStore):
     """Compatibility name for the filesystem adapter."""
-
-
-def load_with_legacy(
-    path: str, legacy_paths: list[str] | tuple[str, ...]
-) -> dict[str, Any]:
-    """Compatibility helper returning the normalized persisted representation."""
-    return SettingsRepository(path, legacy_paths=legacy_paths).load().to_dict()

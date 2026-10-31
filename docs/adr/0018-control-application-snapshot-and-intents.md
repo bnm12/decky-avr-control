@@ -1,6 +1,6 @@
 # One control application behind a snapshot-and-intent interface
 
-The frontend used to call about 20 named backend methods and coordinate refreshes itself, while the controller held the cross-cutting rules: caps and late night, game-profile restore, receiver identity and rediscovery, stale-result guards. Those rules share state and ordering, so we kept them in one deep module, `application.py`, and shrank its interface: `snapshot()` returns everything the panel renders, `dispatch(intent)` takes a typed intent (a discriminated union mirrored in TypeScript) and returns a consistent snapshot or an error, and `discover()`, `list_drivers()` and `setup_options()` stay as plain reads. Volume conversion and cap math live in one Python module, `volume.py`, so the panel sends and renders display values and never re-derives receiver math.
+Caps and late night, game-profile restore, receiver identity and rediscovery, and stale-result guards share state and ordering. One deep module, `application.py`, owns those rules and exposes a narrow interface: `snapshot()` returns everything the panel renders, `dispatch(intent)` takes a typed intent (a discriminated union mirrored in TypeScript) and returns a consistent snapshot or an error, and `discover()`, `list_drivers()` and `setup_options()` stay as plain reads. Volume conversion and cap math live in one Python module, `volume.py`, so the panel sends and renders display values and never re-derives receiver math.
 
 ## Considered options
 

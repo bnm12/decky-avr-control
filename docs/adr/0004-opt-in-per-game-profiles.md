@@ -8,4 +8,4 @@ Late-night mode never writes into profiles. While it is on, a profile saves the 
 
 ## Considered options
 
-Remembering every game automatically was rejected: the user asked for per-game opt-in. A single toggle for volume and mode was replaced by two toggles after the user asked to remember the mode without the volume.
+Remembering every game automatically was rejected in favor of per-game opt-in. Separate volume and mode toggles let users remember either setting without coupling it to the other.

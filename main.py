@@ -33,11 +33,6 @@ from avr_control.drivers import REGISTRY
 from avr_control.settings import FileSettingsStore, SettingsRepository
 
 SETTINGS = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "settings.json")
-LEGACY_SETTINGS = os.path.join(
-    os.path.dirname(decky.DECKY_PLUGIN_SETTINGS_DIR),
-    "pioneer-volume",
-    "settings.json",
-)
 secret_keys = {
     field.key
     for driver in REGISTRY
@@ -45,7 +40,7 @@ secret_keys = {
     if field.secret
 }
 settings_repository = SettingsRepository(
-    FileSettingsStore(SETTINGS, legacy_paths=[LEGACY_SETTINGS]),
+    FileSettingsStore(SETTINGS),
     logger=decky.logger,
     secret_keys=secret_keys,
 )
