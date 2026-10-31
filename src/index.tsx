@@ -25,7 +25,7 @@ type LocalControl = "volume" | "mute" | "power" | "mode";
 type VolumeScale = {
   min: number;
   max: number;
-  unit: "dB" | "%";
+  unit: "dB" | "%" | "steps";
   zero: number;
   steps_per_unit: number;
   default_cap: number;
@@ -99,11 +99,19 @@ const configure = callable<[string, Record<string, string>], Result>("configure"
 const displayValue = (raw: number, scale: VolumeScale): number =>
   (raw - scale.zero) / scale.steps_per_unit;
 
-const displayText = (raw: number, scale: VolumeScale): string => {
-  const value = displayValue(raw, scale);
-  const rounded = Number(value.toFixed(4));
-  const number = scale.unit === "dB" && rounded > 0 ? `+${rounded}` : `${rounded}`;
-  return `${number} ${scale.unit}`;
+const formatVolume = (
+  value: number | string | null,
+  scale: VolumeScale,
+  label?: string,
+): string => {
+  const unit = scale.unit === "steps" ? "" : scale.unit;
+  if (value === null) return label ? `${label}${unit ? ` (${unit})` : ""}` : "";
+  const numeric = typeof value === "number" ? value : Number(value.trim());
+  const number = Number.isFinite(numeric)
+    ? `${scale.unit === "dB" && numeric > 0 ? "+" : ""}${Number(numeric.toFixed(4))}`
+    : String(value).trim();
+  if (!number) return label ?? "";
+  return `${label ? `${label} ` : ""}${number}${unit ? ` ${unit}` : ""}`;
 };
 
 const displayInput = (raw: number, scale: VolumeScale): string =>
@@ -460,7 +468,11 @@ function Content() {
         const cap = inputToRaw(enteredCap, connected.scale);
         const lateCap = inputToRaw(enteredLateCap, connected.scale);
         if (cap === null || lateCap === null) {
-          capError = `Enter valid volume caps in ${connected.scale.unit}.`;
+          capError = formatVolume(
+            null,
+            connected.scale,
+            "Enter valid volume caps",
+          );
         } else {
           if (!isCurrent(generation)) return;
           await setMax(cap);
@@ -474,7 +486,11 @@ function Content() {
         connected.capabilities?.includes("volume") &&
         connected.scale.unit !== previousScale.unit
       ) {
-        capNote = `Receiver settings saved. Set volume caps in ${connected.scale.unit}.`;
+        capNote = `Receiver settings saved. ${formatVolume(
+          null,
+          connected.scale,
+          "Set volume caps",
+        )}.`;
       }
       await refresh(true, generation);
       if (!isCurrent(generation)) return;
@@ -562,7 +578,11 @@ function Content() {
         {!standby && hasCapability("volume") && scale && (
           <PanelSectionRow>
             <SliderField
-              label={vol === null ? "Volume unknown" : `Volume (${displayText(vol, scale)})`}
+              label={
+                vol === null
+                  ? "Volume unknown"
+                  : formatVolume(displayValue(vol, scale), scale, "Volume")
+              }
               value={vol ?? scale.min}
               min={scale.min}
               max={max}
@@ -615,8 +635,16 @@ function Content() {
               label="Late night mode"
               description={
                 lateOn
-                  ? `Volume capped at ${displayText(receiverState?.late_cap ?? max, scale)}`
-                  : `Lowers the volume and caps it at ${lateText} ${scale.unit}`
+                  ? formatVolume(
+                      displayValue(receiverState?.late_cap ?? max, scale),
+                      scale,
+                      "Volume capped at",
+                    )
+                  : formatVolume(
+                      lateText,
+                      scale,
+                      "Lowers the volume and caps it at",
+                    )
               }
               checked={lateOn}
               onChange={async (c: boolean) => {
@@ -767,14 +795,14 @@ function Content() {
           <>
             <PanelSectionRow>
               <TextField
-                label={`Volume cap (${scale.unit})`}
+                label={formatVolume(null, scale, "Max volume")}
                 value={maxText}
                 onChange={(event) => setMaxText(event.target.value)}
               />
             </PanelSectionRow>
             <PanelSectionRow>
               <TextField
-                label={`Late night cap (${scale.unit})`}
+                label={formatVolume(null, scale, "Late night cap")}
                 value={lateText}
                 onChange={(event) => setLateText(event.target.value)}
               />
@@ -796,7 +824,9 @@ function Content() {
                 const generation = selectionGeneration.current;
                 if (switchingReceiver.current) return;
                 if (cap === null || lateCap === null) {
-                  setErr(`Enter valid volume caps in ${scale.unit}.`);
+                  setErr(
+                    formatVolume(null, scale, "Enter valid volume caps"),
+                  );
                   return;
                 }
                 if (!isCurrent(generation)) return;
@@ -843,7 +873,11 @@ function Content() {
             const description = [
               profile.volume !== null
                 ? sameDriver
-                  ? `Volume ${displayText(profile.volume, scale!)}`
+                  ? formatVolume(
+                      displayValue(profile.volume, scale!),
+                      scale!,
+                      "Volume",
+                    )
                   : "Volume from other receiver"
                 : null,
               profile.mode

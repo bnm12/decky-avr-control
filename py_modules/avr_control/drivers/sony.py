@@ -279,7 +279,7 @@ class SonyDriver(Driver):
         self._scale = VolumeScale(
             min=raw_min,
             max=raw_max,
-            unit="%",
+            unit="%" if raw_min == 0 and raw_max == 100 else "steps",
             zero=0,
             steps_per_unit=1,
             default_cap=max(raw_min, min(raw_max, default_cap)),

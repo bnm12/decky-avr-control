@@ -308,20 +308,36 @@ def _volume_scale(config: dict) -> VolumeScale:
         steps = 1 if zero is None else defaults["volume_steps"]
 
     if zero is None:
-        if maximum != 100:
-            raise DriverError(
-                "eISCP absolute volume needs max_volume=100 to display as %; "
-                "otherwise provide zero_db for a dB scale"
-            )
         if steps != 1:
-            raise DriverError("eISCP absolute 0-100 volume requires volume_steps=1")
+            raise DriverError("eISCP absolute volume requires volume_steps=1")
+        requested_unit = str(config.get("volume_unit", "")).strip().lower()
+        if requested_unit in ("percent", "percentage"):
+            requested_unit = "%"
+        if requested_unit not in ("", "steps", "%"):
+            raise DriverError(
+                "eISCP volume_unit must be 'steps' or '%' for absolute volume"
+            )
+        if requested_unit == "%" and maximum != 100:
+            raise DriverError(
+                "eISCP volume_unit='%' requires max_volume=100"
+            )
         return VolumeScale(
             min=0,
             max=maximum,
-            unit="%",
+            unit="%" if requested_unit == "%" else "steps",
             zero=0,
             steps_per_unit=1,
             default_cap=round(maximum * 0.4),
+        )
+
+    requested_unit = str(config.get("volume_unit", "")).strip().lower()
+    if requested_unit in ("percent", "percentage"):
+        requested_unit = "%"
+    if requested_unit == "%":
+        raise DriverError("eISCP volume_unit='%' requires absolute volume")
+    if requested_unit not in ("", "steps"):
+        raise DriverError(
+            "eISCP volume_unit must be 'steps' or '%' for absolute volume"
         )
 
     return VolumeScale(
@@ -343,6 +359,11 @@ class EiscpDriver(Driver):
         ConfigField("volume_steps", "Volume steps per displayed unit (1 or 2)", required=False),
         ConfigField("zero_db", "Raw volume at 0 dB (blank for absolute volume)", required=False),
         ConfigField("max_volume", "Maximum raw volume", required=False),
+        ConfigField(
+            "volume_unit",
+            "Absolute volume unit (steps, or % if the receiver displays percent)",
+            required=False,
+        ),
     )
 
     def __init__(self, config: dict):

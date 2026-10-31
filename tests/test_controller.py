@@ -172,6 +172,42 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(MemoryDriver.state.volume, 100)
         self.assertEqual(self.store.load()["late"], {"active": False})
 
+    async def test_steps_scale_defaults_are_fractions_of_its_range(self):
+        class StepsDriver(Driver):
+            key = "steps"
+            label = "Steps Receiver"
+            capabilities = frozenset({VOLUME})
+            scale = VolumeScale(min=10, max=90, unit="steps")
+
+            async def status(self):
+                return Status(volume=50)
+
+            async def set_volume(self, raw):
+                return raw
+
+        self.controller.registry = [StepsDriver]
+        self.save_settings(
+            {
+                "version": 2,
+                "receiver": {
+                    "driver": "steps",
+                    "config": {"host": "receiver"},
+                    "id": "steps-id",
+                },
+                "cap": None,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {},
+            }
+        )
+
+        state = await self.controller.get_state()
+
+        self.assertEqual(state["scale"]["unit"], "steps")
+        self.assertEqual(state["scale"]["default_cap"], 42)
+        self.assertEqual(state["cap"], 42)
+        self.assertEqual(state["late_cap"], 26)
+
     async def test_late_night_restore_respects_a_lowered_normal_cap(self):
         self.save_settings()
         await self.controller.get_state()

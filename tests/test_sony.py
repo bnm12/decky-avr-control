@@ -198,7 +198,7 @@ class SonyDriverTests(unittest.IsolatedAsyncioTestCase):
             (30, False, True, "stereo"),
         )
         self.assertEqual((self.driver.scale.min, self.driver.scale.max), (0, 74))
-        self.assertEqual(self.driver.scale.unit, "%")
+        self.assertEqual(self.driver.scale.unit, "steps")
         self.assertEqual(self.driver.scale.display(30), 30)
         self.assertEqual(self.driver.scale.default_cap, 30)
         self.assertEqual(
@@ -212,6 +212,16 @@ class SonyDriverTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(volume_request["params"], [{"output": ""}])
         self.assertEqual(volume_request["version"], "1.1")
+
+    async def test_percent_scale_requires_exact_zero_to_100_range(self):
+        self.fake.minimum = 0
+        self.fake.maximum = 100
+        await self.driver.status()
+        self.assertEqual(self.driver.scale.unit, "%")
+
+        self.fake.minimum = 10
+        await self.driver.status()
+        self.assertEqual(self.driver.scale.unit, "steps")
 
     async def test_setters_read_back_volume_mute_power_and_mode(self):
         self.assertEqual(await self.driver.set_volume(44), 44)

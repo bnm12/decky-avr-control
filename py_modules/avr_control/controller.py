@@ -182,7 +182,9 @@ class Controller:
 
     def _base_cap(self, data: dict, scale=None) -> int:
         scale = scale or self._scale_for(data)
-        return int(data.get("cap") or scale.default_cap or scale.max)
+        if data.get("cap"):
+            return int(data["cap"])
+        return int(scale.as_dict()["default_cap"])
 
     def _late_cap(self, data: dict, scale=None) -> int:
         scale = scale or self._scale_for(data)
@@ -190,7 +192,10 @@ class Controller:
             return int(data["late_cap"])
         if scale.unit == "dB":
             return max(scale.min, scale.zero - 50 * scale.steps_per_unit)
-        return min(scale.max, 20)
+        return min(
+            scale.max,
+            scale.min + round((scale.max - scale.min) * 0.2),
+        )
 
     def _effective_cap(self, data: dict, scale=None) -> int:
         scale = scale or self._scale_for(data)

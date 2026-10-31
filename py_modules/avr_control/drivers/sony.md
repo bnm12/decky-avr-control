@@ -53,7 +53,7 @@
 
 [community] `getVolumeInformation` provides the receiver's current integer volume, minimum and maximum. No universal conversion from these volume values to dB has been established.
 
-[assumed] When `maxVolume` is 100, the driver uses a percent scale. For other maxima, `VolumeScale` only offers `"dB"` or `"%"`; the driver uses `"%"` as a transport-compatible label, but the displayed number is Sony's raw volume step, **not a percentage**. In both cases the raw min/max are retained, and the default cap is about 40% of the reported range above its minimum. No dB zero point or dB step is inferred.
+[assumed] The driver uses a percent scale only when the reported range is exactly 0–100. Every other range uses `"steps"` and shows Sony's raw volume number without a unit suffix. The raw min/max are retained, and the default cap is about 40% of the reported range above its minimum. No dB zero point or dB step is inferred.
 
 ## Listening modes
 

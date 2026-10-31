@@ -49,7 +49,7 @@ class EiscpDriverTests(unittest.IsolatedAsyncioTestCase):
             all(
                 not field.required
                 for field in EiscpDriver.config_fields
-                if field.key in {"volume_steps", "zero_db", "max_volume"}
+                if field.key in {"volume_steps", "zero_db", "max_volume", "volume_unit"}
             )
         )
         unknown = EiscpDriver({"model": "unlisted receiver"}).scale
@@ -89,7 +89,7 @@ class EiscpDriverTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await driver.set_volume(200), 100)
         self.assertEqual(self.fake.volume, 100)
 
-    def test_absolute_scale_uses_percent_only_for_0_to_100(self):
+    def test_absolute_scale_defaults_to_steps_and_requires_explicit_percent(self):
         scale = EiscpDriver(
             {"zero_db": "", "max_volume": "100"}
         ).scale
@@ -97,12 +97,23 @@ class EiscpDriverTests(unittest.IsolatedAsyncioTestCase):
         scale_with_absolute_sentinel = EiscpDriver(
             {"zero_db": "absolute", "max_volume": "100"}
         ).scale
+        percent_scale = EiscpDriver(
+            {"zero_db": "", "max_volume": "100", "volume_unit": "%"}
+        ).scale
+        non_100_steps = EiscpDriver(
+            {"zero_db": "absolute", "max_volume": "80"}
+        ).scale
         self.assertEqual(
             (scale.unit, scale.zero, scale.steps_per_unit, scale.max, scale.default_cap),
-            ("%", 0, 1, 100, 40),
+            ("steps", 0, 1, 100, 40),
         )
-        self.assertEqual(scale_with_omitted_zero.unit, "%")
-        self.assertEqual(scale_with_absolute_sentinel.unit, "%")
+        self.assertEqual(scale_with_omitted_zero.unit, "steps")
+        self.assertEqual(scale_with_absolute_sentinel.unit, "steps")
+        self.assertEqual(percent_scale.unit, "%")
+        self.assertEqual(
+            (non_100_steps.unit, non_100_steps.max, non_100_steps.default_cap),
+            ("steps", 80, 32),
+        )
 
     def test_invalid_scale_overrides_raise_clear_driver_errors(self):
         invalid = (
@@ -110,8 +121,12 @@ class EiscpDriverTests(unittest.IsolatedAsyncioTestCase):
             ({"zero_db": "nope"}, "zero_db must be an integer from 0 to 255"),
             ({"max_volume": "0"}, "max_volume must be an integer from 1 to 255"),
             (
-                {"zero_db": "", "max_volume": "80"},
-                "absolute volume needs max_volume=100",
+                {
+                    "zero_db": "",
+                    "max_volume": "80",
+                    "volume_unit": "%",
+                },
+                "volume_unit='%' requires max_volume=100",
             ),
         )
         for config, message in invalid:
