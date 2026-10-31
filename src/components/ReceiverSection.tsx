@@ -160,20 +160,18 @@ export function ReceiverSection({ avr }: Props) {
               onClick={() => {
                 const url = avr.manualConfig.url?.trim() ?? "";
                 const token = avr.manualConfig.token ?? "";
+                const hasSavedToken =
+                  connection?.configured &&
+                  connection.driver === "homeassistant";
                 setHaOptions([]);
                 setHaSetupError(null);
                 if (!url) {
                   setHaSetupError("Enter the Home Assistant URL first.");
                   return;
                 }
-                if (!token.trim()) {
-                  const savedToken =
-                    connection?.configured &&
-                    connection.driver === "homeassistant";
+                if (!token.trim() && !hasSavedToken) {
                   setHaSetupError(
-                    savedToken
-                      ? "Re-enter the token to find media players; setup lookup can't use the saved token yet."
-                      : "Enter a long-lived access token to find media players.",
+                    "Enter a long-lived access token to find media players.",
                   );
                   return;
                 }

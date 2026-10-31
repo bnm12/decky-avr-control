@@ -60,6 +60,9 @@ export function useAvr() {
   const revision = useRef(-1);
   const pushActive = useRef(false);
   const receiverChangeInProgress = useRef(false);
+  const switchingRef = useRef(false);
+  const capDirty = useRef(false);
+  const lateCapDirty = useRef(false);
 
   const clearSliderTimer = useCallback(() => {
     if (timer.current !== null) clearTimeout(timer.current);
@@ -95,11 +98,21 @@ export function useAvr() {
     [],
   );
 
-  const fullSnapshot = (value: Snapshot) => {
+  const updateEditableFields = (value: Snapshot, refillEdits = false) => {
     if (value.caps) {
-      setCapText(String(value.caps.cap_display));
-      setLateCapText(String(value.caps.late_cap_display));
+      if (refillEdits || !capDirty.current) {
+        setCapText(String(value.caps.cap_display));
+        capDirty.current = false;
+      }
+      if (refillEdits || !lateCapDirty.current) {
+        setLateCapText(String(value.caps.late_cap_display));
+        lateCapDirty.current = false;
+      }
     }
+  };
+
+  const fullSnapshot = (value: Snapshot, refillEdits = false) => {
+    updateEditableFields(value, refillEdits);
     if (value.error) {
       setError(value.connection.configured ? value.error : null);
     } else {
@@ -124,9 +137,13 @@ export function useAvr() {
         ]),
       ) as ControlFlags;
       updateSnapshot(value, token, canApply);
-      if (full) fullSnapshot(value);
-      else if (value.error && controls.every((control) => canApply[control])) {
-        setError(value.connection.configured ? value.error : null);
+      if (full) {
+        fullSnapshot(value, true);
+      } else {
+        updateEditableFields(value);
+        if (value.error && controls.every((control) => canApply[control])) {
+          setError(value.connection.configured ? value.error : null);
+        }
       }
     },
     [updateSnapshot],
@@ -135,6 +152,7 @@ export function useAvr() {
   const beginReceiverChange = useCallback(() => {
     selectionToken.current += 1;
     receiverChangeInProgress.current = true;
+    switchingRef.current = true;
     setSwitching(true);
     sequence.current = requestState();
     controlInFlight.current = requestState();
@@ -146,6 +164,7 @@ export function useAvr() {
   const finishReceiverChange = useCallback((token: number) => {
     if (token === selectionToken.current) {
       receiverChangeInProgress.current = false;
+      switchingRef.current = false;
       setSwitching(false);
     }
   }, []);
@@ -207,7 +226,9 @@ export function useAvr() {
 
   const send = useCallback(
     (intent: ControlIntent, control?: LocalControl) =>
-      invoke(intent, selectionToken.current, control),
+      switchingRef.current
+        ? Promise.resolve(null)
+        : invoke(intent, selectionToken.current, control),
     [invoke],
   );
 
@@ -254,7 +275,7 @@ export function useAvr() {
         setManualConfig(selected.fields);
         setSelectedDriver(selected.driver ?? receiver.driver);
         setNote(`Using ${selected.summary || receiver.model} at ${selected.fields.host ?? receiver.ip}`);
-        fullSnapshot(result.snapshot);
+        fullSnapshot(result.snapshot, true);
         finishReceiverChange(token);
         await readSnapshot(true, token);
       } finally {
@@ -286,7 +307,7 @@ export function useAvr() {
         const connected = result.snapshot;
         const sameUnit =
           previousUnit !== undefined && previousUnit === connected.scale?.unit;
-        fullSnapshot(connected);
+        fullSnapshot(connected, true);
         setHost(connected.connection.fields.host ?? "");
         setManualConfig(connected.connection.fields);
         setSelectedDriver(connected.connection.driver ?? selectedDriver);
@@ -335,6 +356,7 @@ export function useAvr() {
   );
 
   const saveCaps = useCallback(async () => {
+    if (switchingRef.current) return;
     const cap = parseDisplay(capText);
     const lateCap = parseDisplay(lateCapText);
     if (cap === null || lateCap === null) {
@@ -346,12 +368,12 @@ export function useAvr() {
       cap_display: cap,
       late_cap_display: lateCap,
     });
-    if (result?.ok && result.snapshot) fullSnapshot(result.snapshot);
+    if (result?.ok && result.snapshot) fullSnapshot(result.snapshot, true);
   }, [capText, lateCapText, send]);
 
   const changeVolume = useCallback(
     (display: number) => {
-      if (switching || !snapshotRef.current?.receiver.volume) return;
+      if (switchingRef.current || !snapshotRef.current?.receiver.volume) return;
       const token = selectionToken.current;
       const requestSequence = ++sequence.current.volume;
       lastLocal.current = Date.now();
@@ -378,7 +400,7 @@ export function useAvr() {
         await invoke({ type: "set_volume", display }, token, "volume");
       }, 150);
     },
-    [clearSliderTimer, invoke, switching],
+    [clearSliderTimer, invoke],
   );
 
   useEffect(() => {
@@ -433,7 +455,7 @@ export function useAvr() {
           pushActive.current = firstSnapshot.push;
           snapshotRef.current = firstSnapshot;
           setSnapshot(firstSnapshot);
-          fullSnapshot(firstSnapshot);
+          fullSnapshot(firstSnapshot, true);
         }
         const initialSnapshot = snapshotRef.current ?? firstSnapshot;
         setHost(initialSnapshot.connection.fields.host ?? "");
@@ -512,9 +534,15 @@ export function useAvr() {
     manualConfig,
     setManualConfig,
     capText,
-    setCapText,
+    setCapText: (value: string) => {
+      capDirty.current = true;
+      setCapText(value);
+    },
     lateCapText,
-    setLateCapText,
+    setLateCapText: (value: string) => {
+      lateCapDirty.current = true;
+      setLateCapText(value);
+    },
     searching,
     saving,
     switching,
