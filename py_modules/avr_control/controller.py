@@ -21,7 +21,7 @@ from .drivers.base import (
     Status,
     Unsupported,
 )
-from .settings import SettingsStore, migrate
+from .settings import GameProfile, Settings, SettingsRepository
 
 _CAPABILITY_ORDER = (VOLUME, MUTE, POWER, MODE)
 
@@ -29,7 +29,7 @@ _CAPABILITY_ORDER = (VOLUME, MUTE, POWER, MODE)
 class Controller:
     def __init__(
         self,
-        store: SettingsStore,
+        store: SettingsRepository,
         registry=None,
         logger=None,
         clock: Callable[[], float] = time.monotonic,
@@ -57,26 +57,15 @@ class Controller:
         if log:
             log(message)
 
-    def _settings(self) -> dict:
-        data = self.store.load()
-        if data.get("version") != 2:
-            data = migrate(data)
-        data.setdefault("receiver", {"driver": None, "config": {}})
-        data["receiver"].setdefault("driver", None)
-        data["receiver"].setdefault("config", {})
-        data.setdefault("cap", None)
-        data.setdefault("late_cap", None)
-        data.setdefault("late", {"active": False})
-        data.setdefault("games", {})
-        return data
+    def _settings(self) -> Settings:
+        return self.store.load()
 
-    def _save(self, data: dict) -> None:
-        data["version"] = 2
+    def _save(self, data: Settings) -> None:
         self.store.save(data)
 
     @staticmethod
-    def _host(data: dict) -> str:
-        return str(data.get("receiver", {}).get("config", {}).get("host", "")).strip()
+    def _host(data: Settings) -> str:
+        return str(data.receiver.config.get("host", "")).strip()
 
     @staticmethod
     def _missing_config_field(driver_class, config: dict):
@@ -131,13 +120,13 @@ class Controller:
             identity[key] = value
         return identity
 
-    def _receiver_binding(self, data: dict) -> dict:
-        receiver = data.get("receiver", {})
-        driver = receiver.get("driver")
-        ident = receiver.get("id")
+    def _receiver_binding(self, data: Settings) -> dict:
+        receiver = data.receiver
+        driver = receiver.driver
+        ident = receiver.id
         if ident:
             return {"driver": driver, "id": str(ident).upper()}
-        config = receiver.get("config") or {}
+        config = receiver.config or {}
         driver_class = self._class_for(driver)
         if driver_class is not None:
             try:
@@ -158,19 +147,19 @@ class Controller:
             "config_hash": hashlib.sha256(encoded).hexdigest(),
         }
 
-    def _legacy_receiver_binding(self, data: dict) -> dict:
-        receiver = data.get("receiver", {})
-        driver = receiver.get("driver")
-        ident = receiver.get("id")
+    def _legacy_receiver_binding(self, data: Settings) -> dict:
+        receiver = data.receiver
+        driver = receiver.driver
+        ident = receiver.id
         if ident:
             return {"driver": driver, "id": str(ident).upper()}
-        config = receiver.get("config") or {}
+        config = receiver.config or {}
         driver_class = self._class_for(driver)
         if driver_class is not None:
             try:
                 config = self._binding_config(driver_class, config)
             except Exception:
-                config = receiver.get("config") or {}
+                config = receiver.config or {}
         encoded = json.dumps(
             config,
             sort_keys=True,
@@ -182,42 +171,47 @@ class Controller:
             "config_hash": hashlib.sha256(encoded).hexdigest(),
         }
 
-    def _bind_receiver_state(self, data: dict) -> bool:
+    def _bind_receiver_state(self, data: Settings) -> bool:
         binding = self._receiver_binding(data)
         legacy_binding = self._legacy_receiver_binding(data)
-        changed = False
-        for value_key, binding_key in (
-            ("cap", "cap_receiver"),
-            ("late_cap", "late_cap_receiver"),
+        changed = data.receiver.binding != binding
+        data.receiver.binding = binding
+        for value, binding_owner, binding_attribute in (
+            (data.cap.cap, data.cap, "binding"),
+            (data.late.cap, data.late, "cap_binding"),
         ):
-            previous = data.get(binding_key)
+            previous = getattr(binding_owner, binding_attribute)
             if previous is None:
-                if data.get(value_key) is not None:
-                    data[binding_key] = binding
+                if value is not None:
+                    setattr(binding_owner, binding_attribute, binding)
                     changed = True
             elif previous != binding:
-                data[binding_key] = binding
+                setattr(binding_owner, binding_attribute, binding)
                 if previous != legacy_binding:
-                    data[value_key] = None
+                    if binding_owner is data.cap:
+                        data.cap.cap = None
+                    else:
+                        data.late.cap = None
                 changed = True
 
-        late = data.get("late", {})
-        previous = data.get("late_receiver")
+        late = data.late
+        previous = late.binding
         if previous is None:
-            if late.get("active") or late.get("prev_volume") is not None:
-                data["late_receiver"] = binding
+            if late.active or late.prev_volume is not None:
+                late.binding = binding
                 changed = True
         elif previous != binding:
-            data["late_receiver"] = binding
+            late.binding = binding
             if previous != legacy_binding:
-                data["late"] = {"active": False}
+                data.late.active = False
+                data.late.prev_volume = None
             changed = True
         return changed
 
-    def _scale_for(self, data: dict):
+    def _scale_for(self, data: Settings):
         if self._active_driver is not None:
             return self._active_driver.scale
-        key = data.get("receiver", {}).get("driver")
+        key = data.receiver.driver
         driver_class = self._class_for(key) or self._class_for("eiscp")
         return driver_class.scale
 
@@ -228,16 +222,16 @@ class Controller:
             return get_driver_class(key)
         return next((driver for driver in self.registry if driver.key == key), None)
 
-    def _base_cap(self, data: dict, scale=None) -> int:
+    def _base_cap(self, data: Settings, scale=None) -> int:
         scale = scale or self._scale_for(data)
-        if data.get("cap"):
-            return int(data["cap"])
+        if data.cap.cap:
+            return int(data.cap.cap)
         return int(scale.as_dict()["default_cap"])
 
-    def _late_cap(self, data: dict, scale=None) -> int:
+    def _late_cap(self, data: Settings, scale=None) -> int:
         scale = scale or self._scale_for(data)
-        if data.get("late_cap"):
-            return int(data["late_cap"])
+        if data.late.cap:
+            return int(data.late.cap)
         if scale.unit == "dB":
             return max(scale.min, scale.zero - 50 * scale.steps_per_unit)
         return min(
@@ -245,10 +239,10 @@ class Controller:
             scale.min + round((scale.max - scale.min) * 0.2),
         )
 
-    def _effective_cap(self, data: dict, scale=None) -> int:
+    def _effective_cap(self, data: Settings, scale=None) -> int:
         scale = scale or self._scale_for(data)
         cap = self._base_cap(data, scale)
-        if data.get("late", {}).get("active"):
+        if data.late.active:
             cap = min(cap, self._late_cap(data, scale))
         return max(scale.min, min(scale.max, cap))
 
@@ -283,9 +277,9 @@ class Controller:
             raise self._stale_receiver_error()
         starting_driver = self._active_driver
         data = self._settings()
-        receiver = data["receiver"]
-        key = receiver.get("driver")
-        config = dict(receiver.get("config") or {})
+        receiver = data.receiver
+        key = receiver.driver
+        config = dict(receiver.config or {})
         driver_class = self._class_for(key)
         if driver_class is None:
             if key is not None:
@@ -304,8 +298,8 @@ class Controller:
                 if not self._is_current(generation, starting_driver):
                     raise self._stale_receiver_error()
                 raise DriverError("No supported receiver answered at that address")
-            receiver["driver"] = found.driver
-            receiver["config"] = dict(found.config)
+            receiver.driver = found.driver
+            receiver.config = dict(found.config)
             self._bind_receiver_state(data)
             self._save(data)
             driver_class = self._class_for(found.driver)
@@ -318,8 +312,8 @@ class Controller:
         candidate, normalized_config = self._normalized_driver_config(
             driver_class, config
         )
-        config_changed = receiver.get("config") != normalized_config
-        receiver["config"] = normalized_config
+        config_changed = receiver.config != normalized_config
+        receiver.config = normalized_config
         binding_changed = self._bind_receiver_state(data)
         active_config = None
         if self._active_driver is not None:
@@ -359,29 +353,29 @@ class Controller:
         ):
             return
         data = self._settings()
-        receiver = data["receiver"]
+        receiver = data.receiver
         _instance, config = self._normalized_driver_config(
             type(driver), driver.config
         )
-        if receiver.get("driver") == driver.key and receiver.get("config") == config:
+        if receiver.driver == driver.key and receiver.config == config:
             return
-        receiver["driver"] = driver.key
-        receiver["config"] = config
+        receiver.driver = driver.key
+        receiver.config = config
         self._bind_receiver_state(data)
         self._save(data)
 
-    def _bind_unbound_profiles(self, data: dict, driver_key: str) -> None:
+    def _bind_unbound_profiles(self, data: Settings, driver_key: str) -> None:
         changed = False
-        for profile in data.get("games", {}).values():
-            if isinstance(profile, dict) and profile.get("driver") is None:
-                profile["driver"] = driver_key
+        for profile in data.games.values():
+            if profile.driver is None:
+                profile.driver = driver_key
                 changed = True
         if changed:
             self._save(data)
 
     async def _rediscover(
         self,
-        data: dict,
+        data: Settings,
         generation: int | None = None,
         starting_driver: Driver | None = None,
     ) -> Driver | None:
@@ -389,7 +383,7 @@ class Controller:
             generation = self._receiver_generation
         if starting_driver is None:
             starting_driver = self._active_driver
-        ident = data.get("receiver", {}).get("id")
+        ident = data.receiver.id
         now = self.clock()
         if not ident:
             return None
@@ -414,9 +408,9 @@ class Controller:
             return None
         self._log("info", f"AVR moved {current_host} -> {found.host}")
         data = self._settings()
-        data["receiver"]["driver"] = found.driver
-        data["receiver"]["config"] = dict(found.config)
-        data["receiver"]["id"] = found.id
+        data.receiver.driver = found.driver
+        data.receiver.config = dict(found.config)
+        data.receiver.id = found.id
         self._bind_receiver_state(data)
         self._save(data)
         driver_class = self._class_for(found.driver)
@@ -480,9 +474,9 @@ class Controller:
         return self._host(self._settings())
 
     async def get_connection(self) -> dict:
-        receiver = self._settings()["receiver"]
-        driver_key = receiver.get("driver")
-        config = dict(receiver.get("config") or {})
+        receiver = self._settings().receiver
+        driver_key = receiver.driver
+        config = dict(receiver.config or {})
         driver_class = self._class_for(driver_key)
         if driver_class is None:
             fields = {"host": config["host"]} if config.get("host") else {}
@@ -517,14 +511,14 @@ class Controller:
         starting_driver = self._active_driver
         data = self._settings()
         config = dict(config)
-        receiver = data["receiver"]
+        receiver = data.receiver
         driver_class = None
         if driver_key != "auto":
             driver_class = self._class_for(driver_key)
             if driver_class is None:
                 return {"ok": False, "error": f"Unknown receiver driver: {driver_key}"}
-        if driver_key != "auto" and receiver.get("driver") == driver_key:
-            saved_config = dict(receiver.get("config") or {})
+        if driver_key != "auto" and receiver.driver == driver_key:
+            saved_config = dict(receiver.config or {})
             config = {**saved_config, **config}
             for field in driver_class.config_fields:
                 if field.secret and not str(config.get(field.key, "")).strip():
@@ -546,9 +540,9 @@ class Controller:
         self._bind_receiver_state(data)
         if driver_key == "auto":
             same_host = self._host(data) == str(config.get("host") or "").strip()
-            receiver["config"] = config
-            receiver["id"] = receiver.get("id") if same_host else None
-            receiver["driver"] = None
+            receiver.config = config
+            receiver.id = receiver.id if same_host else None
+            receiver.driver = None
             self._active_driver = None
             self._initialized_driver = None
             self._receiver_generation += 1
@@ -561,7 +555,7 @@ class Controller:
             active = self._active_driver
             if active is not None:
                 active_matches_receiver = (
-                    current["receiver"].get("driver") == active.key
+                    current.receiver.driver == active.key
                     and self._host(current) == str(config["host"]).strip()
                 )
                 if found is not None:
@@ -583,8 +577,8 @@ class Controller:
                 if active_matches_receiver:
                     if found is not None and found.id:
                         resolved_id = str(found.id).upper()
-                        if current["receiver"].get("id") != resolved_id:
-                            current["receiver"]["id"] = resolved_id
+                        if current.receiver.id != resolved_id:
+                            current.receiver.id = resolved_id
                             self._bind_receiver_state(current)
                             self._save(current)
                     return {"ok": True}
@@ -598,11 +592,10 @@ class Controller:
                 found_class, found.config
             )
             data = self._settings()
-            data["receiver"].update(
-                {"driver": found.driver, "config": found_config}
-            )
+            data.receiver.driver = found.driver
+            data.receiver.config = found_config
             if found.id:
-                data["receiver"]["id"] = str(found.id).upper()
+                data.receiver.id = str(found.id).upper()
             self._bind_receiver_state(data)
             self._save(data)
             self._active_driver = active_driver
@@ -610,10 +603,10 @@ class Controller:
             return {"ok": True}
 
         candidate, config = self._normalized_driver_config(driver_class, config)
-        old_driver = receiver.get("driver")
+        old_driver = receiver.driver
         try:
             old_config = self._identity_config(
-                driver_class, receiver.get("config") or {}
+                driver_class, receiver.config or {}
             )
             same_connection = (
                 old_driver == driver_key
@@ -621,10 +614,10 @@ class Controller:
             )
         except Exception:
             same_connection = False
-        receiver["driver"] = driver_key
-        receiver["config"] = config
+        receiver.driver = driver_key
+        receiver.config = config
         if not same_connection:
-            receiver["id"] = None
+            receiver.id = None
         self._bind_receiver_state(data)
         self._active_driver = candidate
         self._initialized_driver = None
@@ -697,11 +690,12 @@ class Controller:
                 host=ip,
                 config={"host": ip, "port": 60128},
             )
-        data["receiver"] = {
-            "driver": found.driver,
-            "config": dict(found.config),
-            "id": ident.upper(),
-        }
+        data.receiver = type(data.receiver)(
+            driver=found.driver,
+            config=dict(found.config),
+            id=ident.upper(),
+            secret_keys=data.secret_keys,
+        )
         self._bind_receiver_state(data)
         self._save(data)
         driver_class = self._class_for(found.driver)
@@ -752,11 +746,11 @@ class Controller:
             data = self._settings()
             game = None
             if self._current_game:
-                profile = data.get("games", {}).get(str(self._current_game["appid"]), {})
+                profile = data.games.get(str(self._current_game["appid"]))
                 game = {
                     **self._current_game,
-                    "volume": profile.get("volume") is not None,
-                    "mode": profile.get("mode") is not None,
+                    "volume": profile is not None and profile.volume is not None,
+                    "mode": profile is not None and profile.mode is not None,
                 }
             modes = await driver.list_modes()
             if not self._is_current(generation, driver):
@@ -768,7 +762,7 @@ class Controller:
                 "muted": status.muted,
                 "max": self._effective_cap(data, scale),
                 "cap": self._base_cap(data, scale),
-                "late": bool(data.get("late", {}).get("active")),
+                "late": data.late.active,
                 "late_cap": self._late_cap(data, scale),
                 "zero": scale.zero,
                 "mode": self._mode_label(driver, status.mode),
@@ -856,8 +850,8 @@ class Controller:
             raise self._stale_receiver_error()
         data = self._settings()
         scale = driver.scale
-        data["cap"] = max(1, min(scale.max, int(value)))
-        data["cap_receiver"] = self._receiver_binding(data)
+        data.cap.cap = max(1, min(scale.max, int(value)))
+        data.cap.binding = self._receiver_binding(data)
         self._save(data)
 
     async def set_late_max(self, value: int) -> None:
@@ -868,8 +862,8 @@ class Controller:
             raise self._stale_receiver_error()
         data = self._settings()
         scale = driver.scale
-        data["late_cap"] = max(1, min(scale.max, int(value)))
-        data["late_cap_receiver"] = self._receiver_binding(data)
+        data.late.cap = max(1, min(scale.max, int(value)))
+        data.late.cap_binding = self._receiver_binding(data)
         self._save(data)
 
     async def set_mode(self, code: str) -> dict:
@@ -929,19 +923,19 @@ class Controller:
         ):
             return
         data = self._settings()
-        profile = data.get("games", {}).get(str(self._current_game["appid"]))
+        profile = data.games.get(str(self._current_game["appid"]))
         if not profile:
             return
-        if profile.get("driver") != (self._active_driver.key if self._active_driver else None):
+        if profile.driver != (self._active_driver.key if self._active_driver else None):
             return
-        if data.get("late", {}).get("active"):
+        if data.late.active:
             volume = None
         changed = False
-        if volume is not None and profile.get("volume") is not None and profile["volume"] != volume:
-            profile["volume"] = volume
+        if volume is not None and profile.volume is not None and profile.volume != volume:
+            profile.volume = volume
             changed = True
-        if mode is not None and profile.get("mode") is not None and profile["mode"] != mode:
-            profile["mode"] = mode
+        if mode is not None and profile.mode is not None and profile.mode != mode:
+            profile.mode = mode
             changed = True
         if changed:
             if self._is_current(generation, driver):
@@ -954,7 +948,7 @@ class Controller:
         generation = self._receiver_generation
         self._current_game = {"appid": int(appid), "name": name}
         data = self._settings()
-        profile = data.get("games", {}).get(str(int(appid)))
+        profile = data.games.get(str(int(appid)))
         if not profile:
             return {"applied": False}
         try:
@@ -964,22 +958,22 @@ class Controller:
             if not self._current_game or self._current_game["appid"] != int(appid):
                 return {"applied": False}
             data = self._settings()
-            profile = data.get("games", {}).get(str(int(appid)))
+            profile = data.games.get(str(int(appid)))
             if not profile:
                 return {"applied": False}
-            if profile.get("driver") != driver.key:
+            if profile.driver != driver.key:
                 return {"applied": False}
             self._suppress_game_saves(generation, appid)
             driver = await self._ensure_initialized(
                 driver, generation, expected_driver=driver.key
             )
             data = self._settings()
-            profile = data.get("games", {}).get(str(int(appid)))
-            if not profile or profile.get("driver") != driver.key:
+            profile = data.games.get(str(int(appid)))
+            if not profile or profile.driver != driver.key:
                 return {"applied": False}
             self._suppress_game_saves(generation, appid)
             applied = False
-            volume = profile.get("volume")
+            volume = profile.volume
             if volume is not None:
                 volume = max(
                     driver.scale.min,
@@ -996,7 +990,7 @@ class Controller:
                     raise self._stale_receiver_error()
                 driver = self._active_driver
                 applied = True
-            mode = profile.get("mode")
+            mode = profile.mode
             if mode and MODE in driver.capabilities:
                 mode_applied = False
                 try:
@@ -1100,28 +1094,40 @@ class Controller:
             data = self._settings()
             if what == "volume":
                 value = status.volume
-                if data.get("late", {}).get("active"):
-                    value = data.get("late", {}).get("prev_volume", value)
+                if data.late.active:
+                    value = data.late.prev_volume if data.late.prev_volume is not None else value
                 if value is None:
                     return {"ok": False, "error": "Receiver doesn't report volume"}
             else:
                 value = status.mode
                 if not value:
                     return {"ok": False, "error": "Receiver doesn't report a listening mode"}
-            profile = data.setdefault("games", {}).setdefault(key, {})
-            if profile.get("driver") not in (None, driver.key):
-                profile.pop("volume", None)
-                profile.pop("mode", None)
-            profile["name"] = current_game["name"]
-            profile["driver"] = driver.key
-            profile[what] = value
+            profile = data.games.get(key)
+            if profile is None:
+                profile = GameProfile(
+                    appid=int(key),
+                    name=current_game["name"],
+                    driver=driver.key,
+                )
+                data.games[key] = profile
+            elif profile.driver not in (None, driver.key):
+                profile.volume = None
+                profile.mode = None
+            profile.name = current_game["name"]
+            profile.driver = driver.key
+            if what == "volume":
+                profile.volume = value
+            else:
+                profile.mode = value
         else:
-            games = data.setdefault("games", {})
-            profile = games.get(key)
+            profile = data.games.get(key)
             if profile:
-                profile.pop(what, None)
-                if profile.get("volume") is None and profile.get("mode") is None:
-                    games.pop(key, None)
+                if what == "volume":
+                    profile.volume = None
+                else:
+                    profile.mode = None
+                if profile.volume is None and profile.mode is None:
+                    data.games.pop(key, None)
         if not self._is_current(generation) or self._current_game != current_game:
             return {"ok": False, "error": str(self._stale_receiver_error())}
         self._save(data)
@@ -1129,10 +1135,10 @@ class Controller:
 
     async def list_games(self) -> list[dict]:
         data = self._settings()
-        current_driver = self._class_for(data.get("receiver", {}).get("driver"))
+        current_driver = self._class_for(data.receiver.driver)
         results = []
-        for appid, profile in data.get("games", {}).items():
-            code = profile.get("mode")
+        for appid, profile in data.games.items():
+            code = profile.mode
             name = None
             if code and current_driver:
                 name = current_driver({}).mode_name(code)
@@ -1141,18 +1147,18 @@ class Controller:
             results.append(
                 {
                     "appid": int(appid),
-                    "name": profile.get("name", ""),
-                    "volume": profile.get("volume"),
+                    "name": profile.name,
+                    "volume": profile.volume,
                     "mode": code,
                     "mode_name": name,
-                    "driver": profile.get("driver"),
+                    "driver": profile.driver,
                 }
             )
         return results
 
     async def forget_game(self, appid: int) -> None:
         data = self._settings()
-        data.get("games", {}).pop(str(int(appid)), None)
+        data.games.pop(str(int(appid)), None)
         self._save(data)
 
     async def set_late_night(self, on: bool) -> dict:
@@ -1162,7 +1168,7 @@ class Controller:
             driver = await self._get_driver(generation)
             if not self._is_current(generation, driver):
                 raise self._stale_receiver_error()
-            active = bool(data.get("late", {}).get("active"))
+            active = data.late.active
             if on and not active:
                 status: Status = await self._run(
                     "status", generation=generation, driver=driver
@@ -1172,8 +1178,9 @@ class Controller:
                 if status.volume is None:
                     return {"ok": False, "error": "Turn the receiver on first"}
                 data = self._settings()
-                data["late"] = {"active": True, "prev_volume": status.volume}
-                data["late_receiver"] = self._receiver_binding(data)
+                data.late.active = True
+                data.late.prev_volume = status.volume
+                data.late.binding = self._receiver_binding(data)
                 self._save(data)
                 cap = self._effective_cap(data, driver.scale)
                 if status.volume > cap:
@@ -1193,10 +1200,11 @@ class Controller:
                             driver=current_driver,
                         )
             elif not on and active:
-                previous = data.get("late", {}).get("prev_volume")
+                previous = data.late.prev_volume
                 if not self._is_current(generation, driver):
                     raise self._stale_receiver_error()
-                data["late"] = {"active": False}
+                data.late.active = False
+                data.late.prev_volume = None
                 self._save(data)
                 if previous is not None:
                     volume = max(

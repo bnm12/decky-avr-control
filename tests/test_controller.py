@@ -27,7 +27,7 @@ from avr_control.drivers.heos import HeosDriver
 from avr_control.drivers.homeassistant import HomeAssistantDriver
 from avr_control.drivers.pioneer_telnet import PioneerTelnetDriver
 from avr_control.drivers.yamaha import YamahaDriver
-from avr_control.settings import SettingsStore
+from avr_control.settings import SettingsRepository, SettingsStore
 from tests.test_heos import FakeHeos
 from tests.test_homeassistant import ENTITY_ID, TOKEN, FakeHomeAssistant
 
@@ -110,10 +110,11 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.path = os.path.join(self.temp.name, "settings.json")
         self.store = SettingsStore(self.path)
+        self.repository = SettingsRepository(self.store)
         self.clock = FakeClock()
         self.reset_driver()
         self.controller = Controller(
-            self.store,
+            self.repository,
             registry=[MemoryDriver],
             clock=self.clock,
             sleep=self.clock.sleep,
@@ -136,11 +137,12 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         self.store.save(
             data
             or {
-                "version": 2,
+                "version": 3,
                 "receiver": {
                     "driver": "memory",
                     "config": {"host": "receiver"},
                     "id": "stable-id",
+                    "binding": {"driver": "memory", "id": "STABLE-ID"},
                 },
                 "cap": None,
                 "late_cap": None,
@@ -1279,7 +1281,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         second = FakeHomeAssistant()
         second.attributes["volume_level"] = 0.73
         second_port = second.start()
-        controller = Controller(self.store, registry=[HomeAssistantDriver])
+        controller = Controller(self.repository, registry=[HomeAssistantDriver])
         config = {
             "url": f"http://127.0.0.1:{first_port}",
             "token": TOKEN,
@@ -1639,7 +1641,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(profiles[0]["driver"], "memory")
 
     async def test_connection_summary_supports_home_assistant_without_exposing_token(self):
-        controller = Controller(self.store, registry=[HomeAssistantDriver])
+        controller = Controller(self.repository, registry=[HomeAssistantDriver])
         self.store.save(
             {
                 "version": 2,

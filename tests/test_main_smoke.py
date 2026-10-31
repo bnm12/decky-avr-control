@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import patch
 
 from tests import PY_MODULES  # noqa: F401
-from avr_control.settings import SettingsStore
+from avr_control.settings import FileSettingsStore
 
 
 class Logger:
@@ -92,7 +92,7 @@ class MainSmokeTests(unittest.TestCase):
             sys.modules["decky"] = decky_stub
             try:
                 with patch.object(
-                    SettingsStore, "save", side_effect=OSError("disk full")
+                    FileSettingsStore, "save", side_effect=OSError("disk full")
                 ):
                     spec = importlib.util.spec_from_file_location(
                         "avr_control_main_smoke", os.path.join(
