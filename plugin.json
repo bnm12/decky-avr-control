@@ -1,5 +1,5 @@
 {
-  "name": "Pioneer Volume",
+  "name": "AVR Control",
   "author": "bnm12",
   "flags": [],
   "api_version": 1,
@@ -8,7 +8,7 @@
       "audio",
       "utility"
     ],
-    "description": "Volume slider, listening mode picker and opt-in per-game audio profiles for Pioneer and Onkyo AV receivers, controlled over your local network.",
-    "image": "https://opengraph.githubassets.com/1/bnm12/decky-pioneer-volume"
+    "description": "Network volume, mute, power and listening-mode controls with opt-in per-game profiles for AV receivers.",
+    "image": "https://opengraph.githubassets.com/1/bnm12/decky-avr-control"
   }
 }

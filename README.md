@@ -1,7 +1,7 @@
-# Pioneer Volume
+# AVR Control
 
-Decky Loader plugin that adds an absolute volume slider (plus mute) for Pioneer
-AVRs (tested target: VSX-935) over the network, instead of CEC volume up/down.
+Decky Loader plugin that adds absolute volume, mute and listening-mode controls
+for network AV receivers, instead of CEC volume up/down.
 
 ## Features
 
@@ -26,10 +26,10 @@ AVRs (tested target: VSX-935) over the network, instead of CEC volume up/down.
 
 ## Install
 
-1. Download `pioneer-volume.zip` from the latest GitHub release (or from the
-   artifact of a workflow run).
+1. Download [avr-control.zip](https://github.com/bnm12/decky-avr-control/releases/latest/download/avr-control.zip)
+   from the latest GitHub release (or from the artifact of a workflow run).
 2. Unzip it into `~/homebrew/plugins/` so you end up with
-   `~/homebrew/plugins/pioneer-volume/` (needs sudo).
+   `~/homebrew/plugins/avr-control/` (needs sudo).
 3. `sudo systemctl restart plugin_loader`
 4. Open the Quick Access menu. On first run the plugin searches the network for
    the receiver by itself; otherwise tap **Search network**, or enter the IP
@@ -37,11 +37,16 @@ AVRs (tested target: VSX-935) over the network, instead of CEC volume up/down.
 
 Enable **Network Standby** on the AVR so it accepts commands while idle.
 
+When upgrading from **Pioneer Volume**, settings migrate automatically on first
+launch. After confirming the new plugin works, remove the old
+`~/homebrew/plugins/pioneer-volume/` folder to avoid loading both plugins.
+
 ## Build locally
 
 ```
-pnpm install
-pnpm build
+corepack pnpm@10.18.0 install --frozen-lockfile
+corepack pnpm@10.18.0 build
+python -m unittest discover -s tests -t . -v
 ```
 
 ## Releasing
@@ -50,7 +55,7 @@ The version lives in `package.json` and is always the same as the git tag.
 In the repo's **Actions** tab choose **Release**, then **Run workflow**, and enter a
 version such as `0.2.2` (or `gh workflow run release.yml -f version=0.2.2`). It updates
 `package.json`, commits, tags `v0.2.2`, and the Build workflow then attaches
-`pioneer-volume.zip` to a GitHub release. Pushing a `v*` tag by hand also works: the
+`avr-control.zip` to a GitHub release. Pushing a `v*` tag by hand also works: the
 zip is stamped with the tag's version, and the build warns if `package.json` differs.
 
 ## Discovery
@@ -64,7 +69,7 @@ entered manually.
 
 ## Protocol notes
 
-The plugin tries, in order, whichever protocol your AVR answers:
+The installed build currently includes:
 
 1. **eISCP on port 60128** (Onkyo-style, used by recent Pioneer VSX models).
    Volume is `MVLxx` (hex), mute is `AMT00`/`AMT01`. 0.5 dB per step; on a
@@ -74,6 +79,12 @@ The plugin tries, in order, whichever protocol your AVR answers:
 
 The slider cap is set in dB in the plugin's settings (default about -32 dB for
 eISCP, 0 dB for the text protocol), so the slider can never go above it.
+
+## Drivers
+
+Driver protocol details, including source tags and known hardware limitations:
+[eISCP](py_modules/avr_control/drivers/eiscp.md) and
+[Pioneer legacy telnet](py_modules/avr_control/drivers/pioneer_telnet.md).
 
 ## Collecting listening-mode codes
 

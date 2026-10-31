@@ -412,13 +412,13 @@ export default definePlugin(() => {
       }
     });
   } catch (e) {
-    console.error("Pioneer Volume: game detection unavailable", e);
+    console.error("AVR Control: game detection unavailable", e);
   }
   syncRunningGame();
 
   return {
-    name: "Pioneer Volume",
-    titleView: <div>Pioneer Volume</div>,
+    name: "AVR Control",
+    titleView: <div>AVR Control</div>,
     content: <Content />,
     icon: <FaVolumeUp />,
     onDismount() {
