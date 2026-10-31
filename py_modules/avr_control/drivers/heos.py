@@ -99,6 +99,10 @@ def _description_value(raw_xml: str, key: str) -> str:
     return ""
 
 
+def _player_text(player: dict, key: str) -> str:
+    return str(player.get(key) or "").strip()
+
+
 def _player_names(players: list[dict]) -> str:
     names = [str(player.get("name") or "(unnamed)") for player in players]
     return ", ".join(names) if names else "none"
@@ -173,29 +177,38 @@ class HeosDriver(Driver):
             raise DriverError("HEOS returned an invalid player list")
         return payload
 
+    @staticmethod
+    def _unique_player(matches: list[dict], description: str) -> dict | None:
+        if len(matches) > 1:
+            raise DriverError(
+                f"Multiple HEOS players match {description}: {_player_names(matches)}"
+            )
+        return matches[0] if matches else None
+
     def _resolve_player(self, players: list[dict]) -> dict:
         if not players:
             raise DriverError("No HEOS players were found")
 
-        by_ip = [
-            player
-            for player in players
-            if str(player.get("ip", "")).strip() == self.host
-        ]
-        if len(by_ip) == 1:
-            return by_ip[0]
-        if len(by_ip) > 1:
-            raise DriverError(
-                f"Multiple HEOS players match {self.host}: {_player_names(by_ip)}"
-            )
+        serial = str(self.config.get("serial", "")).strip()
+        if serial:
+            by_serial = [
+                player for player in players if _player_text(player, "serial") == serial
+            ]
+            player = self._unique_player(by_serial, f"serial {serial}")
+            if player is not None:
+                return player
+
+        by_ip = [player for player in players if _player_text(player, "ip") == self.host]
+        player = self._unique_player(by_ip, self.host)
+        if player is not None:
+            return player
 
         requested_name = str(self.config.get("player", "")).strip()
         if requested_name:
             by_name = [
                 player
                 for player in players
-                if str(player.get("name", "")).strip().casefold()
-                == requested_name.casefold()
+                if _player_text(player, "name").casefold() == requested_name.casefold()
             ]
             if len(by_name) == 1:
                 return by_name[0]
@@ -323,12 +336,15 @@ class HeosDriver(Driver):
             ).strip()
             udn = str(description.get("UDN", "")).strip()
             host = item["ip"]
+            config = {"host": host, "model": model, "player": name, "ip": host}
+            if serial:
+                config["serial"] = serial
             return Found(
                 driver=cls.key,
                 model=model,
                 id=f"heos:{serial or udn or host}",
                 host=host,
-                config={"host": host, "model": model, "name": name, "ip": host},
+                config=config,
             )
 
         found = await asyncio.gather(*(fetch(item) for item in candidates.values()))
@@ -363,20 +379,26 @@ class HeosDriver(Driver):
             return None
 
         model = str(player.get("model") or player.get("name") or "HEOS player")
-        name = str(player.get("name") or "")
+        name = _player_text(player, "name")
         ip = str(player.get("ip") or host)
-        identity = str(player.get("serial") or ip or host)
+        player_serial = _player_text(player, "serial")
+        identity = player_serial or ip or host
+        found_config = {
+            **config,
+            "host": host,
+            "port": driver.port,
+            "model": model,
+            "player": name,
+            "ip": ip,
+        }
+        found_config.pop("name", None)
+        found_config.pop("serial", None)
+        if player_serial:
+            found_config["serial"] = player_serial
         return Found(
             driver=cls.key,
             model=model,
             id=str(config.get("id") or f"heos:{identity}"),
             host=host,
-            config={
-                **config,
-                "host": host,
-                "port": driver.port,
-                "model": model,
-                "name": name,
-                "ip": ip,
-            },
+            config=found_config,
         )

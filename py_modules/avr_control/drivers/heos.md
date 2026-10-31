@@ -27,7 +27,7 @@ Skip replies whose message is `command under process`; the final response may ar
 
 ## Discovery
 
-Search with the HEOS SSDP target, then use the response sender IP as the device host and fetch its UPnP description [spec, 1, p. 4]. The description's serial number is preferred for the receiver ID, with UDN as fallback; an IP fallback is used if neither is present [assumed]. A manual probe sends `heos://system/heart_beat`, checks for a successful JSON response, then calls `player/get_players` and resolves the target [spec, 1, p. 8].
+Search with the HEOS SSDP target, then use the response sender IP as the device host and fetch its UPnP description [spec, 1, p. 4]. The description's serial number is preferred for the receiver ID, with UDN as fallback; an IP fallback is used if neither is present [assumed]. The found receiver's config carries `host`, `ip` (the same host), `model`, `player` (the UPnP `friendlyName`) and, when the description has one, `serial` (the UPnP `serialNumber`) [assumed: the UPnP serial equals the HEOS player serial; if it doesn't, selection falls back to the player name]. A manual probe sends `heos://system/heart_beat`, checks for a successful JSON response, then calls `player/get_players` and resolves the target [spec, 1, p. 8]. A successful probe rewrites `player` to the resolved player's name and `serial` to its `serial` field when the player reports one.
 
 The CLI must initialize its player list after a connection is opened; the spec says player IDs become available only after player discovery [spec, 1, p. 5]. PIDs are resolved again for each operation and are never saved as identity because the spec does not promise they remain stable after reconfiguration [assumed].
 
@@ -40,7 +40,14 @@ The CLI must initialize its player list after a connection is opened; the spec s
 | Power | — | — | — | Unsupported |
 | Listening mode | — | — | — | Unsupported |
 
-`player/get_players` supplies the player names, models and PIDs used to resolve each operation [spec, 1, p. 10]. The driver prefers a player whose reported IP matches `host`, then the configured player name, then the only available player. If more than one remains, it reports the available names [assumed implementation policy]. PIDs are used only as command targets; model, name and IP are retained in the found receiver's config.
+`player/get_players` supplies the player names, models, PIDs and, in later spec versions, serials and IPs [spec, 1, p. 10; spec, 2, fields as cited in review, page not checked]. Any field may be absent: the spec allows a player without an `ip`. The driver picks one player in this order [assumed implementation policy]:
+
+1. the player whose `serial` equals the configured `serial`;
+2. the player whose `ip` equals `host`;
+3. the player whose `name` equals the configured `player` (case-insensitive; a renamed player is not found by name);
+4. the only player, when no `player` is configured.
+
+Each step needs exactly one match; two matches at a step are an error that lists the names. A missing name is an error that lists the available players. PIDs are used only as command targets; model, name, serial and IP are retained in the found receiver's config.
 
 ## Volume scale
 
@@ -54,14 +61,17 @@ Not supported. HEOS playback/group functions are not AVR surround listening mode
 
 - HEOS volume is the HEOS player's volume. On a Denon/Marantz AVR with HEOS built in, this is **not necessarily the AVR's main-zone master volume** [assumed; not verified on hardware]. Use the Denon driver for AVR master-volume control.
 - The HEOS CLI controls the whole system through a connection to one HEOS device; do not open a separate connection to each player [spec, 1, p. 5].
-- A configured player name is used only when no player IP matches the host. Duplicate names or multiple candidates are errors rather than an arbitrary selection [assumed implementation policy].
+- Duplicate names or multiple candidates are errors rather than an arbitrary selection [assumed implementation policy].
+- Configs saved before the `player`/`serial` keys existed carry `name` instead, which is no longer read. Run the search again to rewrite them; until then, a system with several players that have no `ip` field reports "Multiple HEOS players found".
 
 ## Unknowns and open questions
 
-- No real HEOS device has been tested. Confirm player IP availability, response variations and whether HEOS-built-in AVR volume tracks main-zone volume.
-- The v1.7 `get_players` example shows name, PID, group ID, model and version, but not IP or serial [spec, 1, p. 10]. The driver uses IP when a device reports it and otherwise relies on the configured name or a single-player system.
+- No real HEOS device has been tested. Confirm player IP and serial availability, response variations and whether HEOS-built-in AVR volume tracks main-zone volume.
+- The v1.7 `get_players` example shows name, PID, group ID, model and version, but not IP or serial [spec, 1, p. 10]. Whether the UPnP `serialNumber` matches a player's `serial` is unverified.
 - Confirm that pids can change after device reconfiguration; the spec describes them as discovered at connection time but does not state their persistence [spec, 1, p. 5; assumed volatility].
 
 ## Sources
 
 1. HEOS, [HEOS CLI Protocol Specification v1.7 (2016)](http://rn.dmglobal.com/euheos/HEOS_CLI_ProtocolSpecification.pdf): connection, TCP port and SSDP target (p. 4); socket and initialization guidance, including the 32-socket limit (p. 5); JSON format, CRLF framing and interim replies (p. 7); heartbeat and event registration (p. 8); player list (p. 10); volume (p. 13); mute (p. 14).
+2. HEOS, [HEOS CLI Protocol Specification v1.14](https://www.marantz.com/on/demandware.static/-/Library-Sites-marantz_northamerica_shared/default/dw04da2b25/archive-downloads/heos_cli_protocolspecification-version-114.pdf): cited for player entries that may omit `ip` and for `serial` in `get_players`. The page numbers were not checked against the PDF.
+

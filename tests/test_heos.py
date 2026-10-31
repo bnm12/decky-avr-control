@@ -74,7 +74,11 @@ class FakeHeos:
                     payload = {}
                 elif path == "player/get_players":
                     payload = [
-                        {key: player[key] for key in ("pid", "name", "model", "serial", "ip")}
+                        {
+                            key: player[key]
+                            for key in ("pid", "name", "model", "serial", "ip")
+                            if key in player
+                        }
                         for player in self.players
                     ]
                 elif path.startswith("player/"):
@@ -120,10 +124,12 @@ class FakeHeos:
 
 
 class HeosDescriptionHandler(BaseHTTPRequestHandler):
+    friendly_name = "Denon Living Room"
+
     def do_GET(self):
         body = (
             '<?xml version="1.0"?><root xmlns="urn:schemas-upnp-org:device-1-0">'
-            "<device><friendlyName>Denon Living Room</friendlyName>"
+            f"<device><friendlyName>{self.friendly_name}</friendlyName>"
             "<manufacturer>Denon</manufacturer><modelName>AVR-X2800H</modelName>"
             "<serialNumber>DENON-2800</serialNumber>"
             "<UDN>uuid:heos-receiver-1</UDN></device></root>"
@@ -183,6 +189,28 @@ class HeosDriverTests(unittest.IsolatedAsyncioTestCase):
         self.fake.players[0]["ip"] = "127.0.0.3"
         self.assertEqual((await by_name.status()).volume, 58)
 
+    async def test_discovered_config_selects_its_player_when_players_have_no_ip(self):
+        for player in self.fake.players:
+            player.pop("ip")
+        found, _ = await self._discover("Kitchen")
+        self.assertEqual(len(found), 1)
+        driver = HeosDriver({**found[0].config, "port": self.port})
+        self.assertEqual((await driver.status()).volume, 58)
+
+    async def test_serial_selects_player_after_it_is_renamed(self):
+        for player in self.fake.players:
+            player.pop("ip")
+        self.fake.players[1]["name"] = "Garage"
+        driver = HeosDriver(
+            {
+                "host": "127.0.0.1",
+                "port": self.port,
+                "player": "Kitchen",
+                "serial": "HEOS-202",
+            }
+        )
+        self.assertEqual((await driver.status()).volume, 58)
+
     async def test_only_player_is_selected_and_ambiguous_selection_lists_names(self):
         self.fake.players = self.fake.players[:1]
         self.assertEqual((await self.driver.status()).volume, 34)
@@ -208,8 +236,10 @@ class HeosDriverTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(found.driver, "heos")
         self.assertEqual(found.config["port"], self.port)
         self.assertEqual(found.config["model"], "HEOS AVR")
-        self.assertEqual(found.config["name"], "Living Room")
+        self.assertEqual(found.config["player"], "Living Room")
+        self.assertEqual(found.config["serial"], "HEOS-101")
         self.assertEqual(found.config["ip"], "127.0.0.1")
+        self.assertNotIn("name", found.config)
 
         async def other_protocol(reader, writer):
             await reader.readline()
@@ -227,8 +257,11 @@ class HeosDriverTests(unittest.IsolatedAsyncioTestCase):
             other_server.close()
             await other_server.wait_closed()
 
-    async def test_discovery_uses_heos_ssdp_target_and_stable_description_identity(self):
-        http_server = ThreadingHTTPServer(("127.0.0.1", 0), HeosDescriptionHandler)
+    async def _discover(self, friendly_name: str = "Denon Living Room"):
+        handler = type(
+            "Handler", (HeosDescriptionHandler,), {"friendly_name": friendly_name}
+        )
+        http_server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
         thread = threading.Thread(target=http_server.serve_forever, daemon=True)
         thread.start()
         location = f"http://127.0.0.1:{http_server.server_port}/device.xml"
@@ -240,19 +273,25 @@ class HeosDriverTests(unittest.IsolatedAsyncioTestCase):
         try:
             ssdp.SSDP_ADDRESS = transport.get_extra_info("sockname")
             found = await HeosDriver.discover(0.1)
-            self.assertIn(f"ST: {HEOS_SSDP_ST}", responder.requests[0])
         finally:
             ssdp.SSDP_ADDRESS = old_address
             transport.close()
             http_server.shutdown()
             http_server.server_close()
             thread.join(timeout=2)
+        return found, responder.requests
+
+    async def test_discovery_uses_heos_ssdp_target_and_stable_description_identity(self):
+        found, requests = await self._discover()
+        self.assertIn(f"ST: {HEOS_SSDP_ST}", requests[0])
 
         self.assertEqual(len(found), 1)
         self.assertEqual(found[0].model, "AVR-X2800H")
         self.assertEqual(found[0].id, "heos:DENON-2800")
         self.assertEqual(found[0].host, "127.0.0.1")
-        self.assertEqual(found[0].config["name"], "Denon Living Room")
+        self.assertEqual(found[0].config["player"], "Denon Living Room")
+        self.assertEqual(found[0].config["serial"], "DENON-2800")
+        self.assertNotIn("name", found[0].config)
 
 
 if __name__ == "__main__":
