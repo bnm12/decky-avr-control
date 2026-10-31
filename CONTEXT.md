@@ -54,6 +54,9 @@ _Avoid_: max volume, limit
 **Late night mode**:
 A temporary state that lowers the volume to the late night cap and restores the previous volume and cap when switched off.
 
+**Time-of-day schedule**:
+An optional daily local-time window that automatically enters and leaves late night mode, and can apply a listening mode when the window starts. A manual late-night toggle overrides the schedule until its next boundary.
+
 ### Listening modes
 
 **Listening mode**:
@@ -67,3 +70,11 @@ What a game remembers (its volume, its listening mode, or both), restored when i
 
 **Opt-in**:
 A per-game, per-setting switch the user turns on so a game remembers that setting. Games without an opt-in are never touched.
+
+### Steam lifecycle
+
+**Steam resume**:
+The Steam device waking after suspend. An opt-in may power on a receiver only when its power state is known to be off.
+
+**Steam suspend**:
+The Steam device preparing to sleep. An independent opt-in may best-effort power off a receiver that supports the power capability.

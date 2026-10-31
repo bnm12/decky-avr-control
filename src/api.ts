@@ -26,6 +26,19 @@ export type Snapshot = {
     effective_max_display: number;
     late_night: boolean;
   } | null;
+  schedule: {
+    enabled: boolean;
+    start: string;
+    end: string;
+    mode: string | null;
+    active_now: boolean;
+    auto: boolean;
+  };
+  sleep_wake: {
+    wake_on_resume: boolean;
+    off_on_suspend: boolean;
+    supports_power: boolean;
+  };
   modes: {
     current: { code: string; label: string } | null;
     selectable: { code: string; label: string }[];
@@ -55,6 +68,20 @@ export type ControlIntent =
   | { type: "set_power"; on: boolean }
   | { type: "set_mode"; code: string }
   | { type: "set_late_night"; on: boolean }
+  | {
+      type: "set_schedule";
+      enabled: boolean;
+      start: string;
+      end: string;
+      mode: string | null;
+    }
+  | {
+      type: "set_sleep_wake";
+      wake_on_resume: boolean;
+      off_on_suspend: boolean;
+    }
+  | { type: "system_resumed" }
+  | { type: "system_suspending" }
   | { type: "set_caps"; cap_display: number; late_cap_display: number }
   | { type: "configure_receiver"; driver_key: string; config: Record<string, string> }
   | { type: "select_receiver"; id: string }

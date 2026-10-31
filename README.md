@@ -41,6 +41,12 @@ two-minute recording from your receiver helps us validate it: see
 - **Late night mode.** One toggle lowers the volume to the *Late night max volume* and
   caps the slider there. Switching it off restores the previous volume and cap. Per-game
   profiles are not changed while it is on.
+- **Daily time-of-day schedule.** Choose a local-time quiet-hours window, including one
+  that crosses midnight. It can automatically enable late night mode and set a listening
+  mode at the start; a manual late-night toggle takes precedence until the next boundary.
+- **Steam sleep and wake automation, opt-in.** Independently power the receiver on when
+  Steam resumes (only when power is known to be off) or best-effort power it off before
+  Steam suspends. These controls are disabled for receivers without power support.
 
 - **Listening mode picker.** Choose a listening mode from the panel. Yamaha and Home
   Assistant report their own list; the eISCP list was collected from a VSX-935 with
@@ -61,6 +67,17 @@ two-minute recording from your receiver helps us validate it: see
    manually and tap Save & connect. The connection type is detected from the IP;
    for Home Assistant choose it explicitly and enter the URL, a long-lived access
    token and the media player's entity id.
+
+## Using Home Assistant
+
+Choose Home Assistant for any `media_player` entity, including receivers without
+a native driver. The controls available depend on the entity's advertised
+capabilities. Create a long-lived access token under your Home Assistant profile
+→ **Security → Long-lived access tokens**, enter the server URL (for example
+`http://homeassistant.local:8123`), and use **Find media players** or type an
+entity ID manually. The token is stored in Decky's settings and never shown again;
+it is sent to the Home Assistant URL you enter. Leave the token field empty to keep
+the saved token, including when looking up media players.
 
 Enable the receiver's network standby setting (Pioneer/Onkyo "Network Standby",
 Denon/Marantz "Network Control: Always On", Yamaha "Network Standby") so it accepts

@@ -15,9 +15,11 @@ from avr_control.settings import (
     LateNightSettings,
     MemorySettingsStore,
     ReceiverSettings,
+    ScheduleSettings,
     Settings,
     SettingsRepository,
     SettingsStore,
+    SleepWakeSettings,
     migrate,
 )
 
@@ -75,10 +77,26 @@ class SettingsRepositoryTests(unittest.TestCase):
                 late=LateNightSettings(
                     active=True,
                     prev_volume=61,
+                    auto=True,
                     cap=30,
                     cap_binding={"driver": "homeassistant", "id": "RECEIVER-ID"},
                     binding={"driver": "homeassistant", "id": "RECEIVER-ID"},
                     extra={"future_late_option": "kept"},
+                ),
+                schedule=ScheduleSettings(
+                    enabled=True,
+                    start="21:30",
+                    end="06:45",
+                    mode="11",
+                    override_window="2026-10-31",
+                    last_late_window="2026-10-31",
+                    last_mode_window="2026-10-30",
+                    extra={"future_schedule_option": "kept"},
+                ),
+                sleep_wake=SleepWakeSettings(
+                    wake_on_resume=True,
+                    off_on_suspend=True,
+                    extra={"future_sleep_option": "kept"},
                 ),
                 games={
                     "123": GameProfile(
@@ -103,6 +121,7 @@ class SettingsRepositoryTests(unittest.TestCase):
             self.assertEqual(loaded.cap.binding, value.cap.binding)
             self.assertEqual(loaded.late.prev_volume, 61)
             self.assertTrue(loaded.late.active)
+            self.assertTrue(loaded.late.auto)
             self.assertEqual(loaded.late.cap, 30)
             self.assertEqual(loaded.late.cap_binding, value.late.cap_binding)
             self.assertEqual(loaded.late.binding, value.late.binding)
@@ -113,6 +132,20 @@ class SettingsRepositoryTests(unittest.TestCase):
                 loaded.receiver.extra["future_receiver_option"], {"kept": True}
             )
             self.assertEqual(loaded.late.extra["future_late_option"], "kept")
+            self.assertTrue(loaded.schedule.enabled)
+            self.assertEqual((loaded.schedule.start, loaded.schedule.end), ("21:30", "06:45"))
+            self.assertEqual(loaded.schedule.mode, "11")
+            self.assertEqual(loaded.schedule.override_window, "2026-10-31")
+            self.assertEqual(loaded.schedule.last_late_window, "2026-10-31")
+            self.assertEqual(loaded.schedule.last_mode_window, "2026-10-30")
+            self.assertEqual(
+                loaded.schedule.extra["future_schedule_option"], "kept"
+            )
+            self.assertEqual(loaded.sleep_wake.wake_on_resume, True)
+            self.assertEqual(loaded.sleep_wake.off_on_suspend, True)
+            self.assertEqual(
+                loaded.sleep_wake.extra["future_sleep_option"], "kept"
+            )
             self.assertEqual(
                 loaded.games["123"].extra["future_profile_option"], "kept"
             )
@@ -131,6 +164,18 @@ class SettingsRepositoryTests(unittest.TestCase):
                 "active": "yes",
                 "prev_volume": "bad",
                 "future_late_option": "preserved",
+            },
+            "schedule": {
+                "enabled": "yes",
+                "start": "25:61",
+                "end": "07:00",
+                "mode": 9,
+                "future_schedule_option": "preserved",
+            },
+            "sleep_wake": {
+                "wake_on_resume": "yes",
+                "off_on_suspend": True,
+                "future_sleep_option": "preserved",
             },
             "games": {
                 "10": {"name": 9, "driver": [], "volume": "bad", "mode": 4},
@@ -157,6 +202,18 @@ class SettingsRepositoryTests(unittest.TestCase):
             self.assertEqual(settings.games["11"].volume, 81)
             self.assertNotIn("not-an-appid", settings.games)
             self.assertEqual(settings.late.extra["future_late_option"], "preserved")
+            self.assertFalse(settings.schedule.enabled)
+            self.assertEqual(settings.schedule.start, "22:00")
+            self.assertEqual(settings.schedule.end, "07:00")
+            self.assertIsNone(settings.schedule.mode)
+            self.assertEqual(
+                settings.schedule.extra["future_schedule_option"], "preserved"
+            )
+            self.assertFalse(settings.sleep_wake.wake_on_resume)
+            self.assertTrue(settings.sleep_wake.off_on_suspend)
+            self.assertEqual(
+                settings.sleep_wake.extra["future_sleep_option"], "preserved"
+            )
 
         self._exercise_both(verify)
 
@@ -178,6 +235,8 @@ class SettingsRepositoryTests(unittest.TestCase):
         self.assertEqual(migrated_once["receiver"]["driver"], "eiscp")
         self.assertEqual(migrated_once["receiver"]["config"]["host"], "192.0.2.1")
         self.assertEqual(migrated_once["games"]["10"]["driver"], "eiscp")
+        self.assertFalse(migrated_once["schedule"]["enabled"])
+        self.assertFalse(migrated_once["sleep_wake"]["wake_on_resume"])
 
         def verify(store, _root):
             store.save(flat)
@@ -189,9 +248,36 @@ class SettingsRepositoryTests(unittest.TestCase):
             self.assertEqual(loaded.late.prev_volume, 90)
             self.assertEqual(loaded.games["10"].volume, 80)
             self.assertEqual(loaded.extra["future_setting"], "preserved")
+            self.assertFalse(loaded.schedule.enabled)
+            self.assertFalse(loaded.sleep_wake.wake_on_resume)
             self.assertEqual(SettingsRepository(store).load().to_dict(), loaded.to_dict())
-
         self._exercise_both(verify)
+
+    def test_v3_migration_adds_opt_ins_and_preserves_schedule_values(self):
+        data = {
+            "version": 3,
+            "receiver": {"driver": "eiscp", "config": {"host": "receiver"}},
+            "late": {"active": False},
+            "schedule": {
+                "enabled": True,
+                "start": "20:15",
+                "end": "23:45",
+                "mode": "11",
+            },
+            "sleep_wake": {
+                "wake_on_resume": True,
+                "off_on_suspend": False,
+            },
+        }
+
+        migrated = migrate(data)
+        settings = SettingsRepository(MemorySettingsStore(data)).load()
+
+        self.assertEqual(migrated["version"], CURRENT_VERSION)
+        self.assertEqual(settings.schedule.start, "20:15")
+        self.assertEqual(settings.schedule.mode, "11")
+        self.assertTrue(settings.sleep_wake.wake_on_resume)
+        self.assertFalse(settings.sleep_wake.off_on_suspend)
 
     def test_legacy_folder_adoption_uses_injected_path_for_both_adapters(self):
         legacy = {"host": "192.0.2.9", "proto": "telnet", "max": 140}

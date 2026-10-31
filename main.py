@@ -19,6 +19,10 @@ from avr_control.application import (
     SetMode,
     SetMute,
     SetPower,
+    SetSchedule,
+    SetSleepWake,
+    SystemResumed,
+    SystemSuspending,
     SetVolume,
     ControlApplication,
 )
@@ -55,6 +59,21 @@ def _intent(value: Any):
         "set_power": (SetPower, {"on": "bool"}),
         "set_mode": (SetMode, {"code": "string"}),
         "set_late_night": (SetLateNight, {"on": "bool"}),
+        "set_schedule": (
+            SetSchedule,
+            {
+                "enabled": "bool",
+                "start": "string",
+                "end": "string",
+                "mode": "nullable_string",
+            },
+        ),
+        "set_sleep_wake": (
+            SetSleepWake,
+            {"wake_on_resume": "bool", "off_on_suspend": "bool"},
+        ),
+        "system_resumed": (SystemResumed, {}),
+        "system_suspending": (SystemSuspending, {}),
         "set_caps": (
             SetCaps,
             {"cap_display": "number", "late_cap_display": "number"},
@@ -96,6 +115,8 @@ def _intent(value: Any):
             valid = isinstance(item, bool)
         elif expected == "string":
             valid = isinstance(item, str)
+        elif expected == "nullable_string":
+            valid = item is None or isinstance(item, str)
         elif expected == "object":
             valid = isinstance(item, dict) and all(
                 isinstance(config_key, str) for config_key in item
@@ -139,6 +160,7 @@ class Plugin:
             return {"ok": False, "error": str(exc)}
 
     async def _main(self):
+        application.start_periodic()
         decky.logger.info("AVR Control loaded")
 
     async def _unload(self):

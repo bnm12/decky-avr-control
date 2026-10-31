@@ -9,7 +9,7 @@ import tempfile
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-CURRENT_VERSION = 3
+CURRENT_VERSION = 4
 CURRENT_SCHEMA_VERSION = CURRENT_VERSION
 _SECRET_NAMES = frozenset(
     {"token", "password", "secret", "api_key", "access_token", "authorization"}
@@ -112,9 +112,29 @@ class CapSettings:
 class LateNightSettings:
     active: bool = False
     prev_volume: int | None = None
+    auto: bool = False
     cap: int | None = None
     cap_binding: dict[str, Any] | None = None
     binding: dict[str, Any] | None = None
+    extra: dict[str, Any] = field(default_factory=dict, repr=False)
+
+
+@dataclass
+class ScheduleSettings:
+    enabled: bool = False
+    start: str = "22:00"
+    end: str = "07:00"
+    mode: str | None = None
+    override_window: str | None = None
+    last_late_window: str | None = None
+    last_mode_window: str | None = None
+    extra: dict[str, Any] = field(default_factory=dict, repr=False)
+
+
+@dataclass
+class SleepWakeSettings:
+    wake_on_resume: bool = False
+    off_on_suspend: bool = False
     extra: dict[str, Any] = field(default_factory=dict, repr=False)
 
 
@@ -134,6 +154,8 @@ class Settings:
     receiver: ReceiverSettings = field(default_factory=ReceiverSettings)
     cap: CapSettings = field(default_factory=CapSettings)
     late: LateNightSettings = field(default_factory=LateNightSettings)
+    schedule: ScheduleSettings = field(default_factory=ScheduleSettings)
+    sleep_wake: SleepWakeSettings = field(default_factory=SleepWakeSettings)
     games: dict[str, GameProfile] = field(default_factory=dict)
     extra: dict[str, Any] = field(default_factory=dict, repr=False)
     secret_keys: frozenset[str] = field(default_factory=frozenset, repr=False)
@@ -160,6 +182,32 @@ class Settings:
         late["active"] = bool(self.late.active)
         if self.late.prev_volume is not None:
             late["prev_volume"] = self.late.prev_volume
+        if self.late.auto:
+            late["auto"] = True
+
+        schedule = copy.deepcopy(self.schedule.extra)
+        schedule.update(
+            {
+                "enabled": bool(self.schedule.enabled),
+                "start": self.schedule.start,
+                "end": self.schedule.end,
+                "mode": self.schedule.mode,
+            }
+        )
+        if self.schedule.override_window is not None:
+            schedule["override_window"] = self.schedule.override_window
+        if self.schedule.last_late_window is not None:
+            schedule["last_late_window"] = self.schedule.last_late_window
+        if self.schedule.last_mode_window is not None:
+            schedule["last_mode_window"] = self.schedule.last_mode_window
+
+        sleep_wake = copy.deepcopy(self.sleep_wake.extra)
+        sleep_wake.update(
+            {
+                "wake_on_resume": bool(self.sleep_wake.wake_on_resume),
+                "off_on_suspend": bool(self.sleep_wake.off_on_suspend),
+            }
+        )
 
         games: dict[str, Any] = {}
         for key, profile in self.games.items():
@@ -179,6 +227,8 @@ class Settings:
                 "cap": self.cap.cap,
                 "late_cap": self.late.cap,
                 "late": late,
+                "schedule": schedule,
+                "sleep_wake": sleep_wake,
                 "games": games,
             }
         )
@@ -300,8 +350,28 @@ def _migrate_v2_to_v3(data: dict[str, Any]) -> dict[str, Any]:
     return migrated
 
 
+def _migrate_v3_to_v4(data: dict[str, Any]) -> dict[str, Any]:
+    migrated = copy.deepcopy(data)
+    migrated["version"] = 4
+    schedule = migrated.get("schedule")
+    if not isinstance(schedule, dict):
+        schedule = {}
+    schedule.setdefault("enabled", False)
+    schedule.setdefault("start", "22:00")
+    schedule.setdefault("end", "07:00")
+    schedule.setdefault("mode", None)
+    migrated["schedule"] = schedule
+    sleep_wake = migrated.get("sleep_wake")
+    if not isinstance(sleep_wake, dict):
+        sleep_wake = {}
+    sleep_wake.setdefault("wake_on_resume", False)
+    sleep_wake.setdefault("off_on_suspend", False)
+    migrated["sleep_wake"] = sleep_wake
+    return migrated
+
+
 def migrate(data: Any) -> dict[str, Any]:
-    """Apply the ordered, idempotent flat-v1 -> nested-v2 -> current migration."""
+    """Apply ordered, idempotent migrations to the current settings schema."""
     result = copy.deepcopy(data) if isinstance(data, dict) else {}
     version = result.get("version", 1)
     if not isinstance(version, int) or isinstance(version, bool):
@@ -313,8 +383,11 @@ def migrate(data: Any) -> dict[str, Any]:
     if version < 2:
         result = _migrate_v1_to_v2(result)
         version = 2
-    if version < CURRENT_VERSION:
+    if version < 3:
         result = _migrate_v2_to_v3(result)
+        version = 3
+    if version < CURRENT_VERSION:
+        result = _migrate_v3_to_v4(result)
     elif version > CURRENT_VERSION:
         result["version"] = CURRENT_VERSION
     return result
@@ -342,12 +415,15 @@ def _settings_from_data(data: dict[str, Any], secret_keys: frozenset[str]) -> Se
     if not isinstance(late_data, dict):
         late_data = {}
     previous_volume = _as_int(late_data.get("prev_volume"))
-    late_known = {"active", "prev_volume"}
+    late_known = {"active", "prev_volume", "auto"}
     late = LateNightSettings(
         active=late_data.get("active")
         if isinstance(late_data.get("active"), bool)
         else False,
         prev_volume=previous_volume,
+        auto=late_data.get("auto")
+        if isinstance(late_data.get("auto"), bool)
+        else False,
         cap=_as_int(data.get("late_cap")),
         cap_binding=_as_dict(data.get("late_cap_receiver")) or None,
         binding=_as_dict(data.get("late_receiver")) or None,
@@ -355,6 +431,66 @@ def _settings_from_data(data: dict[str, Any], secret_keys: frozenset[str]) -> Se
             key: copy.deepcopy(value)
             for key, value in late_data.items()
             if key not in late_known
+        },
+    )
+
+    schedule_data = data.get("schedule")
+    if not isinstance(schedule_data, dict):
+        schedule_data = {}
+
+    def valid_time(value: Any, default: str) -> str:
+        if not isinstance(value, str) or len(value) != 5 or value[2] != ":":
+            return default
+        hour, minute = value[:2], value[3:]
+        if (
+            not hour.isdigit()
+            or not minute.isdigit()
+            or int(hour) > 23
+            or int(minute) > 59
+        ):
+            return default
+        return value
+
+    schedule_known = {
+        "enabled",
+        "start",
+        "end",
+        "mode",
+        "override_window",
+        "last_late_window",
+        "last_mode_window",
+    }
+    schedule = ScheduleSettings(
+        enabled=schedule_data.get("enabled")
+        if isinstance(schedule_data.get("enabled"), bool)
+        else False,
+        start=valid_time(schedule_data.get("start"), "22:00"),
+        end=valid_time(schedule_data.get("end"), "07:00"),
+        mode=_as_string(schedule_data.get("mode")),
+        override_window=_as_string(schedule_data.get("override_window")),
+        last_late_window=_as_string(schedule_data.get("last_late_window")),
+        last_mode_window=_as_string(schedule_data.get("last_mode_window")),
+        extra={
+            key: copy.deepcopy(value)
+            for key, value in schedule_data.items()
+            if key not in schedule_known
+        },
+    )
+
+    sleep_wake_data = data.get("sleep_wake")
+    if not isinstance(sleep_wake_data, dict):
+        sleep_wake_data = {}
+    sleep_wake = SleepWakeSettings(
+        wake_on_resume=sleep_wake_data.get("wake_on_resume")
+        if isinstance(sleep_wake_data.get("wake_on_resume"), bool)
+        else False,
+        off_on_suspend=sleep_wake_data.get("off_on_suspend")
+        if isinstance(sleep_wake_data.get("off_on_suspend"), bool)
+        else False,
+        extra={
+            key: copy.deepcopy(value)
+            for key, value in sleep_wake_data.items()
+            if key not in {"wake_on_resume", "off_on_suspend"}
         },
     )
 
@@ -379,7 +515,7 @@ def _settings_from_data(data: dict[str, Any], secret_keys: frozenset[str]) -> Se
                 },
             )
 
-    known = _V2_KEYS | {"receiver"}
+    known = _V2_KEYS | {"receiver", "schedule", "sleep_wake"}
     return Settings(
         version=CURRENT_VERSION,
         receiver=receiver,
@@ -388,6 +524,8 @@ def _settings_from_data(data: dict[str, Any], secret_keys: frozenset[str]) -> Se
             binding=_as_dict(data.get("cap_receiver")) or None,
         ),
         late=late,
+        schedule=schedule,
+        sleep_wake=sleep_wake,
         games=games,
         extra={
             key: copy.deepcopy(value)

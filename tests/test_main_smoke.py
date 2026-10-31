@@ -65,6 +65,8 @@ class MainSmokeTests(unittest.TestCase):
                         "fields": {},
                     },
                 )
+                self.assertEqual(snapshot["schedule"]["enabled"], False)
+                self.assertEqual(snapshot["sleep_wake"]["supports_power"], False)
                 from avr_control.drivers import REGISTRY
 
                 drivers = asyncio.run(plugin.list_drivers())
@@ -84,8 +86,36 @@ class MainSmokeTests(unittest.TestCase):
                 )
                 self.assertFalse(bad_fields["ok"])
                 self.assertIn("Invalid display", bad_fields["error"])
-                asyncio.run(plugin._main())
-                asyncio.run(plugin._unload())
+                configured_schedule = asyncio.run(
+                    plugin.dispatch(
+                        {
+                            "type": "set_schedule",
+                            "enabled": True,
+                            "start": "22:00",
+                            "end": "07:00",
+                            "mode": None,
+                        }
+                    )
+                )
+                self.assertTrue(configured_schedule["ok"])
+                self.assertTrue(configured_schedule["snapshot"]["schedule"]["enabled"])
+                bad_schedule = asyncio.run(
+                    plugin.dispatch(
+                        {
+                            "type": "set_schedule",
+                            "enabled": True,
+                            "start": 2200,
+                            "end": "07:00",
+                            "mode": None,
+                        }
+                    )
+                )
+                self.assertFalse(bad_schedule["ok"])
+                async def lifecycle():
+                    await plugin._main()
+                    await plugin._unload()
+
+                asyncio.run(lifecycle())
             finally:
                 sys.modules.pop("avr_control_main_smoke", None)
                 if old_main is not None:

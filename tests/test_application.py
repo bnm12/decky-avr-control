@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import unittest
+from unittest.mock import AsyncMock, patch
 
 from tests import PY_MODULES  # noqa: F401
 from avr_control.application import (
@@ -18,6 +20,10 @@ from avr_control.application import (
     SetMode,
     SetMute,
     SetPower,
+    SetSchedule,
+    SetSleepWake,
+    SystemResumed,
+    SystemSuspending,
     SetVolume,
 )
 from avr_control.drivers.base import (
@@ -56,6 +62,34 @@ class FakeClock:
     async def sleep(self, seconds: float):
         self.value += seconds
         await asyncio.sleep(0)
+
+
+class FakeLocalTime:
+    def __init__(self):
+        self.year = 2026
+        self.month = 1
+        self.day = 1
+        self.hour = 12
+        self.minute = 0
+
+    def set(self, year, month, day, hour, minute):
+        self.year, self.month, self.day = year, month, day
+        self.hour, self.minute = hour, minute
+
+    def __call__(self, _timestamp):
+        return time.struct_time(
+            (
+                self.year,
+                self.month,
+                self.day,
+                self.hour,
+                self.minute,
+                0,
+                0,
+                1,
+                -1,
+            )
+        )
 
 
 class MemoryDriver(Driver):
@@ -349,12 +383,15 @@ class ApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.store = MemorySettingsStore()
         self.repository = SettingsRepository(self.store)
         self.clock = FakeClock()
+        self.local_time = FakeLocalTime()
         self.reset_driver()
         self.application = ControlApplication(
             self.repository,
             registry=[MemoryDriver],
             clock=self.clock,
             sleep=self.clock.sleep,
+            wall_clock=lambda: 0.0,
+            localtime=self.local_time,
             reapply_delay=4,
             rediscover_interval=30,
         )
@@ -372,7 +409,7 @@ class ApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.store.save(
             data
             or {
-                "version": 3,
+                "version": 4,
                 "receiver": {
                     "driver": "memory",
                     "config": {"host": "receiver"},
@@ -382,6 +419,16 @@ class ApplicationTests(unittest.IsolatedAsyncioTestCase):
                 "cap": None,
                 "late_cap": None,
                 "late": {"active": False},
+                "schedule": {
+                    "enabled": False,
+                    "start": "22:00",
+                    "end": "07:00",
+                    "mode": None,
+                },
+                "sleep_wake": {
+                    "wake_on_resume": False,
+                    "off_on_suspend": False,
+                },
                 "games": {},
             }
         )
@@ -420,7 +467,7 @@ class ApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.client.registry = [UnknownModeDriver]
         self.save_settings(
             {
-                "version": 3,
+                "version": 4,
                 "receiver": {
                     "driver": "memory",
                     "config": {"host": "receiver"},
@@ -1616,6 +1663,46 @@ class ApplicationTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.to_thread(first.close)
             await asyncio.to_thread(second.close)
 
+    async def test_setup_options_reuses_saved_homeassistant_token_without_returning_it(self):
+        self.application.registry = [HomeAssistantDriver]
+        self.save_settings(
+            {
+                "version": 4,
+                "receiver": {
+                    "driver": "homeassistant",
+                    "config": {
+                        "url": "http://homeassistant.local:8123",
+                        "token": "saved-private-token",
+                        "entity_id": ENTITY_ID,
+                    },
+                },
+                "cap": None,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {},
+            }
+        )
+        setup_options = AsyncMock(return_value={})
+
+        with patch.object(HomeAssistantDriver, "setup_options", setup_options):
+            result = await self.application.setup_options(
+                "homeassistant",
+                {
+                    "url": "http://homeassistant.local:8123",
+                    "token": "",
+                },
+            )
+
+        setup_options.assert_awaited_once_with(
+            {
+                "url": "http://homeassistant.local:8123",
+                "token": "saved-private-token",
+                "entity_id": ENTITY_ID,
+            }
+        )
+        self.assertEqual(result, {})
+        self.assertNotIn("saved-private-token", repr(result))
+
     async def test_in_flight_command_does_not_overwrite_new_receiver_selection(self):
         started = asyncio.Event()
         release = asyncio.Event()
@@ -2002,6 +2089,229 @@ class ApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(fake.players[1]["level"], 50)
         self.assertEqual(fake.players[0]["level"], 34)
+
+    async def test_daily_schedule_applies_late_night_and_mode_once_then_restores_volume(self):
+        self.save_settings()
+        self.local_time.set(2026, 10, 31, 21, 59)
+        await self.application.dispatch(SetSchedule(True, "22:00", "23:00", "11"))
+
+        await self.application.tick()
+        self.assertFalse(self.store.load()["late"]["active"])
+
+        self.local_time.set(2026, 10, 31, 22, 0)
+        await self.application.tick()
+        self.assertEqual(MemoryDriver.state.volume, 64)
+        self.assertEqual(MemoryDriver.state.mode, "11")
+        self.assertTrue(self.store.load()["late"]["auto"])
+        snapshot = await self.application.snapshot()
+        self.assertTrue(snapshot["schedule"]["active_now"])
+        self.assertTrue(snapshot["schedule"]["auto"])
+
+        self.local_time.set(2026, 10, 31, 22, 30)
+        await self.application.tick()
+        self.assertEqual(MemoryDriver.actions.count(("mode", "11")), 1)
+        self.assertEqual(MemoryDriver.actions.count(("volume", 64)), 1)
+
+        self.local_time.set(2026, 10, 31, 23, 0)
+        await self.application.tick()
+        self.assertFalse(self.store.load()["late"]["active"])
+        self.assertFalse(self.store.load()["late"].get("auto", False))
+        self.assertEqual(MemoryDriver.state.volume, 100)
+        self.assertEqual(MemoryDriver.state.mode, "11")
+
+    async def test_schedule_window_crosses_midnight_without_reentering(self):
+        self.save_settings()
+        await self.application.dispatch(SetSchedule(True, "22:00", "07:00", None))
+
+        self.local_time.set(2026, 10, 31, 23, 59)
+        await self.application.tick()
+        self.assertTrue(self.store.load()["late"]["auto"])
+        self.local_time.set(2026, 11, 1, 0, 1)
+        await self.application.tick()
+        self.assertEqual(MemoryDriver.actions.count(("volume", 64)), 1)
+        self.assertTrue((await self.application.snapshot())["schedule"]["active_now"])
+
+        self.local_time.set(2026, 11, 1, 7, 0)
+        await self.application.tick()
+        self.assertFalse(self.store.load()["late"]["active"])
+        self.assertEqual(MemoryDriver.state.volume, 100)
+
+    async def test_schedule_boundary_does_not_repeat_during_dst_fallback(self):
+        self.save_settings()
+        await self.application.dispatch(SetSchedule(True, "01:15", "01:45", "11"))
+
+        self.local_time.set(2026, 10, 25, 1, 15)
+        await self.application.tick()
+        self.local_time.set(2026, 10, 25, 1, 45)
+        await self.application.tick()
+        self.assertFalse(self.store.load()["late"]["active"])
+
+        self.local_time.set(2026, 10, 25, 1, 15)
+        await self.application.tick()
+
+        self.assertEqual(MemoryDriver.actions.count(("mode", "11")), 1)
+        self.assertEqual(MemoryDriver.actions.count(("volume", 64)), 1)
+        self.assertFalse(self.store.load()["late"]["active"])
+
+    async def test_manual_late_night_toggle_overrides_schedule_until_next_window(self):
+        self.save_settings()
+        await self.application.dispatch(SetSchedule(True, "22:00", "23:00", None))
+        self.local_time.set(2026, 10, 31, 22, 0)
+        await self.application.tick()
+        self.assertTrue(self.store.load()["late"]["auto"])
+
+        result = await self.application.dispatch(SetLateNight(False))
+        self.assertTrue(result["ok"])
+        self.assertFalse(self.store.load()["late"]["active"])
+        await self.application.tick()
+        self.assertFalse(self.store.load()["late"]["active"])
+        self.assertEqual(
+            self.store.load()["schedule"]["override_window"], "2026-10-31"
+        )
+
+        self.local_time.set(2026, 10, 31, 23, 0)
+        await self.application.tick()
+        self.local_time.set(2026, 11, 1, 22, 0)
+        await self.application.tick()
+        self.assertTrue(self.store.load()["late"]["active"])
+        self.assertTrue(self.store.load()["late"]["auto"])
+
+    async def test_manual_late_night_started_outside_schedule_is_not_turned_off(self):
+        self.save_settings()
+        await self.application.dispatch(SetSchedule(True, "22:00", "23:00", None))
+        self.local_time.set(2026, 10, 31, 20, 0)
+        await self.application.dispatch(SetLateNight(True))
+        self.assertTrue(self.store.load()["late"]["active"])
+        self.assertFalse(self.store.load()["late"].get("auto", False))
+
+        self.local_time.set(2026, 10, 31, 22, 0)
+        await self.application.tick()
+        self.assertFalse(self.store.load()["late"].get("auto", False))
+        self.local_time.set(2026, 10, 31, 23, 0)
+        await self.application.tick()
+
+        self.assertTrue(self.store.load()["late"]["active"])
+        self.assertFalse(self.store.load()["late"].get("auto", False))
+
+    async def test_schedule_retries_unreachable_receiver_until_window_ends(self):
+        self.save_settings()
+        await self.application.dispatch(SetSchedule(True, "22:00", "23:00", "11"))
+        self.local_time.set(2026, 10, 31, 22, 0)
+        MemoryDriver.fail_hosts = {"receiver"}
+
+        await self.application.tick()
+        self.assertFalse(self.store.load()["late"]["active"])
+        self.assertNotIn(("mode", "11"), MemoryDriver.actions)
+
+        MemoryDriver.fail_hosts = set()
+        MemoryDriver.state = Status(volume=None, muted=False, power=False, mode="00")
+        await self.application.tick()
+        self.assertFalse(self.store.load()["late"]["active"])
+        self.assertNotIn(("mode", "11"), MemoryDriver.actions)
+
+        MemoryDriver.state = Status(volume=100, muted=False, power=True, mode="00")
+        await self.application.tick()
+        self.assertTrue(self.store.load()["late"]["auto"])
+        self.assertEqual(MemoryDriver.state.mode, "11")
+
+    async def test_game_mode_profile_overrides_schedule_mode_and_late_volume_is_not_saved(self):
+        self.save_settings()
+        await self.application.dispatch(SetSchedule(True, "22:00", "23:00", "11"))
+        self.local_time.set(2026, 10, 31, 22, 0)
+        await self.application.tick()
+
+        await self.application.dispatch(SetCurrentGame(71, "Game profile"))
+        await self.application.dispatch(SetMode("00"))
+        await self.application.dispatch(RememberForGame("mode", True))
+        await self.application.dispatch(RememberForGame("volume", True))
+        self.assertEqual(self.store.load()["games"]["71"]["volume"], 100)
+
+        MemoryDriver.state.mode = "11"
+        result = await self.application.dispatch(GameStarted(71, "Game profile"))
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(MemoryDriver.state.mode, "00")
+        self.assertEqual(MemoryDriver.state.volume, 64)
+        self.assertEqual(self.store.load()["games"]["71"]["volume"], 100)
+
+    async def test_steam_resume_and_suspend_obey_opt_ins_and_known_power_state(self):
+        self.save_settings()
+        await self.application.dispatch(SetSleepWake(True, True))
+        MemoryDriver.state.power = False
+
+        await self.application.dispatch(SystemResumed())
+        await asyncio.wait_for(self.application._resume_task, timeout=1)
+        self.assertTrue(MemoryDriver.state.power)
+        self.assertIn(("power", True), MemoryDriver.actions)
+
+        await self.application.dispatch(SystemSuspending())
+        await asyncio.wait_for(self.application._suspend_task, timeout=1)
+        self.assertFalse(MemoryDriver.state.power)
+        self.assertIn(("power", False), MemoryDriver.actions)
+
+    async def test_steam_resume_does_not_power_on_when_state_is_unknown(self):
+        self.save_settings()
+        await self.application.dispatch(SetSleepWake(True, False))
+        MemoryDriver.state.power = None
+
+        await self.application.dispatch(SystemResumed())
+        await asyncio.wait_for(self.application._resume_task, timeout=1)
+
+        self.assertIsNone(MemoryDriver.state.power)
+        self.assertNotIn(("power", True), MemoryDriver.actions)
+
+    async def test_steam_resume_retries_after_receiver_reconnects(self):
+        self.save_settings()
+        await self.application.dispatch(SetSleepWake(True, False))
+        MemoryDriver.state.power = False
+        MemoryDriver.fail_hosts = {"receiver"}
+
+        async def reconnect_on_retry(seconds):
+            self.clock.value += seconds
+            MemoryDriver.fail_hosts = set()
+            await asyncio.sleep(0)
+
+        self.application.sleep = reconnect_on_retry
+        await self.application.dispatch(SystemResumed())
+        await asyncio.wait_for(self.application._resume_task, timeout=1)
+
+        self.assertTrue(MemoryDriver.state.power)
+        self.assertEqual(MemoryDriver.actions.count(("power", True)), 1)
+
+    async def test_sleep_wake_does_not_use_driver_without_power_capability(self):
+        class VolumeOnlyDriver(MemoryDriver):
+            key = "volume_only"
+            capabilities = frozenset({VOLUME})
+
+        self.client.registry = [VolumeOnlyDriver]
+        self.save_settings(
+            {
+                "version": 4,
+                "receiver": {
+                    "driver": "volume_only",
+                    "config": {"host": "receiver"},
+                    "id": "stable-id",
+                },
+                "cap": None,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {},
+                "sleep_wake": {
+                    "wake_on_resume": True,
+                    "off_on_suspend": True,
+                },
+            }
+        )
+        snapshot = await self.application.snapshot()
+        self.assertFalse(snapshot["sleep_wake"]["supports_power"])
+
+        await self.application.dispatch(SystemResumed())
+        await asyncio.wait_for(self.application._resume_task, timeout=1)
+        await self.application.dispatch(SystemSuspending())
+        await asyncio.wait_for(self.application._suspend_task, timeout=1)
+
+        self.assertNotIn(("power", True), MemoryDriver.actions)
+        self.assertNotIn(("power", False), MemoryDriver.actions)
 
 
 if __name__ == "__main__":

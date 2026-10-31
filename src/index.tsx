@@ -6,6 +6,8 @@ import { LateNightSection } from "./components/LateNightSection";
 import { ModeSection } from "./components/ModeSection";
 import { ProfilesSection } from "./components/ProfilesSection";
 import { ReceiverSection } from "./components/ReceiverSection";
+import { ScheduleSection } from "./components/ScheduleSection";
+import { SleepWakeSection } from "./components/SleepWakeSection";
 import { VolumeSection } from "./components/VolumeSection";
 import { useAvr } from "./hooks/useAvr";
 
@@ -38,6 +40,8 @@ function Content() {
       <VolumeSection avr={avr} />
       <ModeSection avr={avr} />
       <LateNightSection avr={avr} />
+      <ScheduleSection avr={avr} />
+      <SleepWakeSection avr={avr} />
       <ReceiverSection avr={avr} />
       <GameSection avr={avr} />
       <ProfilesSection avr={avr} />
@@ -46,30 +50,58 @@ function Content() {
 }
 
 export default definePlugin(() => {
-  let registration: { unregister: () => void } | undefined;
+  const registrations: { unregister: () => void }[] = [];
   try {
-    registration = SteamClient.GameSessions.RegisterForAppLifetimeNotifications(
-      (notification) => {
-        try {
-          if (notification.bRunning) {
-            void dispatchIntent({
-              type: "game_started",
-              appid: notification.unAppID,
-              name: gameName(notification.unAppID),
-            });
-          } else {
-            void dispatchIntent({
-              type: "game_stopped",
-              appid: notification.unAppID,
-            });
+    registrations.push(
+      SteamClient.GameSessions.RegisterForAppLifetimeNotifications(
+        (notification) => {
+          try {
+            if (notification.bRunning) {
+              void dispatchIntent({
+                type: "game_started",
+                appid: notification.unAppID,
+                name: gameName(notification.unAppID),
+              });
+            } else {
+              void dispatchIntent({
+                type: "game_stopped",
+                appid: notification.unAppID,
+              });
+            }
+          } catch {
+            // Game notifications must not interrupt the Steam UI.
           }
-        } catch {
-          // Game notifications must not interrupt the Steam UI.
-        }
-      },
+        },
+      ),
     );
   } catch (error) {
     console.error("AVR Control: game detection unavailable", error);
+  }
+  try {
+    registrations.push(
+      SteamClient.System.RegisterForOnResumeFromSuspend(() => {
+        try {
+          void dispatchIntent({ type: "system_resumed" }).catch(() => {});
+        } catch {
+          // Resume notifications must not interrupt the Steam UI.
+        }
+      }),
+    );
+  } catch (error) {
+    console.error("AVR Control: resume detection unavailable", error);
+  }
+  try {
+    registrations.push(
+      SteamClient.System.RegisterForOnSuspendRequest(() => {
+        try {
+          void dispatchIntent({ type: "system_suspending" }).catch(() => {});
+        } catch {
+          // Suspend notifications must not interrupt the Steam UI.
+        }
+      }),
+    );
+  } catch (error) {
+    console.error("AVR Control: suspend detection unavailable", error);
   }
   void syncRunningGame();
 
@@ -79,10 +111,12 @@ export default definePlugin(() => {
     content: <Content />,
     icon: <FaVolumeUp />,
     onDismount() {
-      try {
-        registration?.unregister();
-      } catch {
-        // Steam's internal registration can disappear during client shutdown.
+      for (const registration of registrations) {
+        try {
+          registration.unregister();
+        } catch {
+          // Steam's internal registration can disappear during client shutdown.
+        }
       }
     },
   };
