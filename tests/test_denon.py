@@ -4,6 +4,7 @@ import asyncio
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import unquote, urlsplit
 
 from tests import PY_MODULES  # noqa: F401
 from avr_control import ssdp
@@ -169,6 +170,20 @@ class FakeDenonSsdpResponder(asyncio.DatagramProtocol):
 
 class DenonDescriptionHandler(BaseHTTPRequestHandler):
     def do_GET(self):
+        if self.path.startswith("/goform/formMainZone_MainZoneXmlStatus.xml"):
+            body = (
+                "<item><Power><value>ON</value></Power>"
+                "<VolumeDisplay><value>Relative</value></VolumeDisplay>"
+                "<MasterVolume><value>-34.5</value></MasterVolume>"
+                "<Mute><value>off</value></Mute>"
+                "<SurrMode><value>STEREO</value></SurrMode></item>"
+            ).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/xml")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         body = (
             '<?xml version="1.0"?><root xmlns="urn:schemas-upnp-org:device-1-0">'
             "<device><friendlyName>Living Room Denon AVR</friendlyName>"
@@ -183,6 +198,71 @@ class DenonDescriptionHandler(BaseHTTPRequestHandler):
 
     def log_message(self, _format, *args):
         pass
+
+
+class FakeHttpDenon:
+    def __init__(self):
+        self.volume = 91
+        self.maximum = 139
+        self.muted = False
+        self.power = True
+        self.mode = "STEREO"
+        self.commands: list[str] = []
+        owner = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                parsed = urlsplit(self.path)
+                if parsed.path == "/goform/formiPhoneAppDirect.xml":
+                    command = unquote(parsed.query)
+                    owner.commands.append(command)
+                    if command.startswith("MV"):
+                        owner.volume = min(decode_volume(command[2:]), owner.maximum)
+                    elif command == "MUON":
+                        owner.muted = True
+                    elif command == "MUOFF":
+                        owner.muted = False
+                    elif command == "PWON":
+                        owner.power = True
+                    elif command == "PWSTANDBY":
+                        owner.power = False
+                    elif command.startswith("MS"):
+                        owner.mode = command[2:]
+                    body = b"OK"
+                elif parsed.path in {
+                    "/goform/formMainZone_MainZoneXmlStatus.xml",
+                    "/goform/formMainZone_MainZoneXml.xml",
+                }:
+                    db = owner.volume / 2 - 80
+                    body = (
+                        f"<item><Power><value>{'ON' if owner.power else 'STANDBY'}"
+                        "</value></Power><VolumeDisplay><value>Relative</value>"
+                        f"</VolumeDisplay><MasterVolume><value>{db:.1f}</value>"
+                        f"</MasterVolume><Mute><value>{'on' if owner.muted else 'off'}"
+                        f"</value></Mute><SurrMode><value>{owner.mode}</value>"
+                        "</SurrMode></item>"
+                    ).encode("utf-8")
+                else:
+                    self.send_error(404)
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "text/xml")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, _format, *args):
+                pass
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.port = self.server.server_port
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=2)
 
 
 class DenonDriverTests(unittest.IsolatedAsyncioTestCase):
@@ -218,6 +298,84 @@ class DenonDriverTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.fake.mode, "DTS SURROUND")
         self.assertLessEqual(self.fake.max_active_connections, 1)
 
+    async def test_http_status_and_setters_use_readback(self):
+        http = FakeHttpDenon()
+        try:
+            driver = DenonDriver(
+                {
+                    "host": "127.0.0.1",
+                    "transport": "http",
+                    "http_port": http.port,
+                }
+            )
+            status = await driver.status()
+            self.assertEqual(
+                (status.volume, status.muted, status.power, status.mode),
+                (91, False, True, "STEREO"),
+            )
+            self.assertEqual(driver.scale.display(status.volume), -34.5)
+
+            self.assertEqual(await driver.set_volume(91), 91)
+            self.assertEqual(await driver.set_volume(196), 139)
+            self.assertEqual(driver.scale.max, 139)
+            self.assertTrue(await driver.set_mute(True))
+            self.assertFalse(await driver.set_mute(False))
+            self.assertFalse(await driver.set_power(False))
+            self.assertTrue(await driver.set_power(True))
+            self.assertEqual(await driver.set_mode("DTS SURROUND"), "DTS SURROUND")
+            self.assertIn("MV455", http.commands)
+            self.assertIn("MSDTS SURROUND", http.commands)
+            self.assertEqual(driver.config["transport"], "http")
+            self.assertEqual(driver.config["http_port"], http.port)
+        finally:
+            http.close()
+
+    async def test_telnet_refused_falls_back_to_http(self):
+        http = FakeHttpDenon()
+        reserve = await asyncio.start_server(
+            lambda _r, w: w.close(), "127.0.0.1", 0
+        )
+        refused_port = reserve.sockets[0].getsockname()[1]
+        reserve.close()
+        await reserve.wait_closed()
+        try:
+            driver = DenonDriver(
+                {
+                    "host": "127.0.0.1",
+                    "port": refused_port,
+                    "http_port": http.port,
+                }
+            )
+            status = await driver.status()
+            self.assertEqual(status.volume, 91)
+            self.assertEqual(driver.config["transport"], "http")
+            self.assertEqual(driver.config["http_port"], http.port)
+        finally:
+            http.close()
+
+    async def test_probe_discovers_http_only_receiver(self):
+        http = FakeHttpDenon()
+        reserve = await asyncio.start_server(
+            lambda _r, w: w.close(), "127.0.0.1", 0
+        )
+        refused_port = reserve.sockets[0].getsockname()[1]
+        reserve.close()
+        await reserve.wait_closed()
+        try:
+            found = await DenonDriver.probe(
+                {
+                    "host": "127.0.0.1",
+                    "port": refused_port,
+                    "http_port": http.port,
+                }
+            )
+            self.assertIsNotNone(found)
+            self.assertEqual(found.config["transport"], "http")
+            self.assertEqual(found.config["http_port"], http.port)
+            self.assertEqual(found.config["port"], refused_port)
+        finally:
+            http.close()
+
     async def test_standby_reports_only_power(self):
         self.fake.power = False
         status = await self.driver.status()
@@ -240,6 +398,7 @@ class DenonDriverTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(found.driver, "denon")
         self.assertEqual(found.id, "denon-127.0.0.1")
         self.assertEqual(found.config["port"], self.port)
+        self.assertEqual(found.config["transport"], "telnet")
 
         wrong = FakeWrongProtocol()
         wrong_port = await wrong.start()
@@ -285,7 +444,9 @@ class DenonDriverTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(found), 1)
         self.assertEqual(found[0].model, "AVR-X3800H")
         self.assertEqual(found[0].id, "uuid:denon-device")
-        self.assertEqual(found[0].config, {"host": "127.0.0.1"})
+        self.assertEqual(found[0].config["host"], "127.0.0.1")
+        self.assertEqual(found[0].config["transport"], "http")
+        self.assertEqual(found[0].config["http_port"], http_server.server_port)
         self.assertTrue(any("M-SEARCH" in request for request in responder.requests))
 
     async def test_unrelated_event_lines_do_not_replace_query_responses(self):

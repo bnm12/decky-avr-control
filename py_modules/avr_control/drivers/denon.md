@@ -1,4 +1,4 @@
-# Denon / Marantz AVR TCP control (`denon`)
+# Denon / Marantz AVR TCP and HTTP control (`denon`)
 
 **Source tags:** **[measured]** seen on real hardware (say which model) · **[spec]** from a vendor document (link it in Sources) · **[community]** open-source library or forum · **[assumed]** our guess, untested.
 
@@ -9,7 +9,7 @@
 | Driver | `py_modules/avr_control/drivers/denon.py` |
 | Brands / models | [community] Denon and Marantz receivers with the port-23 ASCII control interface; documented command availability varies by model and firmware. |
 | Verified on | none (simulator only) |
-| Transport | [spec] TCP port 23, ASCII commands/replies terminated by CR; [community] receiver state-change events can be interleaved with command replies. |
+| Transport | [spec] Telnet-compatible TCP port 23; [community] HTTP/XML status and control, normally port 80 or 8080 depending on model year. Telnet is preferred when it answers; HTTP is the fallback. |
 | Discovery | [assumed] SSDP M-SEARCH for MediaRenderer and root-device advertisements; description UDN is the preferred stable ID. |
 | Connections | [community] Receivers commonly allow one active Telnet client; this driver opens and closes one connection per operation. |
 
@@ -19,30 +19,34 @@
 
 [community] The receiver can also push unsolicited event lines on an open Telnet connection. The driver ignores lines that do not match a requested response, and uses a fresh connection for each operation rather than keeping a subscription open.
 
-[community] Because receivers may reject a second Telnet client, a minimal class-level lock registry serializes operations across driver instances for the same host and port. It is scoped by event loop so each `asyncio.Lock` is used only on its owning loop; weak loop keys and weak lock values release registry state when the loop or its active operations end.
+[community] The driver first checks Telnet TCP 23 and prefers it if it returns a Denon power reply. When Telnet is unavailable, busy, or disabled, it tries HTTP on the configured `http_port`, then ports 80 and 8080. The selected transport and HTTP port are retained in receiver config.
+
+[community] The HTTP adapter reads `/goform/formMainZone_MainZoneXmlStatus.xml` (and falls back to `/goform/formMainZone_MainZoneXml.xml`) and parses the main-zone Power, MasterVolume, VolumeDisplay, Mute and surround-mode XML fields. Setters use `/goform/formiPhoneAppDirect.xml?<command>` with the same Telnet-style command strings, then query the XML status page to confirm the new value. The library's AppCommand interface is another HTTP/XML option (`POST /goform/AppCommand.xml`) with `GetAllZonePowerStatus`, `GetAllZoneVolume`, `GetAllZoneMuteStatus` and `GetSurroundModeStatus`; this driver uses the status pages instead of AppCommand because they expose the needed state in one response and are also used as the library's fallback for receivers with incomplete AppCommand responses.
+
+[community] Because receivers may reject a second Telnet client, a per-receiver lock serializes Telnet operations across driver instances. HTTP does not hold the Telnet slot and can coexist with other apps' Telnet clients.
 
 [spec] Leave at least 50 ms between successive commands sent on the same connection. `status()` sends its four queries with this spacing. [community] The port-23 interface is Telnet-compatible raw TCP and does not require a login handshake.
 
 ## Discovery
 
-[assumed] Send SSDP M-SEARCH requests for `urn:schemas-upnp-org:device:MediaRenderer:1` and `upnp:rootdevice`, then fetch each response's device description using the shared SSDP helper.
+[assumed] Send SSDP M-SEARCH requests for `urn:schemas-upnp-org:device:MediaRenderer:1` and `upnp:rootdevice`, then fetch each response's device description using the shared SSDP helper. Probe identified devices and retain only those answering through Telnet or HTTP.
 
 [assumed] Keep descriptions whose manufacturer or model/friendly name identifies Denon, Marantz, HEOS, or D&M; use the model name for display and the UDN for the stable receiver ID (falling back to the SSDP USN, then host).
 
 ## Commands
 
-| Capability | Query | Set | Reply | Notes |
-|---|---|---|---|---|
-| Volume | [community] `MV?` | [community] `MV<NN>` or `MV<NNN>` | [community] `MV<NN>` / `MV<NNN>` and commonly `MVMAX <NN>` | [community] A three-digit value ending in `5` represents a half step (for example `MV455` = 45.5); the driver converts volume to half-step raw integers and records the reported ceiling. |
-| Mute | [community] `MU?` | [community] `MUON` / `MUOFF` | [community] `MUON` / `MUOFF` | [community] `ON` is muted and `OFF` is unmuted. |
-| Power | [community] `PW?` | [community] `PWON` / `PWSTANDBY` | [community] `PWON` / `PWSTANDBY` | [community] Uses global receiver power (`PW`), not main-zone power (`ZM`), because `ZM` reports a zone state that can differ from overall standby. |
-| Listening mode | [community] `MS?` | [community] `MS<MODE>` | [community] `MS<MODE>` | [community] The reported decoder mode can differ from the set command or include model-specific text; unknown codes are prettified for display. |
+| Capability | Telnet query / set | HTTP query / set | Notes |
+|---|---|---|---|
+| Volume | [community] `MV?` / `MV<NN>` or `MV<NNN>` | [community] XML `MasterVolume` / `/goform/formiPhoneAppDirect.xml?MV<NNN>` | [community] Telnet replies commonly include `MVMAX <NN>`; a three-digit value ending in `5` is a half step (`MV455` = 45.5). HTTP setters are confirmed by reading status XML back. |
+| Mute | [community] `MU?` / `MUON` / `MUOFF` | [community] XML `Mute` / `/goform/formiPhoneAppDirect.xml?MUON` or `MUOFF` | [community] `ON` is muted; `OFF` is unmuted. HTTP setters are confirmed by reading status XML back. |
+| Power | [community] `PW?` / `PWON` / `PWSTANDBY` | [community] XML `Power` / `/goform/formiPhoneAppDirect.xml?PWON` or `PWSTANDBY` | [community] Uses global receiver power (`PW`), not zone power (`ZM`). HTTP setters are confirmed by reading status XML back. |
+| Listening mode | [community] `MS?` / `MS<MODE>` | [community] XML `SurrMode` / `/goform/formiPhoneAppDirect.xml?MS<MODE>` | [community] Reuses the same canonical mode mapping for either transport; HTTP setters are confirmed by reading status XML back. |
 
 ## Volume scale
 
-[community] The driver's raw units are half steps: a protocol volume of 45.5 maps to raw 91, while 45.0 maps to raw 90. `MV?` commonly returns the current value plus `MVMAX`; that ceiling refines the scale maximum.
+[community] The driver's raw units are half steps: a protocol volume of 45.5 maps to raw 91, while 45.0 maps to raw 90. `MV?` commonly returns the current value plus `MVMAX`; that ceiling refines the scale maximum. HTTP XML reports the main-zone dB value in `MasterVolume`.
 
-[community] The protocol's nominal range is 0–98, represented as raw 0–196. Volume 80 is the 0 dB reference, so the scale uses `zero=160` and `steps_per_unit=2`; display dB is `(raw - 160) / 2`.
+[community] When `VolumeDisplay` is `Relative`, the XML dB value maps to the same raw range as Telnet: `raw = round((dB + 80) * 2)`. Volume 80 is the 0 dB reference, so the scale uses `zero=160` and `steps_per_unit=2`; display dB is `(raw - 160) / 2`. For an `Absolute` XML display, the reported value is converted directly to half-step raw units.
 
 [assumed] The initial scale maximum is raw 196 and the default cap is raw 100 (approximately -30 dB). Models may report a different `MVMAX`, and the driver's runtime maximum follows it. [community] The relative-volume display and `MV80` reference are documented for the decimal-volume protocol; older model-specific control PDFs may describe different encodings, so verify the receiver-specific sheet before assuming identical numeric behavior.
 
@@ -56,7 +60,8 @@
 
 ## Quirks and gotchas
 
-- [community] Many models accept only one Telnet client at a time; short-lived per-operation connections reduce conflicts but do not prevent another application from occupying the socket.
+- [community] Many models accept only one Telnet client at a time; short-lived per-operation connections reduce conflicts but do not prevent another application from occupying the socket. HTTP does not use that Telnet slot, so it remains available alongside other apps' Telnet connections.
+- [community] Older models commonly expose the HTTP control interface on port 80; AVR-X 2016-and-later models commonly use port 8080. Model detection and ports vary, so the driver tries both when no `http_port` is remembered. The `denonavr` source identifies AVR / AVR-X on 80 and AVR-X 2016 on 8080 (`denonavr/const.py`, `denonavr/foundation.py`).
 - [spec] Commands on a connection should be spaced by at least 50 ms.
 - [community] Port-23 commands are not uniform across model years. The 2012 protocol PDFs are useful historical references, while HEOS-era receivers can expose newer command/report variants.
 - [community] The receiver can remain physically active when another zone is on; `PWSTANDBY` is used for global standby, not `ZMOFF`.
@@ -76,5 +81,8 @@
 1. [spec] [Denon AVR-1713 / AVR-1613 Control Protocol v8.6.0 (official PDF)](https://assets.denon.com/DocumentMaster/UK/AVR1713_AVR1613_PROTOCOL_V860.pdf)
 2. [spec] [Denon FY23-CY2022 AVR Control Protocol (PDF mirror)](https://allonis.com/media/kunena/attachments/814/DenonFY23-CY2022_AVR_PROTOCOL_V0221.pdf)
 3. [community] [Marantz / Denon AVR TCP Port 23 Control Guide](https://github.com/alsak0de/marantz-denon-mqtt/blob/main/docs/telnet/MARANTZ_DENON_TELNET_PROTOCOL.md)
-4. [community] [ol-iver/denonavr sound-mode mapping (`const.py`, MIT)](https://github.com/ol-iver/denonavr/blob/master/denonavr/const.py)
+4. [community] [ol-iver/denonavr sound-mode mapping (`denonavr/const.py`, MIT)](https://github.com/ol-iver/denonavr/blob/12b5cf70efe843a81276cfab56311de88c7fe489/denonavr/const.py)
 5. [community] [openHAB Denon / Marantz binding](https://www.openhab.org/addons/bindings/denonmarantz/)
+6. [community] [ol-iver/denonavr HTTP volume/status (`denonavr/volume.py`)](https://github.com/ol-iver/denonavr/blob/12b5cf70efe843a81276cfab56311de88c7fe489/denonavr/volume.py), [AppCommand (`denonavr/appcommand.py`)](https://github.com/ol-iver/denonavr/blob/12b5cf70efe843a81276cfab56311de88c7fe489/denonavr/appcommand.py), [HTTP transport (`denonavr/api.py`)](https://github.com/ol-iver/denonavr/blob/12b5cf70efe843a81276cfab56311de88c7fe489/denonavr/api.py); MIT, see [LICENSE](https://github.com/ol-iver/denonavr/blob/12b5cf70efe843a81276cfab56311de88c7fe489/LICENSE).
+7. [community] [ol-iver/denonavr model ports and endpoint paths (`denonavr/const.py`)](https://github.com/ol-iver/denonavr/blob/12b5cf70efe843a81276cfab56311de88c7fe489/denonavr/const.py), [model detection (`denonavr/foundation.py`)](https://github.com/ol-iver/denonavr/blob/12b5cf70efe843a81276cfab56311de88c7fe489/denonavr/foundation.py).
+8. [community] [ol-iver/denonavr XML status example (`tests/xml/AVR-3311CI-formMainZone_MainZoneXml.xml`)](https://github.com/ol-iver/denonavr/blob/12b5cf70efe843a81276cfab56311de88c7fe489/tests/xml/AVR-3311CI-formMainZone_MainZoneXml.xml); MIT.
