@@ -8,11 +8,11 @@ import socket
 import urllib.error
 import urllib.parse
 import urllib.request
-import xml.etree.ElementTree as ET
 from functools import partial
 from typing import ClassVar
 
 from .. import ssdp
+from .. import xmltree as ET
 from .base import (
     MUTE,
     VOLUME,

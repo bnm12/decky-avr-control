@@ -5,8 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import weakref
-from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import Any, Generic, TypeVar
+from typing import Any, Awaitable, Callable, Generic, Mapping, Sequence, TypeVar
 
 from .base import DriverError
 

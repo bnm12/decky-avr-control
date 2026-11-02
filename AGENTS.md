@@ -24,14 +24,18 @@ AVR Control is a Decky Loader plugin: a Quick Access panel on a Steam Deck / Ste
 python -m unittest discover -s tests -t . -v   # backend tests
 corepack pnpm install --frozen-lockfile         # pnpm 12 from the lockfile
 corepack pnpm build                             # type-checks and bundles the UI
+bash scripts/deploy.sh deck@<device>            # build and install on a Steam device over SSH (owner hardware)
 ```
+
+`scripts/` holds developer-only tools (they may use non-bundled modules or third-party packages); `tools/` holds stdlib scripts for users.
 
 CI (`.github/workflows/build.yml`) runs the tests on Python 3.10 and builds with pnpm 12.16.1, the same pnpm the Decky store uses (ADR-0017). Keep `pnpm-lock.yaml` unchanged unless dependencies or the pnpm version change.
 
 ## Constraints that aren't visible in the code
 
 - **Stdlib only** in Python, including drivers and `tools/` (ADR-0008). Hand-write protocols.
-- **Python 3.10 compatible**: Decky bundles an older Python than a dev machine. Use `from __future__ import annotations`. 3.11+ APIs such as `asyncio.timeout`, `TaskGroup` and `except*` break on device.
+- **Only modules Decky bundles.** Plugins run in Decky's PyInstaller-frozen Python, which lacks parts of the standard library (no `xml.etree`, `xml.dom`, `html.parser`, `zoneinfo`). Backend code may import only modules listed in `tests/decky_runtime_modules.txt`, and `tests/test_decky_runtime.py` enforces it (ADR-0020). Parse XML with `avr_control/xmltree.py`. Regenerate the list with `scripts/decky_bundled_modules.py` when Decky releases a new loader.
+- **Python 3.10 compatible**: Decky v3.3.1 bundles Python 3.14, but CI keeps 3.10 as the floor for older loaders. Use `from __future__ import annotations`, and avoid 3.11+ APIs such as `asyncio.timeout`, `TaskGroup` and `except*`.
 - **Drivers never import `decky`** and keep no module-level state, so tests run them against fakes. One exception: TCP drivers share one `ReceiverSession` per receiver through a small keyed registry, so overlapping polls and commands never open two connections to a single-client receiver. Every driver error is a `DriverError` subclass with a user-facing message.
 - **Receiver changes invalidate in-flight work.** The application tags operations with a selection generation and drops stale results; the panel does the same for its debounced writes. Keep that when adding operations.
 - **RPC contract:** the intents and snapshot in `application.py` are mirrored field by field in `src/api.ts`. Change both in the same commit, and add a new state change as an intent, not a new RPC (ADR-0018).
