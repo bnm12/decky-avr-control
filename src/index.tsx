@@ -166,7 +166,13 @@ function Content() {
         }
         .avr-profile-row:has(.gpfocus) {
           background: rgba(255, 255, 255, 0.12);
-          box-shadow: inset 3px 0 0 #90ba3c;
+          box-shadow: inset 3px 0 0 #d94126;
+        }
+        .avr-profile-row .avr-icon-button.gpfocus {
+          background: #d94126 !important;
+          border-color: #d94126 !important;
+          color: #fff !important;
+          filter: none;
         }
         .avr-mode-dropdown,
         .avr-mode-dropdown * {
