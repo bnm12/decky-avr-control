@@ -9,6 +9,7 @@ type Props = {
   disabled?: boolean;
   text?: string;
   className?: string;
+  activeColor?: string;
 };
 
 const hiddenLabel = {
@@ -31,6 +32,7 @@ export function IconButton({
   disabled = false,
   text,
   className,
+  activeColor = "#1a9fff",
 }: Props) {
   return (
     <DialogButton
@@ -40,8 +42,10 @@ export function IconButton({
       onClick={onClick}
       style={{
         alignItems: "center",
-        background: active ? "#1a9fff" : "#202b36",
-        border: `1px solid ${active ? "#65bfff" : "#43505d"}`,
+        background: active ? activeColor : "#202b36",
+        border: `1px solid ${
+          active ? (activeColor === "#1a9fff" ? "#65bfff" : activeColor) : "#43505d"
+        }`,
         boxSizing: "border-box",
         color: disabled ? "#697580" : active ? "#fff" : "#c7d0d8",
         display: "inline-flex",

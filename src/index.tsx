@@ -77,6 +77,59 @@ function Content() {
     { id: "auto", label: "Auto", icon: <FaClock aria-hidden="true" /> },
     { id: "setup", label: "Setup", icon: <FaCog aria-hidden="true" /> },
   ];
+  const notices = (avr.error || avr.note) && (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      {avr.error && (
+        <div role="alert" style={{ color: "#ff6b6b" }}>
+          {avr.error}
+        </div>
+      )}
+      {avr.note && <div aria-live="polite">{avr.note}</div>}
+    </div>
+  );
+  const tabStrip = snapshot && configured && (
+    <div style={{ marginTop: 7 }}>
+      <Focusable
+        flow-children="horizontal"
+        style={{
+          display: "flex",
+          gap: 3,
+          minWidth: 0,
+          width: "100%",
+        }}
+      >
+        {tabs.map((tab) => {
+          const selected = activeTab === tab.id;
+          return (
+            <DialogButton
+              key={tab.id}
+              className={selected ? "avr-tab avr-tab-active" : "avr-tab"}
+              focusable
+              onClick={() => setActiveTab(tab.id)}
+              style={{
+                alignItems: "center",
+                background: selected ? "#304b62" : "transparent",
+                border: `1px solid ${selected ? "#6586a0" : "transparent"}`,
+                boxSizing: "border-box",
+                color: selected ? "#fff" : "#aab7c2",
+                display: "flex",
+                flex: 1,
+                flexDirection: "column",
+                fontSize: 10,
+                gap: 2,
+                justifyContent: "center",
+                minWidth: 0,
+                padding: "5px 2px",
+              }}
+            >
+              <span style={{ fontSize: 15, lineHeight: 1 }}>{tab.icon}</span>
+              <span>{tab.label}</span>
+            </DialogButton>
+          );
+        })}
+      </Focusable>
+    </div>
+  );
 
   return (
     <>
@@ -89,6 +142,10 @@ function Content() {
           padding: 6px 10px !important;
           box-sizing: border-box;
           border-radius: 2px;
+        }
+        .avr-volume-slider {
+          margin: 0 !important;
+          padding: 0 !important;
         }
         .avr-mode-dropdown,
         .avr-mode-dropdown * {
@@ -113,97 +170,13 @@ function Content() {
           filter: brightness(1.2);
         }
       `}</style>
-      <VolumeSection avr={avr} />
-      {(!snapshot || configured) && (
-        <PanelSection>
-          <PanelSectionRow>
-            <div
-              style={{
-                color: "#aeb9c4",
-                fontSize: 11,
-                lineHeight: "14px",
-                maxWidth: 310,
-                minHeight: 14,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-                width: "100%",
-              }}
-              title={summary || undefined}
-            >
-              {summary}
-            </div>
-          </PanelSectionRow>
-        </PanelSection>
-      )}
-      {(avr.error || avr.note) && (
-        <PanelSection>
-          {avr.error && (
-            <PanelSectionRow>
-              <div role="alert" style={{ color: "#ff6b6b" }}>
-                {avr.error}
-              </div>
-            </PanelSectionRow>
-          )}
-          {avr.note && (
-            <PanelSectionRow>
-              <div aria-live="polite">{avr.note}</div>
-            </PanelSectionRow>
-          )}
-        </PanelSection>
-      )}
+      <VolumeSection avr={avr} summary={summary} loading={!snapshot}>
+        {notices}
+        {tabStrip}
+      </VolumeSection>
       {snapshot && !configured && <ReceiverSection avr={avr} />}
       {snapshot && configured && (
         <>
-          <PanelSection>
-            <PanelSectionRow>
-              <Focusable
-                flow-children="horizontal"
-                style={{
-                  display: "flex",
-                  gap: 3,
-                  minWidth: 0,
-                  width: "100%",
-                }}
-              >
-                {tabs.map((tab) => {
-                  const selected = activeTab === tab.id;
-                  return (
-                    <DialogButton
-                      key={tab.id}
-                      className={
-                        selected
-                          ? "avr-tab avr-tab-active"
-                          : "avr-tab"
-                      }
-                      focusable
-                      onClick={() => setActiveTab(tab.id)}
-                      style={{
-                        alignItems: "center",
-                        background: selected ? "#304b62" : "transparent",
-                        border: `1px solid ${selected ? "#6586a0" : "transparent"}`,
-                        boxSizing: "border-box",
-                        color: selected ? "#fff" : "#aab7c2",
-                        display: "flex",
-                        flex: 1,
-                        flexDirection: "column",
-                        fontSize: 10,
-                        gap: 2,
-                        justifyContent: "center",
-                        minWidth: 0,
-                        padding: "5px 2px",
-                      }}
-                    >
-                      <span style={{ fontSize: 15, lineHeight: 1 }}>
-                        {tab.icon}
-                      </span>
-                      <span>{tab.label}</span>
-                    </DialogButton>
-                  );
-                })}
-              </Focusable>
-            </PanelSectionRow>
-          </PanelSection>
           {activeTab === "now" && (
             <>
               <ModeSection avr={avr} />

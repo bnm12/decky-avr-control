@@ -28,6 +28,7 @@ export function ModeSection({ avr }: Props) {
       className="avr-icon-button"
       icon={<FaGamepad aria-hidden="true" />}
       label={`Remember listening mode for ${game.name}`}
+      activeColor="#90ba3c"
       onClick={() =>
         void avr.send({
           type: "remember_for_game",
