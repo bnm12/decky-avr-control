@@ -67,9 +67,6 @@ function Content() {
             : null,
         snapshot.sleep_wake.wake_on_resume ? "Wakes with Steam" : null,
         snapshot.sleep_wake.off_on_suspend ? "Powers off on sleep" : null,
-        snapshot.profiles.length > 0
-          ? `${snapshot.profiles.length} game profile${snapshot.profiles.length === 1 ? "" : "s"}`
-          : null,
       ].filter((part): part is string => part !== null)
     : [];
   const summary = summaryParts.join(" · ");
@@ -84,14 +81,23 @@ function Content() {
   return (
     <>
       <style>{`
-        .avr-volume-slider {
-          box-sizing: border-box !important;
-          display: block !important;
-          max-width: 100% !important;
+        .avr-volume-slider,
+        .avr-volume-slider * {
           min-width: 0 !important;
-          margin: 0 !important;
-          padding: 0 !important;
-          width: 100% !important;
+        }
+        .avr-volume-slider .SliderControlPanelGroup > .Focusable {
+          padding: 6px 10px !important;
+          box-sizing: border-box;
+          border-radius: 2px;
+        }
+        .avr-mode-dropdown,
+        .avr-mode-dropdown * {
+          min-width: 0 !important;
+        }
+        .avr-mode-dropdown .Focusable {
+          box-sizing: border-box;
+          height: 36px;
+          min-height: 36px;
         }
         .avr-tab.gpfocus {
           background: rgba(255, 255, 255, 0.18) !important;
@@ -108,20 +114,22 @@ function Content() {
         }
       `}</style>
       <VolumeSection avr={avr} />
-      {summary && (
+      {(!snapshot || configured) && (
         <PanelSection>
           <PanelSectionRow>
             <div
               style={{
                 color: "#aeb9c4",
                 fontSize: 11,
+                lineHeight: "14px",
                 maxWidth: 310,
+                minHeight: 14,
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
                 width: "100%",
               }}
-              title={summary}
+              title={summary || undefined}
             >
               {summary}
             </div>

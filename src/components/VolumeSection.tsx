@@ -110,10 +110,11 @@ export function VolumeSection({ avr }: Props) {
             <PanelSectionRow>
               <div
                 style={{
-                  alignItems: "flex-start",
+                  alignItems: "baseline",
                   display: "flex",
                   justifyContent: "space-between",
                   minWidth: 0,
+                  paddingBottom: 8,
                   width: "100%",
                 }}
               >
@@ -130,11 +131,6 @@ export function VolumeSection({ avr }: Props) {
                       ? "—"
                       : formatVolume(receiver.volume.display, scale.unit)}
                   </div>
-                  {snapshot.game?.remembers_volume && (
-                    <div style={{ color: "#aeb9c4", fontSize: 10 }}>
-                      Saved for {snapshot.game.name}
-                    </div>
-                  )}
                 </div>
               </div>
             </PanelSectionRow>
@@ -157,7 +153,6 @@ export function VolumeSection({ avr }: Props) {
                     flex: "1 1 0%",
                     minWidth: 0,
                     maxWidth: "100%",
-                    overflow: "hidden",
                   }}
                 >
                   <SliderField
@@ -181,6 +176,32 @@ export function VolumeSection({ avr }: Props) {
           </PanelSectionRow>
         </>
       )}
+      <PanelSectionRow>
+        <div
+          style={{
+            color: "#aeb9c4",
+            fontSize: 10,
+            height: 14,
+            lineHeight: "14px",
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            width: "100%",
+          }}
+        >
+          {snapshot.game &&
+          (snapshot.game.remembers_volume || snapshot.game.remembers_mode)
+            ? `${snapshot.game.name} profile: ${
+                snapshot.game.remembers_volume && snapshot.game.remembers_mode
+                  ? "volume & listening mode"
+                  : snapshot.game.remembers_volume
+                    ? "volume"
+                    : "listening mode"
+              }`
+            : ""}
+        </div>
+      </PanelSectionRow>
     </PanelSection>
   );
 }
