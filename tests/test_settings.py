@@ -181,6 +181,25 @@ class SettingsRepositoryTests(unittest.TestCase):
 
         self._exercise_both(verify)
 
+    def test_game_restore_expiry_and_attempts_round_trip(self):
+        repository = SettingsRepository(MemorySettingsStore())
+        settings = Settings(
+            game_session=GameSession(
+                appid=123,
+                driver="homeassistant",
+                binding={"driver": "homeassistant", "id": "RECEIVER-ID"},
+                restore_volume=True,
+                restore_expires_at=1_800_000_000.0,
+                restore_attempts=2,
+            )
+        )
+
+        repository.save(settings)
+        loaded = repository.load().game_session
+
+        self.assertEqual(loaded.restore_expires_at, 1_800_000_000.0)
+        self.assertEqual(loaded.restore_attempts, 2)
+
     def test_malformed_nested_values_are_normalized(self):
         malformed = {
             "version": CURRENT_VERSION,

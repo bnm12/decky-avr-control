@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import os
 import tempfile
 from dataclasses import dataclass, field
@@ -56,6 +57,16 @@ def _as_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError, OverflowError):
         return None
+
+
+def _as_float(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
@@ -157,6 +168,8 @@ class GameSession:
     mode: bool = False
     restore_volume: bool = False
     restore_mode: bool = False
+    restore_expires_at: float | None = None
+    restore_attempts: int = 0
 
 
 @dataclass
@@ -257,6 +270,8 @@ class Settings:
                 "mode": bool(self.game_session.mode),
                 "restore_volume": bool(self.game_session.restore_volume),
                 "restore_mode": bool(self.game_session.restore_mode),
+                "restore_expires_at": self.game_session.restore_expires_at,
+                "restore_attempts": max(0, int(self.game_session.restore_attempts)),
             }
 
         data = copy.deepcopy(self.extra)
@@ -548,6 +563,12 @@ def _settings_from_data(data: dict[str, Any], secret_keys: frozenset[str]) -> Se
                 restore_mode=session_data.get("restore_mode")
                 if isinstance(session_data.get("restore_mode"), bool)
                 else False,
+                restore_expires_at=_as_float(
+                    session_data.get("restore_expires_at")
+                ),
+                restore_attempts=max(
+                    0, _as_int(session_data.get("restore_attempts")) or 0
+                ),
             )
 
     known = _V2_KEYS | {"receiver", "schedule", "sleep_wake"}
