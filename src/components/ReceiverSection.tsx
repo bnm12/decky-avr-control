@@ -19,6 +19,11 @@ export function ReceiverSection({ avr }: Props) {
   const [haSetupLoading, setHaSetupLoading] = useState(false);
   const { snapshot } = avr;
   const connection = snapshot?.connection;
+  const updateHaSetupError = (message: string | null) => {
+    setHaSetupError(message);
+    if (message) avr.setError(message);
+    else if (avr.error === haSetupError) avr.setError(null);
+  };
   const fields =
     avr.selectedDriver === "auto"
       ? []
@@ -91,7 +96,7 @@ export function ReceiverSection({ avr }: Props) {
             avr.setSelectedDriver(option.data);
             avr.setManualConfig({ host: avr.host });
             setHaOptions([]);
-            setHaSetupError(null);
+            updateHaSetupError(null);
           }}
         />
       </PanelSectionRow>
@@ -136,7 +141,7 @@ export function ReceiverSection({ avr }: Props) {
                     (field.key === "url" || field.key === "token")
                   ) {
                     setHaOptions([]);
-                    setHaSetupError(null);
+                    updateHaSetupError(null);
                   }
                 }}
               />
@@ -164,13 +169,13 @@ export function ReceiverSection({ avr }: Props) {
                   connection?.configured &&
                   connection.driver === "homeassistant";
                 setHaOptions([]);
-                setHaSetupError(null);
+                updateHaSetupError(null);
                 if (!url) {
-                  setHaSetupError("Enter the Home Assistant URL first.");
+                  updateHaSetupError("Enter the Home Assistant URL first.");
                   return;
                 }
                 if (!token.trim() && !hasSavedToken) {
-                  setHaSetupError(
+                  updateHaSetupError(
                     "Enter a long-lived access token to find media players.",
                   );
                   return;
@@ -184,17 +189,17 @@ export function ReceiverSection({ avr }: Props) {
                       entity_id?: { value: string; label: string }[];
                     };
                     if (typeof result.error === "string") {
-                      setHaSetupError(result.error);
+                      updateHaSetupError(result.error);
                       return;
                     }
                     const options = result.entity_id ?? [];
                     setHaOptions(options);
                     if (options.length === 0) {
-                      setHaSetupError("No Home Assistant media players found.");
+                      updateHaSetupError("No Home Assistant media players found.");
                     }
                   })
                   .catch((error: unknown) => {
-                    setHaSetupError(
+                    updateHaSetupError(
                       error instanceof Error
                         ? error.message
                         : "Couldn't find Home Assistant media players.",
@@ -227,11 +232,6 @@ export function ReceiverSection({ avr }: Props) {
               />
             </PanelSectionRow>
           )}
-          {haSetupError && (
-            <PanelSectionRow>
-              <div style={{ color: "#ff6b6b" }}>{haSetupError}</div>
-            </PanelSectionRow>
-          )}
         </>
       )}
       <PanelSectionRow>
@@ -239,16 +239,6 @@ export function ReceiverSection({ avr }: Props) {
           {avr.saving ? "Connecting…" : "Save & connect"}
         </ButtonItem>
       </PanelSectionRow>
-      {avr.error && (
-        <PanelSectionRow>
-          <div style={{ color: "#ff6b6b" }}>{avr.error}</div>
-        </PanelSectionRow>
-      )}
-      {avr.note && (
-        <PanelSectionRow>
-          <div>{avr.note}</div>
-        </PanelSectionRow>
-      )}
     </PanelSection>
   );
 }

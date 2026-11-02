@@ -5,7 +5,15 @@ type Props = { avr: ReturnType<typeof useAvr> };
 
 export function GameSection({ avr }: Props) {
   const game = avr.snapshot?.game;
-  if (!game) return null;
+  if (!game) {
+    return (
+      <PanelSection title="This game">
+        <PanelSectionRow>
+          <div>No game running.</div>
+        </PanelSectionRow>
+      </PanelSection>
+    );
+  }
   return (
     <PanelSection title={`This game: ${game.name}`}>
       <PanelSectionRow>

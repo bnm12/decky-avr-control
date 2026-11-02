@@ -49,7 +49,7 @@ export function ScheduleSection({ avr }: Props) {
     <PanelSection title="Time-of-day schedule">
       <PanelSectionRow>
         <ToggleField
-          label="Enable daily quiet-hours schedule"
+          label="Enable time-of-day schedule"
           description={
             schedule?.active_now
               ? schedule.auto
@@ -61,42 +61,46 @@ export function ScheduleSection({ avr }: Props) {
           onChange={(enabled: boolean) => save(enabled)}
         />
       </PanelSectionRow>
-      <PanelSectionRow>
-        <TextField
-          label="Start (HH:MM)"
-          value={start}
-          onChange={(event) => setStart(event.target.value)}
-        />
-      </PanelSectionRow>
-      <PanelSectionRow>
-        <TextField
-          label="End (HH:MM)"
-          value={end}
-          onChange={(event) => setEnd(event.target.value)}
-        />
-      </PanelSectionRow>
-      {avr.snapshot?.capabilities.includes("mode") &&
-        avr.snapshot.modes.selectable.length > 0 && (
+      {schedule?.enabled && (
+        <>
           <PanelSectionRow>
-            <DropdownItem
-              label="Listening mode at start"
-              rgOptions={[
-                { data: "", label: "No change" },
-                ...avr.snapshot.modes.selectable.map((option) => ({
-                  data: option.code,
-                  label: option.label,
-                })),
-              ]}
-              selectedOption={mode}
-              onChange={(option: { data: string }) => setMode(option.data)}
+            <TextField
+              label="Start (HH:MM)"
+              value={start}
+              onChange={(event) => setStart(event.target.value)}
             />
           </PanelSectionRow>
-        )}
-      <PanelSectionRow>
-        <ButtonItem layout="below" onClick={() => save()}>
-          Save schedule
-        </ButtonItem>
-      </PanelSectionRow>
+          <PanelSectionRow>
+            <TextField
+              label="End (HH:MM)"
+              value={end}
+              onChange={(event) => setEnd(event.target.value)}
+            />
+          </PanelSectionRow>
+          {avr.snapshot?.capabilities.includes("mode") &&
+            avr.snapshot.modes.selectable.length > 0 && (
+              <PanelSectionRow>
+                <DropdownItem
+                  label="Listening mode at start"
+                  rgOptions={[
+                    { data: "", label: "No change" },
+                    ...avr.snapshot.modes.selectable.map((option) => ({
+                      data: option.code,
+                      label: option.label,
+                    })),
+                  ]}
+                  selectedOption={mode}
+                  onChange={(option: { data: string }) => setMode(option.data)}
+                />
+              </PanelSectionRow>
+            )}
+          <PanelSectionRow>
+            <ButtonItem layout="below" onClick={() => save()}>
+              Save schedule
+            </ButtonItem>
+          </PanelSectionRow>
+        </>
+      )}
     </PanelSection>
   );
 }
