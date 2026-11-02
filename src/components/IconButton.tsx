@@ -8,6 +8,7 @@ type Props = {
   active?: boolean;
   disabled?: boolean;
   text?: string;
+  className?: string;
 };
 
 const hiddenLabel = {
@@ -29,9 +30,11 @@ export function IconButton({
   active = false,
   disabled = false,
   text,
+  className,
 }: Props) {
   return (
     <DialogButton
+      className={className}
       focusable
       disabled={disabled}
       onClick={onClick}

@@ -12,97 +12,88 @@ type Props = { avr: ReturnType<typeof useAvr> };
 
 export function ModeSection({ avr }: Props) {
   const { snapshot } = avr;
-  if (!snapshot?.capabilities.includes("mode")) return null;
+  if (!snapshot) return null;
+
+  const supportsMode = snapshot.capabilities.includes("mode");
   const { current, selectable } = snapshot.modes;
-  if (selectable.length === 0 && !current) return null;
-  const currentIsSelectable = !!current &&
-    selectable.some((option) => option.code === current.code);
   const game = snapshot.game;
-  const gameDescription = game?.remembers_mode
-    ? `Saved for ${game.name}`
-    : current
-      ? `Current mode: ${current.label}`
-      : "Not reported by this receiver";
+  if (!supportsMode && !game) return null;
+  if (supportsMode && selectable.length === 0 && !current && !game) return null;
+
+  const currentIsSelectable =
+    !!current && selectable.some((option) => option.code === current.code);
+  const unavailable = !supportsMode || (!current && selectable.length === 0);
 
   return (
-    <PanelSection title="Listening mode">
-      {selectable.length > 0 ? (
+    <PanelSection>
+      {supportsMode && selectable.length > 0 && (
         <PanelSectionRow>
-          <Focusable
-            flow-children="horizontal"
-            style={{
-              alignItems: "center",
-              display: "flex",
-              gap: 5,
-              minWidth: 0,
-              width: "100%",
+          <DropdownItem
+            label="Listening mode"
+            description={
+              game?.remembers_mode ? `Saved for ${game.name}` : undefined
+            }
+            rgOptions={selectable.map((option) => ({
+              data: option.code,
+              label: option.label,
+            }))}
+            selectedOption={currentIsSelectable ? current!.code : ""}
+            onChange={(option: { data: string }) => {
+              void avr.send(
+                { type: "set_mode", code: option.data },
+                "mode",
+              );
             }}
-          >
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <DropdownItem
-                layout="inline"
-                label="Listening mode"
-                description={gameDescription}
-                rgOptions={selectable.map((option) => ({
-                  data: option.code,
-                  label: option.label,
-                }))}
-                selectedOption={currentIsSelectable ? current!.code : ""}
-                onChange={(option: { data: string }) => {
-                  void avr.send(
-                    { type: "set_mode", code: option.data },
-                    "mode",
-                  );
-                }}
-              />
-            </div>
-            {game && (
-              <IconButton
-                icon={<FaGamepad aria-hidden="true" />}
-                label={`Remember listening mode for ${game.name}`}
-                onClick={() =>
-                  void avr.send({
-                    type: "remember_for_game",
-                    what: "mode",
-                    on: !game.remembers_mode,
-                  })
-                }
-                active={game.remembers_mode}
-                disabled={!current && !game.remembers_mode}
-              />
-            )}
-          </Focusable>
+          />
         </PanelSectionRow>
-      ) : (
+      )}
+      {supportsMode &&
+        selectable.length > 0 &&
+        current &&
+        !currentIsSelectable && (
+        <PanelSectionRow>
+          <div>Current mode: {current.label}</div>
+        </PanelSectionRow>
+      )}
+      {supportsMode && selectable.length === 0 && current && (
+        <PanelSectionRow>
+          <div>
+            {game?.remembers_mode
+              ? `Saved for ${game.name}`
+              : `Current mode: ${current.label}`}
+          </div>
+        </PanelSectionRow>
+      )}
+      {game && unavailable && (
+        <PanelSectionRow>
+          <div>Listening mode unavailable.</div>
+        </PanelSectionRow>
+      )}
+      {game && (
         <PanelSectionRow>
           <Focusable
             flow-children="horizontal"
             style={{
-              alignItems: "center",
               display: "flex",
-              gap: 5,
+              justifyContent: "flex-end",
               minWidth: 0,
               width: "100%",
             }}
           >
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div>{`Current mode: ${current!.label}`}</div>
-            </div>
-            {game && (
-              <IconButton
-                icon={<FaGamepad aria-hidden="true" />}
-                label={`Remember listening mode for ${game.name}`}
-                onClick={() =>
-                  void avr.send({
-                    type: "remember_for_game",
-                    what: "mode",
-                    on: !game.remembers_mode,
-                  })
-                }
-                active={game.remembers_mode}
-                disabled={!current && !game.remembers_mode}
-              />
-            )}
+            <IconButton
+              className="avr-icon-button"
+              icon={<FaGamepad aria-hidden="true" />}
+              label={`Remember listening mode for ${game.name}`}
+              onClick={() =>
+                void avr.send({
+                  type: "remember_for_game",
+                  what: "mode",
+                  on: !game.remembers_mode,
+                })
+              }
+              active={game.remembers_mode}
+              disabled={!supportsMode || (!current && !game.remembers_mode)}
+            />
           </Focusable>
         </PanelSectionRow>
       )}

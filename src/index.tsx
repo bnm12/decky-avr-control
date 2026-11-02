@@ -10,7 +10,6 @@ import {
   FaClock,
   FaCog,
   FaGamepad,
-  FaPowerOff,
   FaSlidersH,
   FaVolumeUp,
 } from "react-icons/fa";
@@ -18,7 +17,6 @@ import { useState, type ReactNode } from "react";
 import { dispatchIntent } from "./api";
 import { GameSection } from "./components/GameSection";
 import { LateNightSection } from "./components/LateNightSection";
-import { IconButton } from "./components/IconButton";
 import { ModeSection } from "./components/ModeSection";
 import { ProfilesSection } from "./components/ProfilesSection";
 import { ReceiverSection } from "./components/ReceiverSection";
@@ -85,6 +83,21 @@ function Content() {
 
   return (
     <>
+      <style>{`
+        .avr-tab.gpfocus {
+          background: rgba(255, 255, 255, 0.18) !important;
+          outline: 2px solid #fff;
+          outline-offset: 1px;
+        }
+        .avr-tab.avr-tab-active.gpfocus {
+          background: linear-gradient(rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.16)), #304b62 !important;
+        }
+        .avr-icon-button.gpfocus {
+          outline: 2px solid #fff;
+          outline-offset: 1px;
+          filter: brightness(1.2);
+        }
+      `}</style>
       <VolumeSection avr={avr} />
       {summary && (
         <PanelSection>
@@ -141,6 +154,11 @@ function Content() {
                   return (
                     <DialogButton
                       key={tab.id}
+                      className={
+                        selected
+                          ? "avr-tab avr-tab-active"
+                          : "avr-tab"
+                      }
                       focusable
                       onClick={() => setActiveTab(tab.id)}
                       style={{
@@ -172,32 +190,6 @@ function Content() {
           {activeTab === "now" && (
             <>
               <ModeSection avr={avr} />
-              {snapshot.capabilities.includes("power") && (
-                <PanelSection title="Power">
-                  <PanelSectionRow>
-                    <IconButton
-                      icon={<FaPowerOff aria-hidden="true" />}
-                      label={
-                        snapshot.receiver.power === null
-                          ? "Power unknown; turn receiver on"
-                          : `Power ${snapshot.receiver.power ? "on" : "off"}; turn receiver ${snapshot.receiver.power ? "off" : "on"}`
-                      }
-                      text={
-                        snapshot.receiver.power === null
-                          ? "Power unknown"
-                          : `Power ${snapshot.receiver.power ? "On" : "Off"}`
-                      }
-                      active={snapshot.receiver.power === true}
-                      onClick={() =>
-                        void avr.send({
-                          type: "set_power",
-                          on: snapshot.receiver.power !== true,
-                        }, "power")
-                      }
-                    />
-                  </PanelSectionRow>
-                </PanelSection>
-              )}
               <LateNightSection avr={avr} />
             </>
           )}
