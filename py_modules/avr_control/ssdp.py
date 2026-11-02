@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import urllib.request
-import xml.etree.ElementTree as ET
 from typing import Any
+
+from . import xmltree as ET
 
 SSDP_ADDRESS = ("239.255.255.250", 1900)
 

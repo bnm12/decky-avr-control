@@ -7,12 +7,12 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
-import xml.etree.ElementTree as ET
 from decimal import Decimal, InvalidOperation
 from functools import partial
 from typing import ClassVar
 
 from .. import ssdp
+from .. import xmltree as ET
 from .base import (
     MODE,
     MUTE,

@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-import xml.etree.ElementTree as ET
 from typing import Awaitable, Callable, ClassVar
 from urllib.parse import parse_qs, urlencode
 
 from .. import ssdp
+from .. import xmltree as ET
 from .base import (
     MUTE,
     VOLUME,
