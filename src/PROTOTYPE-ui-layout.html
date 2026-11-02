@@ -1,0 +1,689 @@
+<!-- PROTOTYPE — throwaway layout mockups for the AVR Control panel; not production. Open in a browser; switch variants with ?variant=A|B|C|D, the bottom bar, or ←/→. -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AVR Control — UI layout prototype</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0e141b;
+      --panel: #151e28;
+      --panel2: #1b2838;
+      --line: #32465a;
+      --text: #f3f5f7;
+      --muted: #9ba8b5;
+      --blue: #1a9fff;
+      --blue2: #66c0f4;
+      --focus: #67c1f5;
+      --amber: #ffca6a;
+      --green: #83d991;
+    }
+    * { box-sizing: border-box; }
+    html { background: var(--bg); }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      background: radial-gradient(ellipse at 48% -14%, #24384b 0, var(--bg) 62%);
+      font: 14px/1.45 "Arial", "Helvetica Neue", sans-serif;
+    }
+    button, input, select { font: inherit; }
+    button { color: inherit; }
+    .demo-shell { width: min(1320px, calc(100% - 48px)); margin: 22px auto 110px; }
+    .intro { display:flex; align-items:center; justify-content:space-between; gap:16px; margin:0 2px 12px; }
+    .intro h1 { margin:0; font-size:16px; font-weight:650; letter-spacing:.02em; }
+    .intro p { color:var(--muted); font-size:12px; margin:3px 0 0; }
+    .prototype-tag { border:1px solid #53677b; color:#d5e0e9; border-radius:999px; padding:5px 10px; font-size:10px; letter-spacing:.12em; white-space:nowrap; }
+    .scene {
+      height: min(690px, calc(100vh - 264px));
+      min-height: 500px;
+      overflow:hidden;
+      position:relative;
+      isolation:isolate;
+      border:1px solid #304153;
+      border-radius:12px;
+      background:#080d12;
+      box-shadow:0 24px 70px #0009, 0 2px 8px #0008;
+    }
+    .topbar {
+      height:42px; display:flex; align-items:center; justify-content:space-between;
+      padding:0 18px; position:relative; z-index:2;
+      color:#d8e1e9; background:#0b1118ed; border-bottom:1px solid #ffffff13;
+    }
+    .steam-mark { display:flex; align-items:center; gap:9px; font-size:12px; font-weight:700; letter-spacing:.07em; }
+    .steam-icon { width:18px; height:18px; border:2px solid #dfeaf2; border-radius:50%; display:inline-grid; place-items:center; font-size:9px; }
+    .top-meta { color:#aab8c5; font-size:11px; display:flex; gap:16px; align-items:center; }
+    .play-area { position:absolute; inset:42px 0 0; display:flex; overflow:hidden; }
+    .game-backdrop {
+      position:relative; flex:1; min-width:0; overflow:hidden;
+      background:
+        radial-gradient(ellipse at 73% 38%, #b7552e55 0, transparent 24%),
+        radial-gradient(ellipse at 46% 62%, #ddb06442 0, transparent 22%),
+        linear-gradient(135deg, #29313a 2%, #17222b 35%, #4b3428 70%, #151b20 100%);
+    }
+    .game-backdrop:before {
+      content:""; position:absolute; inset:0;
+      background:
+        linear-gradient(0deg,#080b0fcb 0%,transparent 34%,#080b0f36 76%,#080b0f88 100%),
+        repeating-linear-gradient(116deg,transparent 0 88px,#ffffff08 90px 93px,transparent 96px 160px);
+    }
+    .game-backdrop:after {
+      content:""; position:absolute; width:250px; height:310px; left:45%; bottom:-67px;
+      background:linear-gradient(100deg,#111820 2%,#282a2b 45%,#080b0e 79%);
+      clip-path:polygon(35% 0,62% 7%,73% 26%,89% 38%,82% 100%,6% 100%,10% 47%,24% 31%);
+      filter:drop-shadow(0 0 20px #000);
+      opacity:.8;
+    }
+    .game-art-copy { position:absolute; z-index:1; left:7%; bottom:10%; text-shadow:0 2px 14px #000; }
+    .game-art-copy .eyebrow { color:#f3c584; font-size:10px; letter-spacing:.25em; font-weight:bold; }
+    .game-art-copy h2 { font-family:Georgia,serif; font-size:clamp(24px,4vw,47px); letter-spacing:.04em; margin:3px 0; }
+    .game-art-copy p { margin:0; color:#d4d0c8; font-size:12px; }
+    .dim-layer { position:absolute; inset:0; z-index:1; background:#080d14a6; backdrop-filter:blur(1px); }
+    .qam-panel {
+      width:310px; flex:0 0 310px; position:relative; z-index:2;
+      display:flex; flex-direction:column; min-height:0;
+      background:linear-gradient(155deg,#1b2838 0%,#111923 68%);
+      box-shadow:-16px 0 40px #0008; border-left:1px solid #ffffff15;
+    }
+    .panel-heading { display:flex; align-items:center; justify-content:space-between; padding:14px 16px 8px; }
+    .panel-heading h2 { margin:0; font-size:17px; font-weight:650; letter-spacing:.01em; }
+    .panel-heading .kebab { color:#aebdca; font-size:20px; letter-spacing:2px; }
+    .panel-content { min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:0 12px 18px; scrollbar-color:#53697c transparent; scrollbar-width:thin; }
+    .status-line {
+      position:sticky; top:-1px; z-index:3; padding:9px 10px 10px; margin:0 -1px 5px;
+      border:1px solid #33495b; border-radius:7px; background:#101923f5;
+      display:flex; flex-wrap:wrap; gap:5px; box-shadow:0 4px 12px #0004;
+    }
+    .status-chip { border:0; background:#23364a; border-radius:4px; padding:4px 6px; color:#dce9f2; font-size:10px; line-height:1.2; cursor:pointer; }
+    .status-chip:first-child { color:#fff; font-weight:700; }
+    .status-chip:hover { background:#31516d; }
+    .status-chip.unconfigured { color:var(--amber); }
+    .section-label { color:#a7b3bd; font-size:10px; line-height:1.2; letter-spacing:.16em; font-weight:750; text-transform:uppercase; margin:14px 5px 5px; }
+    .control-card { background:#ffffff06; border-radius:6px; padding:4px 8px; margin:0 0 6px; }
+    .toggle-row { display:flex; align-items:center; gap:10px; width:100%; min-height:42px; padding:7px 5px; border:0; text-align:left; background:transparent; cursor:pointer; border-radius:5px; }
+    .toggle-row:hover, .plain-row:hover { background:#ffffff0b; }
+    .toggle-copy { flex:1; min-width:0; }
+    .toggle-title { display:block; font-size:13px; font-weight:550; }
+    .toggle-description { display:block; color:var(--muted); font-size:10px; margin-top:1px; }
+    .switch { flex:none; width:37px; height:21px; border-radius:12px; background:#475665; padding:3px; transition:background .15s; }
+    .switch:after { content:""; display:block; width:15px; height:15px; border-radius:50%; background:#d7e0e7; transition:transform .15s; }
+    [aria-checked="true"] .switch { background:var(--blue); }
+    [aria-checked="true"] .switch:after { transform:translateX(16px); background:#fff; }
+    .range-wrap { padding:8px 6px 6px; }
+    .range-head { display:flex; justify-content:space-between; gap:12px; align-items:center; font-size:13px; }
+    .range-value { color:#fff; font-variant-numeric:tabular-nums; }
+    input[type=range] { width:100%; height:24px; margin:7px 0 0; accent-color:var(--blue); cursor:pointer; }
+    .range-ends { color:#8d9ba8; display:flex; justify-content:space-between; font-size:10px; }
+    .select-row, .field-row { display:flex; flex-direction:column; gap:5px; padding:7px 6px; }
+    .select-row label, .field-row label { font-size:11px; color:#d9e2e8; }
+    select, input[type=text], input[type=password], input[type=time] {
+      min-height:36px; width:100%; padding:7px 10px; color:#f6f7f8;
+      border:1px solid #46586a; border-radius:4px; background:#0d141c;
+      outline:none;
+    }
+    select:focus, input:focus, button:focus-visible, a:focus-visible { outline:2px solid var(--focus); outline-offset:1px; }
+    input::placeholder { color:#758491; }
+    .plain-row { min-height:39px; display:flex; align-items:center; justify-content:space-between; gap:10px; border:0; width:100%; padding:7px 6px; background:transparent; text-align:left; border-radius:5px; cursor:pointer; }
+    .plain-row strong { font-size:12px; font-weight:550; }
+    .plain-row small { display:block; color:var(--muted); font-size:10px; }
+    .button {
+      width:100%; text-align:center; border:1px solid #42769b; border-radius:4px;
+      background:linear-gradient(180deg,#276c9c,#1a4e74); color:white;
+      padding:9px 12px; min-height:38px; font-size:12px; font-weight:650; cursor:pointer;
+    }
+    .button:hover { background:linear-gradient(180deg,#348cc8,#226a9a); }
+    .button.secondary { background:#25384a; border-color:#4b6175; color:#e4edf4; }
+    .button.secondary:hover { background:#304b63; }
+    .button.ghost { background:transparent; border-color:#485b6d; }
+    .button-row { padding:6px; }
+    .muted-note { color:var(--muted); font-size:11px; padding:6px; }
+    .empty-card { padding:13px 12px; border:1px dashed #536779; border-radius:6px; margin:8px 2px; background:#121d28; }
+    .empty-card strong { display:block; font-size:13px; margin-bottom:3px; }
+    .empty-card p { margin:0 0 10px; color:#abb8c4; font-size:11px; }
+    .fold { border:1px solid #2e4051; border-radius:6px; background:#ffffff05; margin:7px 1px; overflow:hidden; }
+    .fold-head { border:0; width:100%; display:flex; align-items:center; gap:10px; text-align:left; padding:11px 10px; background:#ffffff04; cursor:pointer; }
+    .fold-head:hover { background:#ffffff0b; }
+    .fold-copy { flex:1; min-width:0; }
+    .fold-title { display:block; font-size:12px; font-weight:700; }
+    .fold-summary { display:block; font-size:10px; color:#a5b1bb; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+    .chevron { color:#afbec9; font-size:15px; transition:transform .15s; }
+    .fold.open .chevron { transform:rotate(90deg); }
+    .fold-body { border-top:1px solid #2e4051; padding:7px 8px 9px; }
+    .profile-row { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 5px; border-bottom:1px solid #ffffff10; }
+    .profile-row:last-child { border-bottom:0; }
+    .profile-name { font-size:12px; font-weight:650; }
+    .profile-desc { color:var(--muted); font-size:10px; margin-top:2px; }
+    .forget { color:#d7e5ef; border:1px solid #58697a; background:#202d39; padding:5px 8px; border-radius:4px; font-size:10px; cursor:pointer; }
+    .forget:hover { border-color:#f28e8e; color:#ffc0c0; }
+    .tab-strip { display:grid; grid-template-columns:repeat(4,1fr); gap:3px; padding:3px; background:#0c141c; border-radius:7px; margin:4px 0 9px; }
+    .tab-button { border:0; background:transparent; color:#aab7c2; min-width:0; padding:6px 3px 5px; border-radius:5px; font-size:10px; cursor:pointer; }
+    .tab-button .tab-icon { display:block; font-size:15px; margin-bottom:2px; }
+    .tab-button.active { color:#fff; background:#304b62; box-shadow:inset 0 0 0 1px #6586a0; }
+    .settings-page { position:absolute; inset:42px 0 0; display:flex; background:#121a23; }
+    .settings-sidebar { width:224px; flex:none; background:#101820; border-right:1px solid #303d49; padding:18px 10px; display:flex; flex-direction:column; }
+    .settings-sidebar .page-title { font-size:16px; font-weight:700; padding:4px 10px 15px; }
+    .settings-sidebar button { text-align:left; border:0; border-radius:4px; background:transparent; padding:10px; margin:2px 0; color:#b8c2cb; font-size:12px; cursor:pointer; }
+    .settings-sidebar button:hover { background:#ffffff0a; color:white; }
+    .settings-sidebar button.active { color:white; background:#273d50; box-shadow:inset 3px 0 var(--blue); }
+    .back-button { margin-top:auto!important; border:1px solid #465766!important; background:#1b2732!important; color:#f0f3f5!important; }
+    .settings-main { flex:1; min-width:0; overflow:auto; padding:25px clamp(18px,4vw,52px) 28px; }
+    .settings-main-inner { width:min(660px,100%); margin:0 auto; }
+    .settings-main h1 { font-size:24px; margin:0 0 5px; font-weight:650; }
+    .settings-main .page-subtitle { color:#aab6c0; font-size:12px; margin:0 0 19px; }
+    .settings-card { border:1px solid #344655; border-radius:8px; background:#1a2530; padding:13px; margin:0 0 12px; }
+    .settings-card h3 { color:#aebbc5; font-size:10px; letter-spacing:.15em; text-transform:uppercase; margin:0 6px 7px; }
+    .settings-card .control-card { background:transparent; padding:2px 7px; }
+    .settings-card .plain-row { min-height:44px; }
+    .settings-card .profile-row { padding:10px 6px; }
+    .settings-status { border:1px solid #3a5265; background:#111c26; padding:10px 12px; border-radius:6px; margin:0 0 16px; color:#dce8f0; font-size:12px; }
+    .settings-status span { color:var(--blue2); font-weight:650; }
+    .field-grid { display:grid; grid-template-columns:1fr 1fr; gap:2px 10px; }
+    .found-list { margin:4px 5px; border:1px solid #3a4b5a; border-radius:5px; overflow:hidden; }
+    .found-item { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:8px; background:#111c26; border-bottom:1px solid #ffffff10; }
+    .found-item:last-child { border:0; }
+    .found-item small { display:block; color:var(--muted); font-size:10px; }
+    .linklike { color:#78c7ff; text-decoration:underline; cursor:pointer; background:none; border:0; padding:4px 5px; font-size:12px; }
+    .experimental { color:var(--amber); }
+    .toast { position:absolute; z-index:9; top:55px; left:50%; transform:translate(-50%,-10px); opacity:0; pointer-events:none; padding:9px 14px; border:1px solid #4f7896; border-radius:6px; background:#162b3c; color:#fff; box-shadow:0 8px 24px #0009; transition:.2s; font-size:12px; }
+    .toast.show { transform:translate(-50%,0); opacity:1; }
+    .debug-strip { display:flex; flex-wrap:wrap; align-items:center; gap:10px 18px; margin:12px 1px 10px; color:#c7d2dc; font-size:11px; }
+    .debug-label { color:#8494a2; font-size:10px; letter-spacing:.1em; text-transform:uppercase; }
+    .debug-toggle { display:inline-flex; align-items:center; gap:7px; cursor:pointer; user-select:none; }
+    .debug-toggle input { accent-color:var(--blue); }
+    .state-inspector { display:flex; align-items:flex-start; gap:10px; padding:10px 12px; background:#111923; border:1px solid #293847; border-radius:6px; }
+    .state-inspector h3 { flex:none; margin:2px 0; color:#9eafbc; font-size:10px; letter-spacing:.12em; text-transform:uppercase; }
+    .state-inspector pre { min-width:0; flex:1; margin:0; max-height:105px; overflow:auto; color:#aed6ee; font:10px/1.5 Consolas, "Courier New", monospace; white-space:pre-wrap; overflow-wrap:anywhere; }
+    .variant-switcher {
+      position:fixed; z-index:20; left:50%; bottom:15px; transform:translateX(-50%);
+      display:flex; align-items:center; gap:8px; padding:7px 9px;
+      border:1px solid #1a9fff; border-radius:999px; background:#edf6fc;
+      color:#102333; box-shadow:0 5px 28px #000b; white-space:nowrap;
+    }
+    .variant-switcher button { min-width:30px; height:30px; border:0; border-radius:50%; background:#1a9fff; color:white; font-size:19px; line-height:1; cursor:pointer; }
+    .variant-switcher button:hover { background:#087cc2; }
+    .variant-name { min-width:190px; text-align:center; font-size:12px; font-weight:750; }
+    @media (max-width:760px) {
+      .demo-shell { width:calc(100% - 16px); margin:8px auto 110px; }
+      .intro { margin:0 4px 8px; }
+      .intro p { display:none; }
+      .scene { height:calc(100vh - 205px); min-height:470px; border-radius:8px; }
+      .game-backdrop { display:none; }
+      .qam-panel { width:100%; flex-basis:100%; }
+      .settings-sidebar { width:145px; padding:12px 7px; }
+      .settings-sidebar button { font-size:10px; padding:9px 7px; }
+      .settings-sidebar .page-title { font-size:13px; padding:4px 7px 12px; }
+      .settings-main { padding:18px 13px; }
+      .settings-main h1 { font-size:20px; }
+      .top-meta .battery { display:none; }
+      .state-inspector { display:block; }
+      .state-inspector h3 { margin-bottom:7px; }
+    }
+    @media (max-width:430px) {
+      .variant-name { min-width:155px; font-size:11px; }
+      .variant-switcher { gap:5px; padding:6px 7px; }
+      .variant-switcher button { min-width:28px; height:28px; }
+      .field-grid { grid-template-columns:1fr; }
+      .settings-sidebar { width:123px; }
+      .settings-sidebar button { font-size:9px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="demo-shell">
+    <header class="intro">
+      <div>
+        <h1>AVR Control <span style="color:#8e9ba7;font-weight:400">· layout exploration</span></h1>
+        <p>Four structurally different ways to make the QAM feel lighter without hiding daily controls.</p>
+      </div>
+      <span class="prototype-tag">THROWAWAY UI PROTOTYPE</span>
+    </header>
+    <div id="scene" class="scene" aria-live="polite"></div>
+    <div class="debug-strip">
+      <span class="debug-label">Preview state</span>
+      <label class="debug-toggle"><input id="debug-game" type="checkbox" checked> Game running</label>
+      <label class="debug-toggle"><input id="debug-first-run" type="checkbox"> First run · no receiver</label>
+    </div>
+    <section class="state-inspector" aria-label="Mock state readout">
+      <h3>Live mock state</h3>
+      <pre id="state-readout"></pre>
+    </section>
+  </main>
+  <nav class="variant-switcher" aria-label="Prototype variant switcher">
+    <button type="button" data-action="prev" aria-label="Previous variant">‹</button>
+    <span id="variant-name" class="variant-name"></span>
+    <button type="button" data-action="next" aria-label="Next variant">›</button>
+  </nav>
+  <script>
+    (() => {
+      const variantNames = {
+        A: "Slim panel + Settings page",
+        B: "Collapsible sections",
+        C: "Tabs inside the QAM",
+        D: "Hybrid"
+      };
+      const variantKeys = ["A", "B", "C", "D"];
+      const modeOptions = [
+        "Auto Surround", "Stereo", "Direct", "Pure Direct", "Dolby Audio - Surround",
+        "DTS Neural:X", "Action", "Drama", "Mono", "All Channel Stereo", "Theater-Dimensional"
+      ];
+      const driverOptions = [
+        ["auto", "Automatic"], ["eiscp", "eISCP"], ["yamaha", "Yamaha"],
+        ["yamaha_ync", "Yamaha YNC"], ["sony", "Sony"], ["denon", "Denon/Marantz"],
+        ["heos", "HEOS"], ["pioneer_legacy", "Pioneer legacy"], ["upnp", "UPnP"],
+        ["homeassistant", "Home Assistant"]
+      ];
+      const profileSeed = [
+        { name: "Elden Ring", volume: -40, mode: null },
+        { name: "Hades II", volume: null, mode: "Stereo" },
+        { name: "Forza Horizon 5", volume: -35, mode: "Dolby Audio - Surround" }
+      ];
+      const state = {
+        variant: new URLSearchParams(location.search).get("variant")?.toUpperCase() || "B",
+        firstRun: false, gameRunning: true, settingsOpen: false, settingsTab: "Receiver",
+        cTab: "Now", currentMode: "Stereo", powerOn: true, volume: -42.5, muted: false,
+        lateNight: false, lateCap: -50, maxVolume: -32,
+        schedule: { enabled: true, start: "21:00", end: "06:00", mode: "Stereo" },
+        wakeOnResume: true, offOnSuspend: false, rememberVolume: true, rememberMode: false,
+        profiles: profileSeed.map(profile => ({ ...profile })),
+        receiver: { configured: true, model: "VSX-935", brand: "Onkyo / Pioneer / Integra", driver: "eISCP", ip: "192.168.1.229", verified: true },
+        driver: "auto", manual: { host: "192.168.1.229", port: "60128", url: "http://homeassistant.local:8123", token: "", entity_id: "media_player.living_room_receiver" },
+        foundShown: false, haFound: false, openFolds: {}, toast: ""
+      };
+      if (!variantKeys.includes(state.variant)) state.variant = "B";
+      const scene = document.getElementById("scene");
+      const readout = document.getElementById("state-readout");
+      const variantName = document.getElementById("variant-name");
+      let toastTimer;
+      const esc = value => String(value ?? "").replace(/[&<>"']/g, ch => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[ch]));
+      const activeReceiver = () => !state.firstRun && state.receiver.configured;
+      const profileText = profile => [profile.volume !== null ? `${profile.volume} dB` : null, profile.mode].filter(Boolean).join(" · ") || "No saved controls";
+      const scheduleSummary = () => state.schedule.enabled
+        ? `${state.schedule.start}–${state.schedule.end}${state.schedule.mode ? ` · ${state.schedule.mode}` : ""}`
+        : "Schedule off";
+      const statusMarkup = () => {
+        const chips = activeReceiver() ? [
+          [state.receiver.model, "receiver"],
+          [`Late night ${state.lateNight ? "ON" : "OFF"}`, "lateNight"],
+          [`Schedule ${scheduleSummary()}`, "schedule"],
+          [state.wakeOnResume ? "Wakes with Steam" : "Wake off", "wake"],
+          [`${state.profiles.length} game profiles`, "profiles"]
+        ] : [["No receiver", "receiver"], ["Setup required", "receiver"]];
+        return `<div class="status-line" aria-label="AVR status">${chips.map(([text,target], index) =>
+          `<button class="status-chip${index === 0 && !activeReceiver() ? " unconfigured" : ""}" type="button" data-action="jump" data-target="${target}">${esc(text)}</button>`
+        ).join("")}</div>`;
+      };
+      const toggleRow = (key, title, description = "", disabled = false) => {
+        const checked = key === "schedule.enabled" ? state.schedule.enabled : state[key];
+        return `<button class="toggle-row" type="button" role="switch" aria-checked="${!!checked}" data-toggle="${key}" ${disabled ? "disabled" : ""}>
+          <span class="toggle-copy"><span class="toggle-title">${esc(title)}</span>${description ? `<span class="toggle-description">${esc(description)}</span>` : ""}</span><span class="switch"></span>
+        </button>`;
+      };
+      const rangeControl = () => `<div class="control-card range-wrap">
+        <div class="range-head"><span>Volume</span><span class="range-value" data-live="volume">${state.volume.toFixed(1)} dB</span></div>
+        <input aria-label="Receiver volume" data-range="volume" type="range" min="-82" max="${Number(state.maxVolume)}" step="0.5" value="${state.volume}">
+        <div class="range-ends"><span>−82 dB</span><span>Cap ${Number(state.maxVolume)} dB</span></div>
+      </div>`;
+      const selectControl = (label, key, options, value) =>
+        `<div class="select-row"><label for="select-${key}">${esc(label)}</label><select id="select-${key}" data-select="${key}">${options.map(option => {
+          const item = Array.isArray(option) ? option : [option, option];
+          return `<option value="${esc(item[0])}" ${item[0] === value ? "selected" : ""}>${esc(item[1])}</option>`;
+        }).join("")}</select></div>`;
+      const textField = (label, key, value, type = "text", placeholder = "") =>
+        `<div class="field-row"><label for="field-${key}">${esc(label)}</label><input id="field-${key}" data-field="${esc(key)}" type="${type}" value="${esc(value)}" placeholder="${esc(placeholder)}"></div>`;
+      const actionButton = (label, action, secondary = false, extra = "") =>
+        `<div class="button-row"><button type="button" class="button${secondary ? " secondary" : ""}" data-action="${action}" ${extra}>${esc(label)}</button></div>`;
+      const setupPrompt = () => `<div class="empty-card">
+        <strong>Connect a receiver to get started</strong>
+        <p>Find an AVR on your network or enter its address once. Your daily controls will live here.</p>
+        ${actionButton("Set up receiver", "setup")}
+      </div>`;
+      const dailyControls = ({ includeGame = true, includeSettings = false } = {}) => {
+        if (!activeReceiver()) return setupPrompt();
+        const standby = !state.powerOn;
+        return `<div class="section-label">Receiver</div><div class="control-card">
+          ${toggleRow("powerOn", "Power", state.powerOn ? "Receiver is on" : "Receiver is in standby")}
+          ${standby ? `<div class="muted-note">Receiver is in standby. Turn it on to change volume or mode.</div>` : `${rangeControl()}${toggleRow("muted", "Mute")}`}
+        </div>
+        ${standby ? "" : `<div class="section-label">Listening mode</div><div class="control-card">${selectControl("Listening mode", "currentMode", modeOptions, state.currentMode)}</div>`}
+        ${includeGame && state.gameRunning ? `<div class="section-label">This game · Elden Ring</div><div class="control-card">
+          ${toggleRow("rememberVolume", "Remember volume", "Restored on launch; updates as you change it")}
+          ${toggleRow("rememberMode", "Remember listening mode", `Currently ${state.currentMode}`)}
+        </div>` : ""}
+        <div class="section-label">Late night</div><div class="control-card">
+          ${toggleRow("lateNight", "Late night mode", state.lateNight ? `Volume capped at ${state.lateCap} dB` : `Schedule: ${scheduleSummary()}`)}
+        </div>
+        ${includeSettings ? actionButton("⚙  Settings", "open-settings", true) : ""}`;
+      };
+      const profileList = () => state.profiles.length
+        ? state.profiles.map((profile, index) => `<div class="profile-row"><div><div class="profile-name">${esc(profile.name)}</div><div class="profile-desc">${esc(profileText(profile))}</div></div><button class="forget" type="button" data-action="forget" data-index="${index}">Forget</button></div>`).join("")
+        : `<div class="muted-note">No saved game profiles yet.</div>`;
+      const scheduleControls = () => `<div class="control-card">
+        ${toggleRow("schedule.enabled", "Daily quiet-hours schedule", `Uses your Steam device's local time · ${state.schedule.enabled ? scheduleSummary() : "off"}`)}
+        ${state.schedule.enabled ? `<div class="field-row"><label for="schedule-start">Start time</label><input type="time" id="schedule-start" data-schedule="start" value="${esc(state.schedule.start)}"></div>
+          <div class="field-row"><label for="schedule-end">End time</label><input type="time" id="schedule-end" data-schedule="end" value="${esc(state.schedule.end)}"></div>
+          <div>${selectControl("Listening mode at start", "schedule.mode", [["", "No change"], ...modeOptions], state.schedule.mode)}</div>
+          ${actionButton("Save schedule", "save-schedule", true)}` : ""}
+      </div>`;
+      const sleepWakeControls = () => `<div class="control-card">
+        ${toggleRow("wakeOnResume", "Turn receiver on when Steam wakes", "Only wakes it when its power state is known to be off")}
+        ${toggleRow("offOnSuspend", "Turn receiver off when Steam sleeps")}
+      </div>`;
+      const volumeLimitControls = () => `<div class="control-card">
+        ${textField("Max volume (dB)", "maxVolume", state.maxVolume)}
+        ${textField("Late night cap (dB)", "lateCap", state.lateCap)}
+        ${actionButton("Save volume caps", "save-caps", true)}
+      </div>`;
+      const receiverForm = () => {
+        const driverOptionsHtml = selectControl("Connection type", "driver", driverOptions, state.driver);
+        const fields = state.driver === "auto"
+          ? textField("Receiver IP address", "host", state.manual.host)
+          : state.driver === "homeassistant"
+            ? `${textField("Home Assistant URL", "url", state.manual.url)}${textField("Long-lived access token", "token", state.manual.token, "password", "Token is stored securely")}${textField("Media player entity", "entity_id", state.manual.entity_id)}`
+            : `${textField("Receiver IP address", "host", state.manual.host)}${state.driver === "eiscp" ? textField("Port", "port", state.manual.port) : ""}`;
+        const ha = state.driver === "homeassistant" ? `<div class="muted-note">Create a long-lived access token in Home Assistant under Profile → Security. The URL is often http://homeassistant.local:8123.</div>
+          ${actionButton(state.haFound ? "Media players found ✓" : "Find media players", "find-ha", true)}
+          ${state.haFound ? `<div class="muted-note">Found: Living Room Receiver · media_player.living_room_receiver</div>` : ""}` : "";
+        const found = state.foundShown ? `<div class="found-list">
+          <div class="found-item"><div><strong>VSX-935</strong><small>Onkyo / Pioneer / Integra · 192.168.1.229</small></div><button class="forget" data-action="choose-receiver">Use</button></div>
+          <div class="found-item"><div><strong>RX-V6A</strong><small>Yamaha · 192.168.1.184</small></div><button class="forget" data-action="choose-yamaha">Use</button></div>
+        </div>` : "";
+        return `<div class="control-card">
+          ${activeReceiver() ? `<div class="muted-note">Connected · ${esc(state.receiver.brand)} · ${esc(state.receiver.ip)} · <span style="color:var(--green)">Verified</span></div>` : ""}
+          ${actionButton(state.foundShown ? "Search network again" : "Search network", "search")}
+          ${found}${driverOptionsHtml}${fields}${ha}${actionButton("Save & connect", "save-receiver")}
+        </div>`;
+      };
+      const aboutContent = () => `<div class="control-card">
+        <div class="plain-row"><span><strong>AVR Control</strong><small>Version 0.5.2</small></span><span>ⓘ</span></div>
+        <div class="muted-note">Experimental drivers: <span class="experimental">UPnP and Home Assistant</span>. Yamaha YNC support may vary by receiver model.</div>
+        <div class="plain-row"><span><strong>Need help?</strong><small>Share connection details to help improve support.</small></span></div>
+        <div class="button-row"><a href="#receiver-report" class="linklike" data-action="report">Send a receiver report ↗</a></div>
+      </div>`;
+      const fold = (id, title, summary, contents) => {
+        const open = !!state.openFolds[id];
+        return `<section class="fold${open ? " open" : ""}" id="fold-${id}">
+          <button type="button" class="fold-head" data-action="fold" data-fold="${id}" aria-expanded="${open}">
+            <span class="fold-copy"><span class="fold-title">${esc(title)}</span><span class="fold-summary">${esc(summary)}</span></span><span class="chevron">›</span>
+          </button>${open ? `<div class="fold-body">${contents}</div>` : ""}
+        </section>`;
+      };
+      const cTabs = () => `<div class="tab-strip" role="tablist">
+        ${[["Now","◉"],["Game","▣"],["Auto","◷"],["Setup","⚙"]].map(([tab,icon]) =>
+          `<button class="tab-button${state.cTab === tab ? " active" : ""}" type="button" role="tab" aria-selected="${state.cTab === tab}" data-action="ctab" data-tab="${tab}"><span class="tab-icon">${icon}</span>${tab}</button>`
+        ).join("")}</div>`;
+      const panelMarkup = () => {
+        if (state.settingsOpen) return settingsMarkup();
+        let content = "";
+        if (state.variant === "A") {
+          content = `${dailyControls({ includeGame:true })}${activeReceiver() ? actionButton("⚙  Settings", "open-settings", true) : ""}`;
+        } else if (state.variant === "B") {
+          const gameContents = state.gameRunning && activeReceiver()
+            ? `<div class="control-card">${toggleRow("rememberVolume", "Remember volume", "Restored on launch; updates as you change it")}${toggleRow("rememberMode", "Remember listening mode", `Currently ${state.currentMode}`)}</div>`
+            : `<div class="muted-note">${state.gameRunning ? "Connect a receiver to set per-game preferences." : "No game is running."}</div>`;
+          content = `${dailyControls({ includeGame:false })}
+            ${activeReceiver() ? fold("schedule","Schedule",scheduleSummary(),scheduleControls()) : ""}
+            ${activeReceiver() ? fold("sleep","Sleep & wake",`${state.wakeOnResume ? "Wakes with Steam" : "Wake off"} · ${state.offOnSuspend ? "Powers off on sleep" : "Stays on when Steam sleeps"}`,sleepWakeControls()) : ""}
+            ${activeReceiver() ? fold("limits","Volume limits",`Max ${state.maxVolume} dB · Late night ${state.lateCap} dB`,volumeLimitControls()) : ""}
+            ${state.gameRunning && activeReceiver() ? fold("game","This game",`Elden Ring · volume ${state.rememberVolume ? "on" : "off"} · mode ${state.rememberMode ? "on" : "off"}`,gameContents) : ""}
+            ${activeReceiver() ? fold("profiles","Game profiles",`${state.profiles.length} saved`,profileList()) : ""}
+            ${fold("receiver","Receiver setup",activeReceiver() ? `${state.receiver.model} · ${state.receiver.ip}` : "Not connected",receiverForm())}
+            ${fold("about","About","Version 0.5.2 · help and driver notes",aboutContent())}`;
+        } else if (state.variant === "C") {
+          content = cTabs();
+          if (state.cTab === "Now") content += dailyControls({ includeGame:false });
+          if (state.cTab === "Game") content += `${state.gameRunning && activeReceiver()
+            ? `<div class="section-label">This game · Elden Ring</div><div class="control-card">${toggleRow("rememberVolume", "Remember volume", "Restored on launch; updates as you change it")}${toggleRow("rememberMode", "Remember listening mode", `Currently ${state.currentMode}`)}</div>`
+            : `<div class="empty-card"><strong>${state.gameRunning ? "Connect a receiver first" : "No game running"}</strong><p>Game-specific saved settings will be shown here.</p></div>`}
+            <div class="section-label">Profiles</div><div class="control-card">${profileList()}</div>`;
+          if (state.cTab === "Auto") content += `<div class="section-label">Schedule</div>${scheduleControls()}<div class="section-label">Sleep & wake</div>${sleepWakeControls()}`;
+          if (state.cTab === "Setup") content += activeReceiver() || state.firstRun
+            ? `<div class="section-label">Receiver setup</div>${receiverForm()}<div class="section-label">Volume limits</div>${volumeLimitControls()}<div class="section-label">About</div>${aboutContent()}`
+            : setupPrompt();
+        } else {
+          content = `${dailyControls({ includeGame:true })}
+            ${activeReceiver() ? fold("automation","Automation",`${scheduleSummary()} · ${state.wakeOnResume ? "Wakes with Steam" : "Wake off"}`,`<div class="section-label">Schedule</div>${scheduleControls()}<div class="section-label">Sleep & wake</div>${sleepWakeControls()}`) : ""}
+            ${activeReceiver() ? fold("profiles","Game profiles",`${state.profiles.length} saved`,profileList()) : ""}
+            ${activeReceiver() ? actionButton("⚙  Settings", "open-settings", true) : ""}`;
+        }
+        return `<aside class="qam-panel"><div class="panel-heading"><h2>AVR Control</h2><span class="kebab">···</span></div><div class="panel-content">${statusMarkup()}${content}</div></aside>`;
+      };
+      const settingsTabs = ["Receiver","Volume limits","Schedule","Sleep & wake","Game profiles","About"];
+      const settingsContent = tab => {
+        const descriptions = {
+          "Receiver":"Connect once, then your everyday controls stay close at hand.",
+          "Volume limits":"Set a ceiling so volume changes stay within a comfortable range.",
+          "Schedule":"Choose quiet hours using your Steam device's local time.",
+          "Sleep & wake":"Choose how the receiver follows Steam power states.",
+          "Game profiles":"Review the settings saved for each game.",
+          "About":"Plugin details, driver support, and help."
+        };
+        let body = "";
+        if (tab === "Receiver") body = `<div class="settings-card"><h3>Receiver connection</h3>${receiverForm()}</div>`;
+        if (tab === "Volume limits") body = `<div class="settings-card"><h3>Volume caps</h3>${volumeLimitControls()}</div>`;
+        if (tab === "Schedule") body = `<div class="settings-card"><h3>Daily quiet hours</h3>${scheduleControls()}</div>`;
+        if (tab === "Sleep & wake") body = `<div class="settings-card"><h3>Steam power behaviour</h3>${sleepWakeControls()}</div>`;
+        if (tab === "Game profiles") body = `<div class="settings-card"><h3>Saved per-game settings</h3>${profileList()}</div>`;
+        if (tab === "About") body = `<div class="settings-card"><h3>About AVR Control</h3>${aboutContent()}</div>`;
+        return `<div class="settings-main"><div class="settings-main-inner">
+          <div class="settings-status">${activeReceiver() ? `<span>${esc(state.receiver.model)}</span> · ${esc(state.receiver.brand)} · ${esc(state.receiver.ip)} · Verified` : `<span class="experimental">No receiver connected</span> · Choose a connection method to get started`}</div>
+          <h1>${esc(tab)}</h1><p class="page-subtitle">${descriptions[tab]}</p>${body}
+        </div></div>`;
+      };
+      function settingsMarkup() {
+        return `<div class="settings-page"><aside class="settings-sidebar"><div class="page-title">AVR Control · Settings</div>
+            ${settingsTabs.map(tab => `<button type="button" class="${state.settingsTab === tab ? "active" : ""}" data-action="settings-tab" data-tab="${esc(tab)}">${esc(tab)}</button>`).join("")}
+            <button type="button" class="back-button" data-action="back">‹ &nbsp; Back to Quick Access</button>
+          </aside>${settingsContent(state.settingsTab)}</div>`;
+      }
+      function sceneMarkup() {
+        const gameArea = state.settingsOpen ? "" : `<div class="play-area">
+          <div class="game-backdrop"><div class="game-art-copy"><span class="eyebrow">THE LANDS BETWEEN</span><h2>ELDEN RING</h2><p>${state.gameRunning ? "Resume your journey" : "Quick Access · no game running"}</p></div><div class="dim-layer"></div></div>
+          ${panelMarkup()}
+        </div>`;
+        const page = state.settingsOpen ? panelMarkup() : gameArea;
+        return `<div class="topbar"><div class="steam-mark"><span class="steam-icon">S</span> STEAM</div><div class="top-meta"><span>Quick Access</span><span class="battery">▰  82% &nbsp; · &nbsp; 9:41 PM</span></div></div>${page}<div class="toast" id="toast"></div>`;
+      }
+      function updateReadout() {
+        readout.textContent = JSON.stringify({
+          variant: state.variant,
+          firstRunNoReceiverPreview: state.firstRun,
+          gameRunning: state.gameRunning,
+          receiver: activeReceiver() ? state.receiver : { configured: false },
+          powerOn: state.powerOn,
+          volumeDb: state.volume,
+          muted: state.muted,
+          listeningMode: state.currentMode,
+          thisGame: state.gameRunning ? { name:"Elden Ring", rememberVolume:state.rememberVolume, rememberListeningMode:state.rememberMode } : null,
+          lateNight: state.lateNight,
+          lateNightCapDb: state.lateCap,
+          maxVolumeDb: state.maxVolume,
+          schedule: state.schedule,
+          sleepWake: { wakeOnResume:state.wakeOnResume, offOnSuspend:state.offOnSuspend },
+          profiles: state.profiles,
+          connectionSetup: { driver:state.driver, fields:state.manual },
+          currentSurface: state.settingsOpen ? `Settings · ${state.settingsTab}` : state.variant === "C" ? `QAM · ${state.cTab}` : "Quick Access panel"
+        }, null, 2);
+      }
+      function render() {
+        scene.innerHTML = sceneMarkup();
+        variantName.textContent = `${state.variant} — ${variantNames[state.variant]}`;
+        document.getElementById("debug-game").checked = state.gameRunning;
+        document.getElementById("debug-first-run").checked = state.firstRun;
+        updateReadout();
+      }
+      function toast(message) {
+        state.toast = message;
+        const element = document.getElementById("toast");
+        if (!element) return;
+        element.textContent = message;
+        element.classList.add("show");
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => element.classList.remove("show"), 1800);
+      }
+      function setVariant(key) {
+        state.variant = key;
+        state.settingsOpen = false;
+        const url = new URL(location.href);
+        url.searchParams.set("variant", key);
+        history.replaceState(null, "", url);
+        render();
+      }
+      const targetToSettings = {
+        receiver:"Receiver", lateNight:"Volume limits", schedule:"Schedule",
+        wake:"Sleep & wake", profiles:"Game profiles", limits:"Volume limits"
+      };
+      function jumpTo(target) {
+        if (state.variant === "A" || state.variant === "D") {
+          state.settingsOpen = true;
+          state.settingsTab = targetToSettings[target] || "Receiver";
+        } else if (state.variant === "B") {
+          const foldId = target === "lateNight" || target === "limits" ? "limits" :
+            target === "wake" ? "sleep" : target;
+          if (["schedule","sleep","limits","game","profiles","receiver","about","automation"].includes(foldId)) {
+            state.openFolds[foldId] = true;
+          }
+          if (target === "lateNight") state.openFolds.limits = true;
+        } else {
+          state.cTab = target === "receiver" || target === "limits" ? "Setup" :
+            target === "profiles" || target === "game" ? "Game" :
+            target === "schedule" || target === "wake" ? "Auto" : "Now";
+        }
+        render();
+        const wanted = state.variant === "B" ? document.getElementById(`fold-${target === "lateNight" ? "limits" : target === "wake" ? "sleep" : target}`) : null;
+        if (wanted) wanted.scrollIntoView({ block:"nearest", behavior:"smooth" });
+      }
+      function cycle(delta) {
+        const index = variantKeys.indexOf(state.variant);
+        setVariant(variantKeys[(index + delta + variantKeys.length) % variantKeys.length]);
+      }
+      const toggleState = key => {
+        if (key === "schedule.enabled") state.schedule.enabled = !state.schedule.enabled;
+        else state[key] = !state[key];
+      };
+      document.addEventListener("click", event => {
+        const button = event.target.closest("[data-action], [data-toggle]");
+        if (!button) return;
+        const action = button.dataset.action;
+        if (button.hasAttribute("data-toggle")) {
+          toggleState(button.dataset.toggle);
+          render();
+          return;
+        }
+        if (action === "prev") return cycle(-1);
+        if (action === "next") return cycle(1);
+        if (action === "jump") return jumpTo(button.dataset.target);
+        if (action === "toggle") return;
+        if (action === "open-settings") {
+          state.settingsOpen = true;
+          state.settingsTab = "Receiver";
+        } else if (action === "back") {
+          state.settingsOpen = false;
+        } else if (action === "settings-tab") {
+          state.settingsTab = button.dataset.tab;
+        } else if (action === "ctab") {
+          state.cTab = button.dataset.tab;
+        } else if (action === "fold") {
+          const id = button.dataset.fold;
+          state.openFolds[id] = !state.openFolds[id];
+        } else if (action === "setup") {
+          if (state.variant === "B") state.openFolds.receiver = true;
+          else if (state.variant === "C") state.cTab = "Setup";
+          else { state.settingsOpen = true; state.settingsTab = "Receiver"; }
+        } else if (action === "search") {
+          state.foundShown = true;
+          toast("Network search complete · 2 receivers found");
+        } else if (action === "choose-receiver") {
+          state.receiver = { configured:true, model:"VSX-935", brand:"Onkyo / Pioneer / Integra (eISCP)", driver:"eISCP", ip:"192.168.1.229", verified:true };
+          state.manual.host = state.receiver.ip;
+          state.firstRun = false;
+          toast("Connected to VSX-935");
+        } else if (action === "choose-yamaha") {
+          state.receiver = { configured:true, model:"RX-V6A", brand:"Yamaha", driver:"Yamaha", ip:"192.168.1.184", verified:true };
+          state.manual.host = state.receiver.ip;
+          state.firstRun = false;
+          toast("Connected to RX-V6A");
+        } else if (action === "find-ha") {
+          state.haFound = true;
+          state.manual.entity_id = "media_player.living_room_receiver";
+          toast("Found 1 Home Assistant media player");
+        } else if (action === "save-receiver") {
+          if (state.driver !== "homeassistant" && !state.manual.host.trim()) {
+            toast("Enter a receiver address first");
+            return;
+          }
+          const chosen = driverOptions.find(([key]) => key === state.driver)?.[1] || "Receiver";
+          state.receiver = { configured:true, model:state.driver === "auto" || state.driver === "eiscp" ? "VSX-935" : "AVR", brand:chosen, driver:chosen, ip:state.manual.host || "homeassistant.local", verified:true };
+          state.firstRun = false;
+          toast("Receiver settings saved");
+        } else if (action === "save-caps") {
+          state.maxVolume = Math.min(-32, Number(state.maxVolume) || -32);
+          state.lateCap = Number(state.lateCap) || -50;
+          state.volume = Math.min(state.volume, state.maxVolume);
+          toast("Volume caps saved");
+        } else if (action === "save-schedule") {
+          toast("Schedule saved");
+        } else if (action === "forget") {
+          const index = Number(button.dataset.index);
+          const removed = state.profiles.splice(index, 1)[0];
+          if (removed) toast(`${removed.name} profile forgotten`);
+        } else if (action === "report") {
+          event.preventDefault();
+          toast("Receiver report link selected");
+        }
+        render();
+      });
+      document.addEventListener("input", event => {
+        const target = event.target;
+        if (target.matches("[data-range='volume']")) {
+          state.volume = Number(target.value);
+          const label = scene.querySelector("[data-live='volume']");
+          if (label) label.textContent = `${state.volume.toFixed(1)} dB`;
+          updateReadout();
+        } else if (target.matches("[data-field]")) {
+          const key = target.dataset.field;
+          if (key === "maxVolume") state.maxVolume = target.value;
+          else if (key === "lateCap") state.lateCap = target.value;
+          else state.manual[key] = target.value;
+          updateReadout();
+        } else if (target.matches("[data-schedule]")) {
+          state.schedule[target.dataset.schedule] = target.value;
+          const scheduleChip = scene.querySelector(".status-chip[data-target='schedule']");
+          if (scheduleChip) scheduleChip.textContent = `Schedule ${scheduleSummary()}`;
+          updateReadout();
+        }
+      });
+      document.addEventListener("change", event => {
+        const target = event.target;
+        if (target.matches("[data-select]")) {
+          const key = target.dataset.select;
+          if (key === "currentMode") state.currentMode = target.value;
+          else if (key === "schedule.mode") state.schedule.mode = target.value;
+          else if (key === "driver") {
+            state.driver = target.value;
+            state.haFound = false;
+          }
+          render();
+        }
+      });
+      document.getElementById("debug-game").addEventListener("change", event => {
+        state.gameRunning = event.target.checked;
+        render();
+      });
+      document.getElementById("debug-first-run").addEventListener("change", event => {
+        state.firstRun = event.target.checked;
+        state.settingsOpen = false;
+        render();
+      });
+      document.addEventListener("keydown", event => {
+        const target = event.target;
+        if (target.matches("input, textarea, select, [contenteditable='true']")) return;
+        if (event.key === "ArrowLeft") { event.preventDefault(); cycle(-1); }
+        if (event.key === "ArrowRight") { event.preventDefault(); cycle(1); }
+      });
+      render();
+    })();
+  </script>
+</body>
+</html>
