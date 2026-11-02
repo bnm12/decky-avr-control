@@ -84,6 +84,15 @@ function Content() {
   return (
     <>
       <style>{`
+        .avr-volume-slider {
+          box-sizing: border-box !important;
+          display: block !important;
+          max-width: 100% !important;
+          min-width: 0 !important;
+          margin: 0 !important;
+          padding: 0 !important;
+          width: 100% !important;
+        }
         .avr-tab.gpfocus {
           background: rgba(255, 255, 255, 0.18) !important;
           outline: 2px solid #fff;
