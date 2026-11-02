@@ -12,6 +12,8 @@ from avr_control.settings import (
     CapSettings,
     FileSettingsStore,
     GameProfile,
+    GameSession,
+    GlobalProfile,
     LateNightSettings,
     MemorySettingsStore,
     ReceiverSettings,
@@ -103,6 +105,27 @@ class SettingsRepositoryTests(unittest.TestCase):
                         extra={"future_profile_option": "kept"},
                     )
                 },
+                global_profiles={
+                    "receiver-key": GlobalProfile(
+                        driver="homeassistant",
+                        binding={
+                            "driver": "homeassistant",
+                            "id": "RECEIVER-ID",
+                        },
+                        volume=53,
+                        mode="direct",
+                    )
+                },
+                game_session=GameSession(
+                    appid=123,
+                    driver="homeassistant",
+                    binding={
+                        "driver": "homeassistant",
+                        "id": "RECEIVER-ID",
+                    },
+                    volume=True,
+                    restore_mode=True,
+                ),
                 extra={"future_top_level": {"kept": True}},
             )
             repository.save(value)
@@ -122,6 +145,15 @@ class SettingsRepositoryTests(unittest.TestCase):
             self.assertEqual(loaded.late.binding, value.late.binding)
             self.assertEqual(loaded.games["123"].volume, 61)
             self.assertEqual(loaded.games["123"].mode, "stereo")
+            self.assertEqual(
+                loaded.global_profiles["receiver-key"].volume, 53
+            )
+            self.assertEqual(
+                loaded.global_profiles["receiver-key"].mode, "direct"
+            )
+            self.assertEqual(loaded.game_session.appid, 123)
+            self.assertTrue(loaded.game_session.volume)
+            self.assertTrue(loaded.game_session.restore_mode)
             self.assertEqual(loaded.extra["future_top_level"], {"kept": True})
             self.assertEqual(
                 loaded.receiver.extra["future_receiver_option"], {"kept": True}
@@ -266,6 +298,23 @@ class SettingsRepositoryTests(unittest.TestCase):
         self.assertEqual(settings.schedule.mode, "11")
         self.assertTrue(settings.sleep_wake.wake_on_resume)
         self.assertFalse(settings.sleep_wake.off_on_suspend)
+
+    def test_v4_migration_adds_global_profiles_and_game_session(self):
+        data = {
+            "version": 4,
+            "receiver": {"driver": "memory", "config": {"host": "receiver"}},
+            "games": {"10": {"name": "Game", "driver": "memory", "volume": 80}},
+        }
+
+        migrated = migrate(data)
+        settings = SettingsRepository(MemorySettingsStore(data)).load()
+
+        self.assertEqual(migrated["version"], CURRENT_VERSION)
+        self.assertEqual(migrated["global_profiles"], {})
+        self.assertIsNone(migrated["game_session"])
+        self.assertEqual(settings.global_profiles, {})
+        self.assertIsNone(settings.game_session)
+        self.assertEqual(settings.games["10"].volume, 80)
 
     def test_failed_migration_save_keeps_normalized_settings_in_memory(self):
         data = {

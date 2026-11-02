@@ -10,6 +10,7 @@ Current capabilities and next steps. Decisions with lasting rationale belong in 
   - Settings go through a `SettingsRepository`.
   - One `ControlApplication` sits behind `snapshot` / `dispatch(intent)` (ADR-0018), with `VolumePolicy` as the only volume math.
   - Drivers report `ModeState` (current mode vs selectable list, plus whether the list is complete).
+  - Receiver-bound global profiles hold everyday settings; game sessions restore only the settings a game overrides (ADR-0021).
 - **Push sync** runs only while the panel is open. The eISCP, Denon telnet, legacy Pioneer and HEOS event paths come from specs and community sources and haven't been measured on hardware. Without push the panel polls every 2 s; with push it resyncs every 15 s.
 - **Automation:** an opt-in late-night schedule (ADR-0019) and opt-in power on/off when the Steam device wakes or sleeps.
 - **Volume scales** are dB, percent or bare steps (ADR-0015). Caps and late night are bound to the receiver via each driver's identity keys (ADR-0014).

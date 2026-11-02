@@ -1,0 +1,7 @@
+# A receiver-bound global profile restores settings when games exit
+
+A per-game profile overrides only the settings it remembers. A hidden global profile stores the everyday volume and listening mode for each receiver. For each setting, the active profile is the running game's profile when that game remembers it; otherwise it is the receiver's global profile. Changes through the panel, receiver, or application update only that active profile. Late-night volume is never written to either profile.
+
+On game launch, the plugin applies the game's remembered settings. On exit—and when a remember toggle is turned off during play—it applies the global values for the settings that were overridden, clamping volume to the cap then in effect and applying mode only when supported. A game's session records which settings were actually overridden and the receiver binding, so a receiver switch never restores another receiver's values. That session and the per-receiver global profiles persist across plugin restarts; a failed restore remains pending for a later successful status read.
+
+Global profiles are keyed by the receiver binding (ADR-0014) and store the driver key because raw volumes and listening-mode codes are driver-specific (ADR-0012). A receiver with no global values is seeded from its first successful status read. The global profile is internal: it is not shown with game profiles and cannot be forgotten.
