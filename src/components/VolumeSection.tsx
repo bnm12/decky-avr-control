@@ -199,7 +199,9 @@ export function VolumeSection({ avr, summary, loading, children }: Props) {
                       }}
                     >
                       <SliderField
-                        className="avr-volume-slider"
+                        className={`avr-volume-slider${
+                          game?.remembers_volume ? " avr-game-override" : ""
+                        }`}
                         label=""
                         value={receiver.volume?.display ?? scale.min_display}
                         min={scale.min_display}

@@ -1,5 +1,5 @@
 import { PanelSection, PanelSectionRow } from "@decky/ui";
-import { FaTrash } from "react-icons/fa";
+import { FaPlay, FaTrash } from "react-icons/fa";
 import { IconButton } from "./IconButton";
 import { useAvr } from "../hooks/useAvr";
 import { formatVolume } from "./format";
@@ -9,6 +9,7 @@ type Props = { avr: ReturnType<typeof useAvr> };
 export function ProfilesSection({ avr }: Props) {
   const profiles = avr.snapshot?.profiles ?? [];
   const unit = avr.snapshot?.scale?.unit;
+  const runningAppId = avr.snapshot?.game?.appid;
   return (
     <PanelSection title="Profiles">
       {profiles.length === 0 ? (
@@ -20,7 +21,7 @@ export function ProfilesSection({ avr }: Props) {
           const description = [
             profile.volume_display !== null
               ? profile.same_receiver && unit
-                  ? formatVolume(profile.volume_display, unit)
+                ? formatVolume(profile.volume_display, unit)
                 : "Volume from other receiver"
               : null,
             profile.mode_label,
@@ -29,20 +30,42 @@ export function ProfilesSection({ avr }: Props) {
             .join(", ");
           return (
             <PanelSectionRow key={profile.appid}>
-                <div
-                  style={{
-                    alignItems: "center",
-                    display: "flex",
-                    gap: 8,
-                    minHeight: 40,
-                    minWidth: 0,
-                    width: "100%",
+              <div
+                className="avr-profile-row"
+                style={{
+                  alignItems: "center",
+                  display: "flex",
+                  gap: 8,
+                  minHeight: 40,
+                  minWidth: 0,
+                  width: "100%",
                 }}
               >
-                  <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div
+                    style={{
+                      alignItems: "center",
+                      display: "flex",
+                      gap: 4,
+                      minWidth: 0,
+                    }}
+                  >
+                    {profile.appid === runningAppId && (
+                      <FaPlay
+                        aria-label="Running"
+                        role="img"
+                        style={{
+                          color: "#90ba3c",
+                          flex: "none",
+                          fontSize: 10,
+                        }}
+                      />
+                    )}
                     <div
                       style={{
+                        flex: 1,
                         fontSize: 12,
+                        minWidth: 0,
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                         whiteSpace: "nowrap",
@@ -50,34 +73,35 @@ export function ProfilesSection({ avr }: Props) {
                     >
                       {profile.name}
                     </div>
-                    {description && (
-                      <div
-                        style={{
-                          color: "#aeb9c4",
-                          fontSize: 10,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {description}
-                      </div>
-                    )}
                   </div>
-                  <IconButton
-                    className="avr-icon-button"
-                    icon={<FaTrash aria-hidden="true" />}
-                    label={`Forget ${profile.name} profile`}
-                    onClick={() => {
-                      void avr.send({
-                        type: "forget_game",
-                        appid: profile.appid,
-                      });
-                    }}
-                  />
+                  {description && (
+                    <div
+                      style={{
+                        color: "#aeb9c4",
+                        fontSize: 10,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {description}
+                    </div>
+                  )}
                 </div>
-              </PanelSectionRow>
-            );
+                <IconButton
+                  className="avr-icon-button"
+                  icon={<FaTrash aria-hidden="true" />}
+                  label={`Forget ${profile.name} profile`}
+                  onClick={() => {
+                    void avr.send({
+                      type: "forget_game",
+                      appid: profile.appid,
+                    });
+                  }}
+                />
+              </div>
+            </PanelSectionRow>
+          );
         })
       )}
     </PanelSection>

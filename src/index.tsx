@@ -143,9 +143,30 @@ function Content() {
           box-sizing: border-box;
           border-radius: 2px;
         }
+        .avr-volume-slider .SliderTrack::before {
+          left: 0 !important;
+          right: auto !important;
+          width: calc(var(--normalized-slider-value) * 100%) !important;
+        }
         .avr-volume-slider {
           margin: 0 !important;
           padding: 0 !important;
+        }
+        .avr-volume-slider.avr-game-override .SliderTrack {
+          --left-track-color: #90ba3c;
+        }
+        .avr-volume-slider.avr-game-override .SliderTrack::before {
+          background: #90ba3c !important;
+        }
+        .avr-profile-row {
+          border-radius: 4px;
+          padding: 0 0 0 8px;
+          margin: 0 -8px 2px;
+          transition: background 120ms;
+        }
+        .avr-profile-row:has(.gpfocus) {
+          background: rgba(255, 255, 255, 0.12);
+          box-shadow: inset 3px 0 0 #90ba3c;
         }
         .avr-mode-dropdown,
         .avr-mode-dropdown * {
