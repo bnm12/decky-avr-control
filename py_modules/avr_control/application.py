@@ -1255,6 +1255,42 @@ class ControlApplication:
             for session in sessions
         )
 
+    def _cancel_pending_restore_for_setting(
+        self, data: Settings, setting: str, driver: str, binding: dict
+    ) -> bool:
+        flag = "restore_volume" if setting == "volume" else "restore_mode"
+        changed = False
+        session = data.game_session
+        if (
+            session is not None
+            and session.driver == driver
+            and session.binding == binding
+            and getattr(session, flag)
+        ):
+            setattr(session, flag, False)
+            changed = True
+            if not (session.restore_volume or session.restore_mode):
+                session.restore_expires_at = None
+                session.restore_attempts = 0
+                session.restore_next_attempt_at = None
+                if not (session.volume or session.mode):
+                    data.game_session = None
+        for pending in data.pending_game_restores:
+            if (
+                pending.driver == driver
+                and pending.binding == binding
+                and getattr(pending, flag)
+            ):
+                setattr(pending, flag, False)
+                changed = True
+        if changed:
+            data.pending_game_restores = [
+                pending
+                for pending in data.pending_game_restores
+                if pending.restore_volume or pending.restore_mode
+            ]
+        return changed
+
     def _handoff_profile_settings(
         self, session: GameSession, profile: GameProfile | None, data: Settings
     ) -> None:
@@ -1278,21 +1314,15 @@ class ControlApplication:
             return False
         binding = self._receiver_binding(data)
         changed = False
-        for session in data.pending_game_restores:
-            if session.driver != driver.key or session.binding != binding:
-                continue
-            if profile.volume is not None and session.restore_volume:
-                session.restore_volume = False
-                changed = True
-            if profile.mode is not None and session.restore_mode:
-                session.restore_mode = False
-                changed = True
+        if profile.volume is not None:
+            changed |= self._cancel_pending_restore_for_setting(
+                data, "volume", driver.key, binding
+            )
+        if profile.mode is not None:
+            changed |= self._cancel_pending_restore_for_setting(
+                data, "mode", driver.key, binding
+            )
         if changed:
-            data.pending_game_restores = [
-                session
-                for session in data.pending_game_restores
-                if session.restore_volume or session.restore_mode
-            ]
             self._save(data)
         return changed
     @staticmethod
@@ -2620,7 +2650,7 @@ class ControlApplication:
                 )
             if not self._is_current(generation, driver):
                 raise self._stale_receiver_error()
-            if status.power is not True:
+            if POWER in driver.capabilities and status.power is not True:
                 self._log(
                     "info",
                     "Game restore is waiting for the receiver to leave standby",
@@ -2847,6 +2877,12 @@ class ControlApplication:
                     if seeded_global:
                         self._save(data)
                     return {"ok": False, "error": "Receiver doesn't report a listening mode"}
+            self._cancel_pending_restore_for_setting(
+                data,
+                what,
+                driver.key,
+                self._receiver_binding(data),
+            )
             profile = data.games.get(key)
             if profile is None:
                 profile = GameProfile(

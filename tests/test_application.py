@@ -1879,6 +1879,120 @@ class ApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved["game_session"]["appid"], 322)
         self.assertEqual(saved["pending_game_restores"], [])
 
+    async def test_remember_on_cancels_only_same_setting_queued_restore(self):
+        class ModeRestoreFailureDriver(MemoryDriver):
+            fail_global_mode_restore = False
+
+            async def set_volume(self, raw):
+                if type(self).fail_global_mode_restore and raw == 100:
+                    raise DriverError("volume restore unavailable")
+                return await super().set_volume(raw)
+
+            async def set_mode(self, code):
+                if type(self).fail_global_mode_restore and code == "00":
+                    raise DriverError("mode restore unavailable")
+                return await super().set_mode(code)
+
+        self.application.registry = [ModeRestoreFailureDriver]
+        self.application.wall_clock = self.clock
+        self.save_settings(
+            {
+                "version": 5,
+                "receiver": {
+                    "driver": "memory",
+                    "config": {"host": "receiver"},
+                    "id": "stable-id",
+                    "binding": {"driver": "memory", "id": "STABLE-ID"},
+                },
+                "cap": 150,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "327": {
+                        "name": "Previous game",
+                        "driver": "memory",
+                        "volume": 70,
+                        "mode": "11",
+                    },
+                },
+            }
+        )
+        MemoryDriver.state = Status(100, False, True, "00")
+        await self.application.dispatch(SetCurrentGame(0, ""))
+        await self.application.snapshot()
+        await self.application.dispatch(GameStarted(327, "Previous game"))
+        ModeRestoreFailureDriver.fail_global_mode_restore = True
+        await self.application.dispatch(GameStarted(328, "New game"))
+        self.assertEqual(len(self.store.load()["pending_game_restores"]), 1)
+        self.assertTrue(
+            self.store.load()["pending_game_restores"][0]["restore_volume"]
+        )
+        self.assertTrue(
+            self.store.load()["pending_game_restores"][0]["restore_mode"]
+        )
+
+        ModeRestoreFailureDriver.fail_global_mode_restore = False
+        await self.application.dispatch(RememberForGame("mode", True))
+        self.assertEqual(self.store.load()["games"]["328"]["mode"], "11")
+        pending = self.store.load()["pending_game_restores"]
+        self.assertTrue(pending[0]["restore_volume"])
+        self.assertFalse(pending[0]["restore_mode"])
+        self.clock.value += 2
+        await self.application.snapshot()
+
+        saved = self.store.load()
+        self.assertEqual(MemoryDriver.state.mode, "11")
+        self.assertEqual(MemoryDriver.state.volume, 100)
+        self.assertEqual(saved["games"]["328"]["mode"], "11")
+        self.assertEqual(saved["pending_game_restores"], [])
+
+    async def test_new_game_profile_cancels_older_queued_restore_for_same_setting(self):
+        class ModeRestoreFailureDriver(MemoryDriver):
+            fail_global_mode_restore = False
+
+            async def set_mode(self, code):
+                if type(self).fail_global_mode_restore and code == "00":
+                    raise DriverError("mode restore unavailable")
+                return await super().set_mode(code)
+
+        self.application.registry = [ModeRestoreFailureDriver]
+        self.application.wall_clock = self.clock
+        self.save_settings(
+            {
+                "version": 5,
+                "receiver": {
+                    "driver": "memory",
+                    "config": {"host": "receiver"},
+                    "id": "stable-id",
+                    "binding": {"driver": "memory", "id": "STABLE-ID"},
+                },
+                "cap": 150,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "329": {"name": "Old game", "driver": "memory", "mode": "11"},
+                    "330": {"name": "New game", "driver": "memory", "mode": "11"},
+                },
+            }
+        )
+        MemoryDriver.state = Status(100, False, True, "00")
+        await self.application.dispatch(SetCurrentGame(0, ""))
+        await self.application.snapshot()
+        await self.application.dispatch(GameStarted(329, "Old game"))
+        ModeRestoreFailureDriver.fail_global_mode_restore = True
+        await self.application.dispatch(GameStarted(328, "Unprofiled game"))
+        self.assertEqual(len(self.store.load()["pending_game_restores"]), 1)
+
+        ModeRestoreFailureDriver.fail_global_mode_restore = False
+        await self.application.dispatch(GameStopped(328))
+        await self.application.dispatch(GameStarted(330, "New game"))
+        self.clock.value += 2
+        await self.application.snapshot()
+
+        saved = self.store.load()
+        self.assertEqual(MemoryDriver.state.mode, "11")
+        self.assertEqual(saved["pending_game_restores"], [])
+
     async def test_receiver_switch_does_not_restore_another_receivers_global_profile(self):
         self.save_settings(
             {
@@ -2242,6 +2356,53 @@ class ApplicationTests(unittest.IsolatedAsyncioTestCase):
         await self.application.snapshot()
 
         self.assertEqual(MemoryDriver.state.volume, 100)
+        self.assertIsNone(self.store.load()["game_session"])
+
+    async def test_game_restore_runs_for_receiver_without_power_capability(self):
+        class NoPowerStatusDriver(MemoryDriver):
+            capabilities = frozenset({VOLUME, MODE})
+
+            async def status(self):
+                return Status(
+                    self.state.volume,
+                    self.state.muted,
+                    None,
+                    self.state.mode,
+                )
+
+        self.application.registry = [NoPowerStatusDriver]
+        self.save_settings(
+            {
+                "version": 5,
+                "receiver": {
+                    "driver": "memory",
+                    "config": {"host": "receiver"},
+                    "id": "stable-id",
+                    "binding": {"driver": "memory", "id": "STABLE-ID"},
+                },
+                "cap": 150,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "325": {
+                        "name": "Receiver without power reporting",
+                        "driver": "memory",
+                        "volume": 20,
+                    }
+                },
+            }
+        )
+        MemoryDriver.state = Status(35, False, None, "00")
+        await self.application.dispatch(SetCurrentGame(0, ""))
+        await self.application.snapshot()
+        await self.application.dispatch(
+            GameStarted(325, "Receiver without power reporting")
+        )
+        self.assertEqual(MemoryDriver.state.volume, 20)
+
+        await self.application.dispatch(GameStopped(325))
+
+        self.assertEqual(MemoryDriver.state.volume, 35)
         self.assertIsNone(self.store.load()["game_session"])
 
     async def test_unconfirmed_game_restore_stays_pending_and_keeps_global_value(self):
