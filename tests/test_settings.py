@@ -125,7 +125,19 @@ class SettingsRepositoryTests(unittest.TestCase):
                     },
                     volume=True,
                     restore_mode=True,
+                    restore_next_attempt_at=1_800_000_002.0,
                 ),
+                pending_game_restores=[
+                    GameSession(
+                        appid=122,
+                        driver="homeassistant",
+                        binding={"driver": "homeassistant", "id": "RECEIVER-ID"},
+                        restore_mode=True,
+                        restore_expires_at=1_800_000_000.0,
+                        restore_attempts=1,
+                        restore_next_attempt_at=1_800_000_002.0,
+                    )
+                ],
                 extra={"future_top_level": {"kept": True}},
             )
             repository.save(value)
@@ -154,6 +166,11 @@ class SettingsRepositoryTests(unittest.TestCase):
             self.assertEqual(loaded.game_session.appid, 123)
             self.assertTrue(loaded.game_session.volume)
             self.assertTrue(loaded.game_session.restore_mode)
+            self.assertEqual(
+                loaded.game_session.restore_next_attempt_at, 1_800_000_002.0
+            )
+            self.assertEqual(len(loaded.pending_game_restores), 1)
+            self.assertEqual(loaded.pending_game_restores[0].appid, 122)
             self.assertEqual(loaded.extra["future_top_level"], {"kept": True})
             self.assertEqual(
                 loaded.receiver.extra["future_receiver_option"], {"kept": True}
@@ -191,7 +208,19 @@ class SettingsRepositoryTests(unittest.TestCase):
                 restore_volume=True,
                 restore_expires_at=1_800_000_000.0,
                 restore_attempts=2,
-            )
+                restore_next_attempt_at=1_800_000_002.0,
+            ),
+            pending_game_restores=[
+                GameSession(
+                    appid=122,
+                    driver="homeassistant",
+                    binding={"driver": "homeassistant", "id": "RECEIVER-ID"},
+                    restore_mode=True,
+                    restore_expires_at=1_800_000_000.0,
+                    restore_attempts=1,
+                    restore_next_attempt_at=1_800_000_002.0,
+                )
+            ],
         )
 
         repository.save(settings)
@@ -199,6 +228,11 @@ class SettingsRepositoryTests(unittest.TestCase):
 
         self.assertEqual(loaded.restore_expires_at, 1_800_000_000.0)
         self.assertEqual(loaded.restore_attempts, 2)
+        self.assertEqual(loaded.restore_next_attempt_at, 1_800_000_002.0)
+        pending = repository.load().pending_game_restores[0]
+        self.assertEqual(pending.appid, 122)
+        self.assertEqual(pending.restore_attempts, 1)
+        self.assertEqual(pending.restore_next_attempt_at, 1_800_000_002.0)
 
     def test_malformed_nested_values_are_normalized(self):
         malformed = {

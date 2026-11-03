@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import inspect
 import json
@@ -39,6 +40,7 @@ _CAPABILITY_ORDER = (VOLUME, MUTE, POWER, MODE)
 _SCHEDULE_MAX_ATTEMPTS = 3
 _GAME_RESTORE_MAX_AGE = 10 * 60
 _GAME_RESTORE_MAX_ATTEMPTS = 3
+_GAME_RESTORE_RETRY_INTERVAL = 2
 
 
 @dataclass(frozen=True)
@@ -209,12 +211,11 @@ class ControlApplication:
         self._current_game: dict | None = None
         self._current_game_binding: dict | None = None
         self._game_state_synchronized = False
-        self._suppress_save_until: tuple[int, int, float] | None = None
         self._profile_transition_generation = 0
         self._profile_transition_active = False
-        self._profile_suppress_until = 0.0
         self._profile_transition_owner: asyncio.Task | None = None
         self._reapply_task: asyncio.Task | None = None
+        self._reapply_generation = 0
         self._schedule_task: asyncio.Task | None = None
         self._resume_task: asyncio.Task | None = None
         self._suspend_task: asyncio.Task | None = None
@@ -324,9 +325,21 @@ class ControlApplication:
                 self._last_status = (generation, driver, status)
                 self._revision += 1
                 revision = self._revision
+                observation = Status(
+                    partial.volume,
+                    partial.muted,
+                    partial.power,
+                    partial.mode,
+                )
+                profile_generation = self._profile_transition_generation
                 task = asyncio.create_task(
                     self._publish_push_snapshot(
-                        revision, generation, driver, start_token
+                        revision,
+                        generation,
+                        driver,
+                        start_token,
+                        observation,
+                        profile_generation,
                     )
                 )
                 self._push_tasks.add(task)
@@ -369,7 +382,13 @@ class ControlApplication:
                     await self._stop_watch_locked()
 
     async def _publish_push_snapshot(
-        self, revision: int, generation: int, driver: Driver, start_token: int
+        self,
+        revision: int,
+        generation: int,
+        driver: Driver,
+        start_token: int,
+        observation: Status,
+        profile_generation: int,
     ) -> None:
         if (
             start_token != self._watch_start_token
@@ -379,6 +398,13 @@ class ControlApplication:
         ):
             return
         try:
+            await self._remember(
+                observation.volume,
+                observation.mode,
+                generation=generation,
+                driver=driver,
+                profile_generation=profile_generation,
+            )
             snapshot = await self._snapshot(refresh=False)
             if (
                 start_token != self._watch_start_token
@@ -407,6 +433,7 @@ class ControlApplication:
                     await self._stop_watch_locked()
 
     def _cancel_reapply(self) -> None:
+        self._reapply_generation += 1
         task = self._reapply_task
         self._reapply_task = None
         if task is not None and not task.done():
@@ -1166,32 +1193,108 @@ class ControlApplication:
             and self._current_game["appid"] == int(appid)
         )
 
-    def _suppress_game_saves(self, generation: int, appid: int) -> None:
-        if self._is_current(generation):
-            self._profile_suppress_until = max(
-                self._profile_suppress_until, self.clock() + 6.0
-            )
-        if self._is_current_game(generation, appid):
-            self._suppress_save_until = (
-                generation,
-                int(appid),
-                self.clock() + 6.0,
-            )
-
-    def _drop_pending_game_restore(self, appid: int, reason: str) -> None:
+    def _drop_pending_game_restore(
+        self, appid: int, reason: str, pending_index: int | None = None
+    ) -> None:
         data = self._settings()
-        session = data.game_session
+        if pending_index is None:
+            session = data.game_session
+        elif 0 <= pending_index < len(data.pending_game_restores):
+            session = data.pending_game_restores[pending_index]
+        else:
+            return
         if session is None or session.appid != int(appid):
+            return
+        if pending_index is not None:
+            data.pending_game_restores.pop(pending_index)
+            self._save(data)
+            self._log(
+                "info", f"Dropped pending game restore for {appid}: {reason}"
+            )
             return
         session.restore_volume = False
         session.restore_mode = False
         session.restore_expires_at = None
         session.restore_attempts = 0
+        session.restore_next_attempt_at = None
         if not (session.volume or session.mode):
             data.game_session = None
         self._save(data)
         self._log("info", f"Dropped pending game restore for {appid}: {reason}")
 
+    @staticmethod
+    def _restore_session(
+        data: Settings, pending_index: int | None
+    ) -> GameSession | None:
+        if pending_index is None:
+            return data.game_session
+        if pending_index >= len(data.pending_game_restores):
+            return None
+        return data.pending_game_restores[pending_index]
+
+    def _queue_pending_game_restore(self, data: Settings, session: GameSession) -> None:
+        if not (session.restore_volume or session.restore_mode):
+            return
+        pending = copy.deepcopy(session)
+        pending.volume = False
+        pending.mode = False
+        data.pending_game_restores.append(pending)
+
+    @staticmethod
+    def _has_pending_restore(
+        data: Settings, setting: str, driver: str, binding: dict
+    ) -> bool:
+        flag = "restore_volume" if setting == "volume" else "restore_mode"
+        sessions = list(data.pending_game_restores)
+        if data.game_session is not None:
+            sessions.append(data.game_session)
+        return any(
+            session.driver == driver
+            and session.binding == binding
+            and getattr(session, flag)
+            for session in sessions
+        )
+
+    def _handoff_profile_settings(
+        self, session: GameSession, profile: GameProfile | None, data: Settings
+    ) -> None:
+        if (
+            profile is None
+            or profile.driver != session.driver
+            or session.binding != self._receiver_binding(data)
+        ):
+            return
+        if profile.volume is not None:
+            session.volume = False
+            session.restore_volume = False
+        if profile.mode is not None:
+            session.mode = False
+            session.restore_mode = False
+
+    def _discard_overridden_pending_restores(
+        self, data: Settings, profile: GameProfile, driver: Driver
+    ) -> bool:
+        if profile.driver != driver.key:
+            return False
+        binding = self._receiver_binding(data)
+        changed = False
+        for session in data.pending_game_restores:
+            if session.driver != driver.key or session.binding != binding:
+                continue
+            if profile.volume is not None and session.restore_volume:
+                session.restore_volume = False
+                changed = True
+            if profile.mode is not None and session.restore_mode:
+                session.restore_mode = False
+                changed = True
+        if changed:
+            data.pending_game_restores = [
+                session
+                for session in data.pending_game_restores
+                if session.restore_volume or session.restore_mode
+            ]
+            self._save(data)
+        return changed
     @staticmethod
     def _stale_receiver_error() -> DriverError:
         return DriverError("Receiver changed while the operation was in progress")
@@ -1687,12 +1790,13 @@ class ControlApplication:
         driver: Driver,
         generation: int,
         expected_driver: str | None = None,
-    ) -> Driver:
+        return_status: bool = False,
+    ) -> Driver | tuple[Driver, Status | None]:
         if not self._is_current(generation, driver):
             raise self._stale_receiver_error()
         if self._initialized_driver is driver:
-            return driver
-        await self._run(
+            return (driver, None) if return_status else driver
+        status = await self._run(
             "status",
             expected_driver=expected_driver,
             generation=generation,
@@ -1701,13 +1805,14 @@ class ControlApplication:
         active_driver = self._active_driver
         if active_driver is None or not self._is_current(generation, active_driver):
             raise self._stale_receiver_error()
-        return active_driver
+        return (active_driver, status) if return_status else active_driver
 
     async def _read_state(
         self, refresh: bool = True, allow_unknown: bool = False
     ) -> dict:
         generation = self._receiver_generation
         cached = self._last_status
+        status_is_fresh = False
         if (
             not refresh
             and cached is not None
@@ -1731,23 +1836,30 @@ class ControlApplication:
                 status = await self._run(
                     "status", generation=generation, driver=driver
                 )
+                status_is_fresh = True
             driver = self._active_driver
             if driver is None or not self._is_current(generation, driver):
                 raise self._stale_receiver_error()
             await self._apply_game_session_restore(
-                status=status, generation=generation, driver=driver
+                status=status if status_is_fresh else None,
+                generation=generation,
+                driver=driver,
+                observation_generation=(
+                    profile_generation if status_is_fresh else None
+                ),
             )
             driver = self._active_driver
             if driver is None or not self._is_current(generation, driver):
                 raise self._stale_receiver_error()
             data = self._settings()
-            await self._remember(
-                status.volume,
-                status.mode,
-                generation=generation,
-                driver=driver,
-                profile_generation=profile_generation,
-            )
+            if status_is_fresh:
+                await self._remember(
+                    status.volume,
+                    status.mode,
+                    generation=generation,
+                    driver=driver,
+                    profile_generation=profile_generation,
+                )
             data = self._settings()
             game = None
             if self._current_game:
@@ -1827,7 +1939,6 @@ class ControlApplication:
                 generation=generation,
                 driver=current_driver,
                 profile_generation=profile_generation,
-                suppress_window=False,
             )
             result = {"ok": True, "volume": confirmed}
             if confirmed != requested_volume:
@@ -1888,7 +1999,6 @@ class ControlApplication:
                 generation=generation,
                 driver=driver,
                 profile_generation=profile_generation,
-                suppress_window=False,
             )
             response = {
                 "ok": True,
@@ -1910,7 +2020,6 @@ class ControlApplication:
         generation: int | None = None,
         driver: Driver | None = None,
         profile_generation: int | None = None,
-        suppress_window: bool = True,
     ) -> None:
         if generation is None:
             generation = self._receiver_generation
@@ -1918,15 +2027,14 @@ class ControlApplication:
             driver = self._active_driver
         if profile_generation is None:
             profile_generation = self._profile_transition_generation
-        if not self._is_current(generation, driver):
+        if (
+            not self._is_current(generation, driver)
+            or not self._game_state_synchronized
+        ):
             return
         if (
             profile_generation != self._profile_transition_generation
             or self._profile_transition_active
-            or (
-                suppress_window
-                and self.clock() < self._profile_suppress_until
-            )
         ):
             return
         data = self._settings()
@@ -1947,15 +2055,6 @@ class ControlApplication:
                 else None
             )
         )
-        suppression = self._suppress_save_until
-        if (
-            appid is not None
-            and suppression is not None
-            and suppression[:2] == (generation, appid)
-            and self.clock() < suppression[2]
-        ):
-            return
-
         profile = data.games.get(str(appid)) if appid is not None else None
         if profile is not None and profile.driver != driver.key:
             profile = None
@@ -1965,11 +2064,11 @@ class ControlApplication:
 
         # A receiver gets its own global profile; an empty one is seeded from
         # the first successful status, without replacing values already saved.
-        volume_restore_pending = bool(
-            session is not None and session.appid == appid and session.restore_volume
+        volume_restore_pending = self._has_pending_restore(
+            data, "volume", driver.key, binding
         )
-        mode_restore_pending = bool(
-            session is not None and session.appid == appid and session.restore_mode
+        mode_restore_pending = self._has_pending_restore(
+            data, "mode", driver.key, binding
         )
         current_game_bound = bool(
             self._current_game is not None
@@ -2044,7 +2143,19 @@ class ControlApplication:
     async def _set_current_game(self, appid: int, name: str) -> None:
         appid = int(appid)
         current = {"appid": appid, "name": name} if appid > 0 else None
-        session = self._settings().game_session
+        data = self._settings()
+        if self._game_state_synchronized and (
+            self._current_game is None
+            and current is None
+            and data.game_session is None
+            or self._current_game is not None
+            and current is not None
+            and self._current_game["appid"] == current["appid"]
+            and self._current_game_binding == self._receiver_binding(data)
+        ):
+            self._current_game = current
+            return
+        session = data.game_session
         was_synchronized = self._game_state_synchronized
         previous_appid = (
             self._current_game["appid"]
@@ -2061,7 +2172,29 @@ class ControlApplication:
         if previous_appid is not None and (
             current is None or previous_appid != current["appid"]
         ):
+            if (
+                session is not None
+                and current is not None
+                and session.appid != current["appid"]
+            ):
+                self._handoff_profile_settings(
+                    session,
+                    data.games.get(str(current["appid"])),
+                    data,
+                )
+                self._save(data)
             await self._game_stopped(previous_appid)
+            data = self._settings()
+            session = data.game_session
+            if (
+                current is not None
+                and session is not None
+                and session.appid != current["appid"]
+                and (session.restore_volume or session.restore_mode)
+            ):
+                self._queue_pending_game_restore(data, session)
+                data.game_session = None
+                self._save(data)
         if current != self._current_game:
             self._cancel_reapply()
         self._current_game = current
@@ -2077,11 +2210,8 @@ class ControlApplication:
         generation: int,
         driver: Driver,
         status: Status | None = None,
-        appid: int | None = None,
         strict_mode: bool = False,
     ) -> tuple[bool, bool, Driver]:
-        if appid is not None:
-            self._suppress_game_saves(generation, appid)
         applied = False
         mode_applied = False
         if volume is not None and VOLUME in driver.capabilities:
@@ -2130,7 +2260,9 @@ class ControlApplication:
 
     async def _game_started(self, appid: int, name: str) -> dict:
         appid = int(appid)
-        previous_session = self._settings().game_session
+        transition_data = self._settings()
+        previous_session = transition_data.game_session
+        next_profile = transition_data.games.get(str(appid))
         previous_appid = (
             self._current_game["appid"]
             if self._current_game is not None
@@ -2146,6 +2278,11 @@ class ControlApplication:
                 or previous_session.restore_mode
             )
         ):
+            if previous_session is not None and previous_session.appid != appid:
+                self._handoff_profile_settings(
+                    previous_session, next_profile, transition_data
+                )
+                self._save(transition_data)
             await self._game_stopped(previous_appid)
         self._cancel_reapply()
         generation = self._receiver_generation
@@ -2158,6 +2295,14 @@ class ControlApplication:
             or data.game_session.restore_volume
             or data.game_session.restore_mode
         ):
+            if (
+                data.game_session.appid != appid
+                and (
+                    data.game_session.restore_volume
+                    or data.game_session.restore_mode
+                )
+            ):
+                self._queue_pending_game_restore(data, data.game_session)
             data.game_session = None
             self._save(data)
         profile = data.games.get(str(appid))
@@ -2179,24 +2324,13 @@ class ControlApplication:
                 return {"applied": False}
             if profile.driver != driver.key:
                 return {"applied": False}
-            status_is_fresh = self._initialized_driver is not driver
-            driver = await self._ensure_initialized(
-                driver, generation, expected_driver=driver.key
+            driver, status = await self._ensure_initialized(
+                driver,
+                generation,
+                expected_driver=driver.key,
+                return_status=True,
             )
-            cached = self._last_status
-            if (
-                status_is_fresh
-                and cached is not None
-                and cached[0] == generation
-                and cached[1] is driver
-            ):
-                status = Status(
-                    cached[2].volume,
-                    cached[2].muted,
-                    cached[2].power,
-                    cached[2].mode,
-                )
-            else:
+            if status is None:
                 status = await self._run(
                     "status", generation=generation, driver=driver
                 )
@@ -2209,6 +2343,7 @@ class ControlApplication:
             profile = data.games.get(str(appid))
             if not profile or profile.driver != driver.key:
                 return {"applied": False}
+            self._discard_overridden_pending_restores(data, profile, driver)
             volume = (
                 profile.volume
                 if profile.volume is not None and VOLUME in driver.capabilities
@@ -2244,8 +2379,14 @@ class ControlApplication:
                 data,
                 status,
                 driver,
-                skip_volume=volume is not None,
-                skip_mode=mode is not None,
+                skip_volume=volume is None
+                or self._has_pending_restore(
+                    data, "volume", driver.key, self._receiver_binding(data)
+                ),
+                skip_mode=mode is None
+                or self._has_pending_restore(
+                    data, "mode", driver.key, self._receiver_binding(data)
+                ),
             )
             self._save(data)
             applied, mode_applied, driver = await self._apply_profile_settings(
@@ -2254,7 +2395,6 @@ class ControlApplication:
                 generation,
                 driver,
                 status=status,
-                appid=appid,
             )
             data = self._settings()
             session = data.game_session
@@ -2283,12 +2423,11 @@ class ControlApplication:
                         mode,
                         generation,
                         driver,
-                        self._profile_transition_generation + 1,
+                        self._reapply_generation,
                     )
                 )
             return {"applied": applied}
         except Exception as exc:
-            self._suppress_game_saves(generation, appid)
             self._log("error", f"Applying game profile failed: {exc}")
             return {"applied": False, "error": str(exc)}
 
@@ -2298,7 +2437,7 @@ class ControlApplication:
         mode: str | None,
         generation: int | None = None,
         driver: Driver | None = None,
-        profile_generation: int | None = None,
+        reapply_generation: int | None = None,
     ) -> None:
         if not mode:
             return
@@ -2306,8 +2445,8 @@ class ControlApplication:
             generation = self._receiver_generation
         if driver is None:
             driver = self._active_driver
-        if profile_generation is None:
-            profile_generation = self._profile_transition_generation
+        if reapply_generation is None:
+            reapply_generation = self._reapply_generation
         if not self._is_current(generation, driver):
             return
         result = self.sleep(self.reapply_delay)
@@ -2315,7 +2454,7 @@ class ControlApplication:
             await result
         if (
             not self._is_current(generation, driver)
-            or profile_generation != self._profile_transition_generation
+            or reapply_generation != self._reapply_generation
             or not self._current_game
             or self._current_game["appid"] != appid
             or not self._game_profile_remembers_mode(appid, driver, mode)
@@ -2324,7 +2463,7 @@ class ControlApplication:
         async with self._profile_transition_lock:
             if (
                 not self._is_current(generation, driver)
-                or profile_generation != self._profile_transition_generation
+                or reapply_generation != self._reapply_generation
                 or not self._current_game
                 or self._current_game["appid"] != appid
                 or not self._game_profile_remembers_mode(appid, driver, mode)
@@ -2345,7 +2484,6 @@ class ControlApplication:
                 ):
                     return
                 if status.mode and status.mode != mode:
-                    self._suppress_game_saves(generation, appid)
                     await self._run(
                         "set_mode",
                         mode,
@@ -2375,23 +2513,45 @@ class ControlApplication:
         status: Status | None = None,
         generation: int | None = None,
         driver: Driver | None = None,
+        pending_index: int | None = None,
+        observation_generation: int | None = None,
     ) -> bool:
         if generation is None:
             generation = self._receiver_generation
         data = self._settings()
-        session = data.game_session
+        session = self._restore_session(data, pending_index)
+        if (
+            pending_index is None
+            and (session is None or not (session.restore_volume or session.restore_mode))
+        ):
+            pending_index = next(
+                (
+                    index
+                    for index, pending in enumerate(data.pending_game_restores)
+                    if pending.restore_volume or pending.restore_mode
+                ),
+                None,
+            )
+            session = self._restore_session(data, pending_index)
         if session is None or not (
             session.restore_volume or session.restore_mode
         ):
             return False
+        selected_session = session
         if self._profile_transition_owner is not asyncio.current_task():
             async with self._profile_transition_lock:
                 data = self._settings()
-                session = data.game_session
-                if session is None or not (
+                session = self._restore_session(data, pending_index)
+                if session != selected_session or not (
                     session.restore_volume or session.restore_mode
                 ):
                     return False
+                if (
+                    status is not None
+                    and observation_generation
+                    != self._profile_transition_generation
+                ):
+                    status = None
                 self._profile_transition_generation += 1
                 self._profile_transition_active = True
                 self._profile_transition_owner = asyncio.current_task()
@@ -2400,13 +2560,15 @@ class ControlApplication:
                         status=status,
                         generation=generation,
                         driver=driver,
+                        pending_index=pending_index,
+                        observation_generation=observation_generation,
                     )
                 finally:
                     self._profile_transition_generation += 1
                     self._profile_transition_active = False
                     self._profile_transition_owner = None
         data = self._settings()
-        session = data.game_session
+        session = self._restore_session(data, pending_index)
         if session is None or not (
             session.restore_volume or session.restore_mode
         ):
@@ -2415,27 +2577,36 @@ class ControlApplication:
             session.restore_expires_at is None
             or self.wall_clock() >= session.restore_expires_at
         ):
-            self._drop_pending_game_restore(session.appid, "restore expired")
+            self._drop_pending_game_restore(
+                session.appid, "restore expired", pending_index
+            )
             return False
         if session.restore_attempts >= _GAME_RESTORE_MAX_ATTEMPTS:
-            self._drop_pending_game_restore(session.appid, "attempt limit reached")
+            self._drop_pending_game_restore(
+                session.appid, "attempt limit reached", pending_index
+            )
+            return False
+        if (
+            session.restore_next_attempt_at is not None
+            and self.wall_clock() < session.restore_next_attempt_at
+        ):
             return False
         appid = session.appid
-        session.restore_attempts += 1
-        self._save(data)
-        original_session = session
         try:
             if driver is None:
                 driver = await self._get_driver(generation)
             if not self._is_current(generation, driver):
                 raise self._stale_receiver_error()
             data = self._settings()
-            session = data.game_session
-            if session != original_session:
+            session = self._restore_session(data, pending_index)
+            if session is None or session.appid != appid:
                 return False
             binding = self._receiver_binding(data)
             if session.binding != binding or session.driver != driver.key:
-                data.game_session = None
+                if pending_index is None:
+                    data.game_session = None
+                else:
+                    data.pending_game_restores.pop(pending_index)
                 self._save(data)
                 self._log(
                     "info",
@@ -2449,20 +2620,16 @@ class ControlApplication:
                 )
             if not self._is_current(generation, driver):
                 raise self._stale_receiver_error()
-            if status.power is False:
+            if status.power is not True:
                 self._log(
                     "info",
                     "Game restore is waiting for the receiver to leave standby",
                 )
-                if session.restore_attempts >= _GAME_RESTORE_MAX_ATTEMPTS:
-                    self._drop_pending_game_restore(
-                        session.appid, "attempt limit reached"
-                    )
                 return False
 
             data = self._settings()
-            session = data.game_session
-            if session != original_session:
+            session = self._restore_session(data, pending_index)
+            if session is None or session.appid != appid:
                 return False
             profile = self._global_profile(
                 data, session.driver, session.binding
@@ -2479,6 +2646,8 @@ class ControlApplication:
                 volume = None
             if MODE not in driver.capabilities:
                 mode = None
+            if volume is None and mode is None:
+                return False
             if (
                 restore_volume
                 and profile is not None
@@ -2498,18 +2667,23 @@ class ControlApplication:
                 if volume is not None
                 else None
             )
+            session.restore_attempts += 1
+            session.restore_next_attempt_at = (
+                self.wall_clock() + _GAME_RESTORE_RETRY_INTERVAL
+            )
+            self._save(data)
+            original_session = session
             _applied, _mode_applied, driver = await self._apply_profile_settings(
                 volume,
                 mode,
                 generation,
                 driver,
                 status=status,
-                appid=session.appid,
             )
             if not self._is_current(generation, driver):
                 raise self._stale_receiver_error()
             data = self._settings()
-            current_session = data.game_session
+            current_session = self._restore_session(data, pending_index)
             if current_session != original_session:
                 return False
             current_session.restore_volume = bool(
@@ -2526,21 +2700,22 @@ class ControlApplication:
                 >= _GAME_RESTORE_MAX_ATTEMPTS
             ):
                 self._drop_pending_game_restore(
-                    current_session.appid, "attempt limit reached"
+                    current_session.appid,
+                    "attempt limit reached",
+                    pending_index,
                 )
                 return False
-            if not (
-                current_session.volume
-                or current_session.mode
-                or current_session.restore_volume
-                or current_session.restore_mode
-            ):
-                data.game_session = None
             if not (
                 current_session.restore_volume or current_session.restore_mode
             ):
                 current_session.restore_expires_at = None
                 current_session.restore_attempts = 0
+                current_session.restore_next_attempt_at = None
+                if pending_index is None:
+                    if not (current_session.volume or current_session.mode):
+                        data.game_session = None
+                else:
+                    data.pending_game_restores.pop(pending_index)
             self._save(data)
             return not (
                 current_session.restore_volume or current_session.restore_mode
@@ -2548,7 +2723,9 @@ class ControlApplication:
         except Exception as exc:
             self._log("error", f"Applying global game restore failed: {exc}")
             current_data = self._settings()
-            current_session = current_data.game_session
+            current_session = self._restore_session(
+                current_data, pending_index
+            )
             if (
                 current_session is not None
                 and current_session.appid == appid
@@ -2556,7 +2733,7 @@ class ControlApplication:
                 >= _GAME_RESTORE_MAX_ATTEMPTS
             ):
                 self._drop_pending_game_restore(
-                    appid, "attempt limit reached"
+                    appid, "attempt limit reached", pending_index
                 )
             return False
 
@@ -2565,14 +2742,12 @@ class ControlApplication:
         self._game_state_synchronized = True
         if self._current_game and self._current_game["appid"] == appid:
             self._cancel_reapply()
-            self._suppress_game_saves(self._receiver_generation, appid)
             self._current_game = None
             self._current_game_binding = None
         data = self._settings()
         session = data.game_session
         if session is None or session.appid != appid:
             return
-        self._suppress_game_saves(self._receiver_generation, appid)
         was_restore_pending = bool(
             session.restore_volume or session.restore_mode
         )
@@ -2589,6 +2764,7 @@ class ControlApplication:
                 self.wall_clock() + _GAME_RESTORE_MAX_AGE
             )
             session.restore_attempts = 0
+            session.restore_next_attempt_at = None
         self._save(data)
         await self._apply_game_session_restore()
 
@@ -2641,6 +2817,9 @@ class ControlApplication:
                     or session is not None
                     and session.appid == int(key)
                     and session.restore_volume
+                    or self._has_pending_restore(
+                        data, "volume", driver.key, self._receiver_binding(data)
+                    )
                 ),
                 skip_mode=bool(
                     existing_profile
@@ -2649,6 +2828,9 @@ class ControlApplication:
                     or session is not None
                     and session.appid == int(key)
                     and session.restore_mode
+                    or self._has_pending_restore(
+                        data, "mode", driver.key, self._receiver_binding(data)
+                    )
                 ),
             )
             if what == "volume":
@@ -2755,10 +2937,10 @@ class ControlApplication:
                 self.wall_clock() + _GAME_RESTORE_MAX_AGE
             )
             session.restore_attempts = 0
+            session.restore_next_attempt_at = None
         self._save(data)
         session = data.game_session
         if session is not None and (session.restore_volume or session.restore_mode):
-            self._suppress_game_saves(generation, int(key))
             await self._apply_game_session_restore()
         return {"ok": True}
 
@@ -2876,7 +3058,6 @@ class ControlApplication:
                             generation=generation,
                             driver=current_driver,
                             profile_generation=profile_generation,
-                            suppress_window=False,
                         )
             elif not on and active:
                 previous = data.late.prev_volume
@@ -2908,7 +3089,6 @@ class ControlApplication:
                             generation=generation,
                             driver=current_driver,
                             profile_generation=profile_generation,
-                            suppress_window=False,
                         )
             elif not on and not active and data.late.auto:
                 data.late.auto = False
@@ -3101,6 +3281,19 @@ class ControlApplication:
         }
 
     async def dispatch(self, intent: ControlIntent) -> dict[str, Any]:
+        if isinstance(intent, SetCurrentGame) and self._game_state_synchronized:
+            target_appid = int(intent.appid)
+            data = self._settings()
+            if (
+                target_appid == 0
+                and self._current_game is None
+                and data.game_session is None
+                or target_appid > 0
+                and self._current_game is not None
+                and self._current_game["appid"] == target_appid
+                and self._current_game_binding == self._receiver_binding(data)
+            ):
+                return await self._dispatch(intent)
         if isinstance(
             intent,
             (GameStarted, GameStopped, SetCurrentGame, RememberForGame, ForgetGame),

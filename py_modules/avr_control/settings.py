@@ -27,6 +27,7 @@ _V2_KEYS = {
     "games",
     "global_profiles",
     "game_session",
+    "pending_game_restores",
 }
 
 
@@ -170,6 +171,7 @@ class GameSession:
     restore_mode: bool = False
     restore_expires_at: float | None = None
     restore_attempts: int = 0
+    restore_next_attempt_at: float | None = None
 
 
 @dataclass
@@ -183,6 +185,7 @@ class Settings:
     games: dict[str, GameProfile] = field(default_factory=dict)
     global_profiles: dict[str, GlobalProfile] = field(default_factory=dict)
     game_session: GameSession | None = None
+    pending_game_restores: list[GameSession] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict, repr=False)
     secret_keys: frozenset[str] = field(default_factory=frozenset, repr=False)
 
@@ -260,19 +263,29 @@ class Settings:
                 saved["mode"] = profile.mode
             global_profiles[str(key)] = saved
 
-        game_session = None
-        if self.game_session is not None:
-            game_session = {
-                "appid": self.game_session.appid,
-                "driver": self.game_session.driver,
-                "binding": copy.deepcopy(self.game_session.binding),
-                "volume": bool(self.game_session.volume),
-                "mode": bool(self.game_session.mode),
-                "restore_volume": bool(self.game_session.restore_volume),
-                "restore_mode": bool(self.game_session.restore_mode),
-                "restore_expires_at": self.game_session.restore_expires_at,
-                "restore_attempts": max(0, int(self.game_session.restore_attempts)),
+        def serialize_game_session(session: GameSession) -> dict[str, Any]:
+            return {
+                "appid": session.appid,
+                "driver": session.driver,
+                "binding": copy.deepcopy(session.binding),
+                "volume": bool(session.volume),
+                "mode": bool(session.mode),
+                "restore_volume": bool(session.restore_volume),
+                "restore_mode": bool(session.restore_mode),
+                "restore_expires_at": session.restore_expires_at,
+                "restore_attempts": max(0, int(session.restore_attempts)),
+                "restore_next_attempt_at": session.restore_next_attempt_at,
             }
+
+        game_session = (
+            serialize_game_session(self.game_session)
+            if self.game_session is not None
+            else None
+        )
+        pending_game_restores = [
+            serialize_game_session(session)
+            for session in self.pending_game_restores
+        ]
 
         data = copy.deepcopy(self.extra)
         data.update(
@@ -287,6 +300,7 @@ class Settings:
                 "games": games,
                 "global_profiles": global_profiles,
                 "game_session": game_session,
+                "pending_game_restores": pending_game_restores,
             }
         )
         if self.cap.binding is not None:
@@ -371,6 +385,7 @@ def _migrate_v4_to_v5(data: dict[str, Any]) -> dict[str, Any]:
     migrated["version"] = 5
     migrated.setdefault("global_profiles", {})
     migrated.setdefault("game_session", None)
+    migrated.setdefault("pending_game_restores", [])
     return migrated
 
 
@@ -540,36 +555,52 @@ def _settings_from_data(data: dict[str, Any], secret_keys: frozenset[str]) -> Se
                     },
                 )
 
-    session_data = data.get("game_session")
-    game_session = None
-    if isinstance(session_data, dict):
+    def parse_game_session(session_data: Any) -> GameSession | None:
+        if not isinstance(session_data, dict):
+            return None
         appid = _as_int(session_data.get("appid"))
         driver = _as_string(session_data.get("driver"))
         binding = _as_dict(session_data.get("binding"))
-        if appid is not None and driver and binding:
-            game_session = GameSession(
-                appid=appid,
-                driver=driver,
-                binding=binding,
-                volume=session_data.get("volume")
-                if isinstance(session_data.get("volume"), bool)
-                else False,
-                mode=session_data.get("mode")
-                if isinstance(session_data.get("mode"), bool)
-                else False,
-                restore_volume=session_data.get("restore_volume")
-                if isinstance(session_data.get("restore_volume"), bool)
-                else False,
-                restore_mode=session_data.get("restore_mode")
-                if isinstance(session_data.get("restore_mode"), bool)
-                else False,
-                restore_expires_at=_as_float(
-                    session_data.get("restore_expires_at")
-                ),
-                restore_attempts=max(
-                    0, _as_int(session_data.get("restore_attempts")) or 0
-                ),
-            )
+        if appid is None or not driver or not binding:
+            return None
+        return GameSession(
+            appid=appid,
+            driver=driver,
+            binding=binding,
+            volume=session_data.get("volume")
+            if isinstance(session_data.get("volume"), bool)
+            else False,
+            mode=session_data.get("mode")
+            if isinstance(session_data.get("mode"), bool)
+            else False,
+            restore_volume=session_data.get("restore_volume")
+            if isinstance(session_data.get("restore_volume"), bool)
+            else False,
+            restore_mode=session_data.get("restore_mode")
+            if isinstance(session_data.get("restore_mode"), bool)
+            else False,
+            restore_expires_at=_as_float(
+                session_data.get("restore_expires_at")
+            ),
+            restore_attempts=max(
+                0, _as_int(session_data.get("restore_attempts")) or 0
+            ),
+            restore_next_attempt_at=_as_float(
+                session_data.get("restore_next_attempt_at")
+            ),
+        )
+
+    game_session = parse_game_session(data.get("game_session"))
+    raw_pending_restores = data.get("pending_game_restores")
+    pending_game_restores = (
+        [
+            session
+            for raw_session in raw_pending_restores
+            if (session := parse_game_session(raw_session)) is not None
+        ]
+        if isinstance(raw_pending_restores, list)
+        else []
+    )
 
     known = _V2_KEYS | {"receiver", "schedule", "sleep_wake"}
     return Settings(
@@ -585,6 +616,7 @@ def _settings_from_data(data: dict[str, Any], secret_keys: frozenset[str]) -> Se
         games=games,
         global_profiles=global_profiles,
         game_session=game_session,
+        pending_game_restores=pending_game_restores,
         extra={
             key: copy.deepcopy(value)
             for key, value in data.items()
