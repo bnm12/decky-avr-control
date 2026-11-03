@@ -28,8 +28,16 @@ fi
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repo"
 if [ "$build" = 1 ]; then
-  corepack pnpm install --frozen-lockfile
-  corepack pnpm build
+  if corepack pnpm --version >/dev/null 2>&1; then
+    corepack pnpm install --frozen-lockfile
+    corepack pnpm build
+  elif command -v cmd.exe >/dev/null 2>&1; then
+    # WSL without its own Node: build with Windows' Node in the same folder.
+    cmd.exe /c "corepack pnpm install --frozen-lockfile && corepack pnpm build"
+  else
+    echo "Node/corepack not found: install Node, or build elsewhere and pass --no-build" >&2
+    exit 1
+  fi
 fi
 [ -f dist/index.js ] || { echo "dist/index.js missing: run without --no-build" >&2; exit 1; }
 
