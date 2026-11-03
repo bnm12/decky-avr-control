@@ -12,6 +12,8 @@ from avr_control.settings import (
     CapSettings,
     FileSettingsStore,
     GameProfile,
+    GameSession,
+    GlobalProfile,
     LateNightSettings,
     MemorySettingsStore,
     ReceiverSettings,
@@ -103,6 +105,39 @@ class SettingsRepositoryTests(unittest.TestCase):
                         extra={"future_profile_option": "kept"},
                     )
                 },
+                global_profiles={
+                    "receiver-key": GlobalProfile(
+                        driver="homeassistant",
+                        binding={
+                            "driver": "homeassistant",
+                            "id": "RECEIVER-ID",
+                        },
+                        volume=53,
+                        mode="direct",
+                    )
+                },
+                game_session=GameSession(
+                    appid=123,
+                    driver="homeassistant",
+                    binding={
+                        "driver": "homeassistant",
+                        "id": "RECEIVER-ID",
+                    },
+                    volume=True,
+                    restore_mode=True,
+                    restore_next_attempt_at=1_800_000_002.0,
+                ),
+                pending_game_restores=[
+                    GameSession(
+                        appid=122,
+                        driver="homeassistant",
+                        binding={"driver": "homeassistant", "id": "RECEIVER-ID"},
+                        restore_mode=True,
+                        restore_expires_at=1_800_000_000.0,
+                        restore_attempts=1,
+                        restore_next_attempt_at=1_800_000_002.0,
+                    )
+                ],
                 extra={"future_top_level": {"kept": True}},
             )
             repository.save(value)
@@ -122,6 +157,20 @@ class SettingsRepositoryTests(unittest.TestCase):
             self.assertEqual(loaded.late.binding, value.late.binding)
             self.assertEqual(loaded.games["123"].volume, 61)
             self.assertEqual(loaded.games["123"].mode, "stereo")
+            self.assertEqual(
+                loaded.global_profiles["receiver-key"].volume, 53
+            )
+            self.assertEqual(
+                loaded.global_profiles["receiver-key"].mode, "direct"
+            )
+            self.assertEqual(loaded.game_session.appid, 123)
+            self.assertTrue(loaded.game_session.volume)
+            self.assertTrue(loaded.game_session.restore_mode)
+            self.assertEqual(
+                loaded.game_session.restore_next_attempt_at, 1_800_000_002.0
+            )
+            self.assertEqual(len(loaded.pending_game_restores), 1)
+            self.assertEqual(loaded.pending_game_restores[0].appid, 122)
             self.assertEqual(loaded.extra["future_top_level"], {"kept": True})
             self.assertEqual(
                 loaded.receiver.extra["future_receiver_option"], {"kept": True}
@@ -148,6 +197,42 @@ class SettingsRepositoryTests(unittest.TestCase):
             self.assertNotIn("do-not-print", str(loaded.receiver))
 
         self._exercise_both(verify)
+
+    def test_game_restore_expiry_and_attempts_round_trip(self):
+        repository = SettingsRepository(MemorySettingsStore())
+        settings = Settings(
+            game_session=GameSession(
+                appid=123,
+                driver="homeassistant",
+                binding={"driver": "homeassistant", "id": "RECEIVER-ID"},
+                restore_volume=True,
+                restore_expires_at=1_800_000_000.0,
+                restore_attempts=2,
+                restore_next_attempt_at=1_800_000_002.0,
+            ),
+            pending_game_restores=[
+                GameSession(
+                    appid=122,
+                    driver="homeassistant",
+                    binding={"driver": "homeassistant", "id": "RECEIVER-ID"},
+                    restore_mode=True,
+                    restore_expires_at=1_800_000_000.0,
+                    restore_attempts=1,
+                    restore_next_attempt_at=1_800_000_002.0,
+                )
+            ],
+        )
+
+        repository.save(settings)
+        loaded = repository.load().game_session
+
+        self.assertEqual(loaded.restore_expires_at, 1_800_000_000.0)
+        self.assertEqual(loaded.restore_attempts, 2)
+        self.assertEqual(loaded.restore_next_attempt_at, 1_800_000_002.0)
+        pending = repository.load().pending_game_restores[0]
+        self.assertEqual(pending.appid, 122)
+        self.assertEqual(pending.restore_attempts, 1)
+        self.assertEqual(pending.restore_next_attempt_at, 1_800_000_002.0)
 
     def test_malformed_nested_values_are_normalized(self):
         malformed = {
@@ -266,6 +351,23 @@ class SettingsRepositoryTests(unittest.TestCase):
         self.assertEqual(settings.schedule.mode, "11")
         self.assertTrue(settings.sleep_wake.wake_on_resume)
         self.assertFalse(settings.sleep_wake.off_on_suspend)
+
+    def test_v4_migration_adds_global_profiles_and_game_session(self):
+        data = {
+            "version": 4,
+            "receiver": {"driver": "memory", "config": {"host": "receiver"}},
+            "games": {"10": {"name": "Game", "driver": "memory", "volume": 80}},
+        }
+
+        migrated = migrate(data)
+        settings = SettingsRepository(MemorySettingsStore(data)).load()
+
+        self.assertEqual(migrated["version"], CURRENT_VERSION)
+        self.assertEqual(migrated["global_profiles"], {})
+        self.assertIsNone(migrated["game_session"])
+        self.assertEqual(settings.global_profiles, {})
+        self.assertIsNone(settings.game_session)
+        self.assertEqual(settings.games["10"].volume, 80)
 
     def test_failed_migration_save_keeps_normalized_settings_in_memory(self):
         data = {

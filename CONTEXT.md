@@ -66,7 +66,10 @@ _Avoid_: surround mode, sound program (Yamaha's term), LMD (eISCP's command)
 ### Games
 
 **Game profile**:
-What a game remembers (its volume, its listening mode, or both), restored when it launches.
+The volume and/or listening mode remembered for one game and applied when it launches.
+
+**Global profile**:
+The profile active for every setting no running game remembers. It follows the receiver, so each receiver keeps its own everyday values; a game's remembered settings leave the corresponding global values unchanged until the game exits.
 
 **Opt-in**:
 A per-game, per-setting switch the user turns on so a game remembers that setting. Games without an opt-in are never touched.

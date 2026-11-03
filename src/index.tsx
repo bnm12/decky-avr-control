@@ -1,5 +1,19 @@
 import { definePlugin } from "@decky/api";
-import { FaVolumeUp } from "react-icons/fa";
+import {
+  ButtonItem,
+  DialogButton,
+  Focusable,
+  PanelSection,
+  PanelSectionRow,
+} from "@decky/ui";
+import {
+  FaClock,
+  FaCog,
+  FaGamepad,
+  FaSlidersH,
+  FaVolumeUp,
+} from "react-icons/fa";
+import { useState, type ReactNode } from "react";
 import { dispatchIntent } from "./api";
 import { GameSection } from "./components/GameSection";
 import { LateNightSection } from "./components/LateNightSection";
@@ -9,7 +23,13 @@ import { ReceiverSection } from "./components/ReceiverSection";
 import { ScheduleSection } from "./components/ScheduleSection";
 import { SleepWakeSection } from "./components/SleepWakeSection";
 import { VolumeSection } from "./components/VolumeSection";
+import { VolumeLimitsSection } from "./components/VolumeLimitsSection";
 import { useAvr } from "./hooks/useAvr";
+
+type TabId = "now" | "game" | "auto" | "setup";
+
+const receiverReportUrl =
+  "https://github.com/bnm12/decky-avr-control/issues/new?template=receiver-report.yml";
 
 const gameName = (appid: number): string => {
   try {
@@ -35,17 +55,212 @@ const syncRunningGame = async () => {
 
 function Content() {
   const avr = useAvr();
+  const [activeTab, setActiveTab] = useState<TabId>("now");
+  const snapshot = avr.snapshot;
+  const configured = snapshot?.connection.configured ?? false;
+  const summaryParts = snapshot && configured
+    ? [
+        snapshot.schedule.enabled
+          ? `Late night ${snapshot.schedule.start}–${snapshot.schedule.end}`
+          : snapshot.caps?.late_night
+            ? "Late night on"
+            : null,
+        snapshot.sleep_wake.wake_on_resume ? "Wakes with Steam" : null,
+        snapshot.sleep_wake.off_on_suspend ? "Powers off on sleep" : null,
+      ].filter((part): part is string => part !== null)
+    : [];
+  const summary = summaryParts.join(" · ");
+
+  const tabs: { id: TabId; label: string; icon: ReactNode }[] = [
+    { id: "now", label: "Now", icon: <FaSlidersH aria-hidden="true" /> },
+    { id: "game", label: "Game", icon: <FaGamepad aria-hidden="true" /> },
+    { id: "auto", label: "Auto", icon: <FaClock aria-hidden="true" /> },
+    { id: "setup", label: "Setup", icon: <FaCog aria-hidden="true" /> },
+  ];
+  const notices = (avr.error || avr.note) && (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      {avr.error && (
+        <div role="alert" style={{ color: "#ff6b6b" }}>
+          {avr.error}
+        </div>
+      )}
+      {avr.note && <div aria-live="polite">{avr.note}</div>}
+    </div>
+  );
+  const tabStrip = snapshot && configured && (
+    <div style={{ marginTop: 7 }}>
+      <Focusable
+        flow-children="horizontal"
+        style={{
+          display: "flex",
+          gap: 3,
+          minWidth: 0,
+          width: "100%",
+        }}
+      >
+        {tabs.map((tab) => {
+          const selected = activeTab === tab.id;
+          return (
+            <DialogButton
+              key={tab.id}
+              className={selected ? "avr-tab avr-tab-active" : "avr-tab"}
+              focusable
+              onClick={() => setActiveTab(tab.id)}
+              style={{
+                alignItems: "center",
+                background: selected ? "#304b62" : "transparent",
+                border: `1px solid ${selected ? "#6586a0" : "transparent"}`,
+                boxSizing: "border-box",
+                color: selected ? "#fff" : "#aab7c2",
+                display: "flex",
+                flex: 1,
+                flexDirection: "column",
+                fontSize: 10,
+                gap: 2,
+                justifyContent: "center",
+                minWidth: 0,
+                padding: "5px 2px",
+              }}
+            >
+              <span style={{ fontSize: 15, lineHeight: 1 }}>{tab.icon}</span>
+              <span>{tab.label}</span>
+            </DialogButton>
+          );
+        })}
+      </Focusable>
+    </div>
+  );
+
   return (
     <>
-      <VolumeSection avr={avr} />
-      <ModeSection avr={avr} />
-      <LateNightSection avr={avr} />
-      <ScheduleSection avr={avr} />
-      <SleepWakeSection avr={avr} />
-      <ReceiverSection avr={avr} />
-      <GameSection avr={avr} />
-      <ProfilesSection avr={avr} />
+      <style>{`
+        .avr-volume-slider,
+        .avr-volume-slider * {
+          min-width: 0 !important;
+        }
+        .avr-volume-slider .SliderControlPanelGroup > .Focusable {
+          padding: 6px 10px !important;
+          box-sizing: border-box;
+          border-radius: 2px;
+        }
+        .avr-volume-slider .SliderTrack::before {
+          left: 0 !important;
+          right: auto !important;
+          width: calc(var(--normalized-slider-value) * 100%) !important;
+        }
+        .avr-volume-slider {
+          margin: 0 !important;
+          padding: 0 !important;
+        }
+        .avr-volume-slider.avr-game-override .SliderTrack {
+          --left-track-color: #90ba3c;
+        }
+        .avr-volume-slider.avr-game-override .SliderTrack::before {
+          background: #90ba3c !important;
+        }
+        .avr-profile-row {
+          border-radius: 4px;
+          padding: 0 0 0 8px;
+          margin: 0 -8px 2px;
+          transition: background 120ms;
+        }
+        .avr-profile-row:has(.gpfocus) {
+          background: rgba(255, 255, 255, 0.12);
+          box-shadow: inset 3px 0 0 #d94126;
+        }
+        .avr-profile-row .avr-icon-button.gpfocus {
+          background: #d94126 !important;
+          border-color: #d94126 !important;
+          color: #fff !important;
+          filter: none;
+        }
+        .avr-mode-dropdown,
+        .avr-mode-dropdown * {
+          min-width: 0 !important;
+        }
+        .avr-mode-dropdown .Focusable {
+          box-sizing: border-box;
+          height: 36px;
+          min-height: 36px;
+        }
+        .avr-tab.gpfocus {
+          background: rgba(255, 255, 255, 0.18) !important;
+          outline: 2px solid #fff;
+          outline-offset: 1px;
+        }
+        .avr-tab.avr-tab-active.gpfocus {
+          background: linear-gradient(rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.16)), #304b62 !important;
+        }
+        .avr-icon-button.gpfocus {
+          outline: 2px solid #fff;
+          outline-offset: 1px;
+          filter: brightness(1.2);
+        }
+      `}</style>
+      <VolumeSection avr={avr} summary={summary} loading={!snapshot}>
+        {notices}
+        {tabStrip}
+      </VolumeSection>
+      {snapshot && !configured && <ReceiverSection avr={avr} />}
+      {snapshot && configured && (
+        <>
+          {activeTab === "now" && (
+            <>
+              <ModeSection avr={avr} />
+              <LateNightSection avr={avr} />
+            </>
+          )}
+          {activeTab === "game" && (
+            <>
+              <GameSection avr={avr} />
+              <ProfilesSection avr={avr} />
+            </>
+          )}
+          {activeTab === "auto" && (
+            <>
+              <ScheduleSection avr={avr} />
+              <SleepWakeSection avr={avr} />
+            </>
+          )}
+          {activeTab === "setup" && (
+            <>
+              <ReceiverSection avr={avr} />
+              <VolumeLimitsSection avr={avr} />
+              <AboutSection />
+            </>
+          )}
+        </>
+      )}
     </>
+  );
+}
+
+function AboutSection() {
+  return (
+    <PanelSection title="About AVR Control">
+      <PanelSectionRow>
+        <div>
+          eISCP is hardware-verified on the Pioneer VSX-935. Experimental
+          drivers: Yamaha YXC and YNC, Sony ScalarWebAPI, Denon/Marantz, HEOS,
+          legacy Pioneer telnet, UPnP/Sonos, and Home Assistant. These are
+          simulator-tested only.
+        </div>
+      </PanelSectionRow>
+      <PanelSectionRow>
+        <div>
+          To help improve receiver support, send a receiver report with your
+          model and driver details.
+        </div>
+      </PanelSectionRow>
+      <PanelSectionRow>
+        <ButtonItem
+          layout="below"
+          onClick={() => window.open(receiverReportUrl, "_blank")}
+        >
+          Send a receiver report
+        </ButtonItem>
+      </PanelSectionRow>
+    </PanelSection>
   );
 }
 

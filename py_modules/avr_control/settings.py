@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import os
 import tempfile
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-CURRENT_VERSION = 4
+CURRENT_VERSION = 5
 CURRENT_SCHEMA_VERSION = CURRENT_VERSION
 _SECRET_NAMES = frozenset(
     {"token", "password", "secret", "api_key", "access_token", "authorization"}
@@ -24,6 +25,9 @@ _V2_KEYS = {
     "late",
     "late_receiver",
     "games",
+    "global_profiles",
+    "game_session",
+    "pending_game_restores",
 }
 
 
@@ -54,6 +58,16 @@ def _as_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError, OverflowError):
         return None
+
+
+def _as_float(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
@@ -138,6 +152,29 @@ class GameProfile:
 
 
 @dataclass
+class GlobalProfile:
+    driver: str
+    binding: dict[str, Any]
+    volume: int | None = None
+    mode: str | None = None
+    extra: dict[str, Any] = field(default_factory=dict, repr=False)
+
+
+@dataclass
+class GameSession:
+    appid: int
+    driver: str
+    binding: dict[str, Any]
+    volume: bool = False
+    mode: bool = False
+    restore_volume: bool = False
+    restore_mode: bool = False
+    restore_expires_at: float | None = None
+    restore_attempts: int = 0
+    restore_next_attempt_at: float | None = None
+
+
+@dataclass
 class Settings:
     version: int = CURRENT_VERSION
     receiver: ReceiverSettings = field(default_factory=ReceiverSettings)
@@ -146,6 +183,9 @@ class Settings:
     schedule: ScheduleSettings = field(default_factory=ScheduleSettings)
     sleep_wake: SleepWakeSettings = field(default_factory=SleepWakeSettings)
     games: dict[str, GameProfile] = field(default_factory=dict)
+    global_profiles: dict[str, GlobalProfile] = field(default_factory=dict)
+    game_session: GameSession | None = None
+    pending_game_restores: list[GameSession] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict, repr=False)
     secret_keys: frozenset[str] = field(default_factory=frozenset, repr=False)
 
@@ -208,6 +248,45 @@ class Settings:
                 saved["mode"] = profile.mode
             games[str(key)] = saved
 
+        global_profiles: dict[str, Any] = {}
+        for key, profile in self.global_profiles.items():
+            saved = copy.deepcopy(profile.extra)
+            saved.update(
+                {
+                    "driver": profile.driver,
+                    "binding": copy.deepcopy(profile.binding),
+                }
+            )
+            if profile.volume is not None:
+                saved["volume"] = profile.volume
+            if profile.mode is not None:
+                saved["mode"] = profile.mode
+            global_profiles[str(key)] = saved
+
+        def serialize_game_session(session: GameSession) -> dict[str, Any]:
+            return {
+                "appid": session.appid,
+                "driver": session.driver,
+                "binding": copy.deepcopy(session.binding),
+                "volume": bool(session.volume),
+                "mode": bool(session.mode),
+                "restore_volume": bool(session.restore_volume),
+                "restore_mode": bool(session.restore_mode),
+                "restore_expires_at": session.restore_expires_at,
+                "restore_attempts": max(0, int(session.restore_attempts)),
+                "restore_next_attempt_at": session.restore_next_attempt_at,
+            }
+
+        game_session = (
+            serialize_game_session(self.game_session)
+            if self.game_session is not None
+            else None
+        )
+        pending_game_restores = [
+            serialize_game_session(session)
+            for session in self.pending_game_restores
+        ]
+
         data = copy.deepcopy(self.extra)
         data.update(
             {
@@ -219,6 +298,9 @@ class Settings:
                 "schedule": schedule,
                 "sleep_wake": sleep_wake,
                 "games": games,
+                "global_profiles": global_profiles,
+                "game_session": game_session,
+                "pending_game_restores": pending_game_restores,
             }
         )
         if self.cap.binding is not None:
@@ -266,6 +348,8 @@ class Settings:
             "Settings("
             f"version={CURRENT_VERSION!r}, receiver={self.receiver!r}, "
             f"cap={cap}, late={late}, games={safe_profiles!r}, "
+            f"global_profiles={self.global_profiles!r}, "
+            f"game_session={self.game_session!r}, "
             f"extra={safe_extra!r})"
         )
 
@@ -296,6 +380,15 @@ def _migrate_v3_to_v4(data: dict[str, Any]) -> dict[str, Any]:
     return migrated
 
 
+def _migrate_v4_to_v5(data: dict[str, Any]) -> dict[str, Any]:
+    migrated = copy.deepcopy(data)
+    migrated["version"] = 5
+    migrated.setdefault("global_profiles", {})
+    migrated.setdefault("game_session", None)
+    migrated.setdefault("pending_game_restores", [])
+    return migrated
+
+
 def migrate(data: Any) -> dict[str, Any]:
     """Apply ordered, idempotent migrations to the current settings schema."""
     if not isinstance(data, dict):
@@ -303,14 +396,17 @@ def migrate(data: Any) -> dict[str, Any]:
     version = data.get("version")
     if not isinstance(version, int) or isinstance(version, bool):
         return {}
-    if version not in (2, 3, CURRENT_VERSION):
+    if version not in (2, 3, 4, CURRENT_VERSION):
         return {}
     result = copy.deepcopy(data)
     if version < 3:
         result = _migrate_v2_to_v3(result)
         version = 3
-    if version < CURRENT_VERSION:
+    if version < 4:
         result = _migrate_v3_to_v4(result)
+        version = 4
+    if version < CURRENT_VERSION:
+        result = _migrate_v4_to_v5(result)
     return result
 
 
@@ -436,6 +532,76 @@ def _settings_from_data(data: dict[str, Any], secret_keys: frozenset[str]) -> Se
                 },
             )
 
+    global_profiles: dict[str, GlobalProfile] = {}
+    raw_global_profiles = data.get("global_profiles")
+    if isinstance(raw_global_profiles, dict):
+        for raw_key, raw_profile in raw_global_profiles.items():
+            if not isinstance(raw_key, str) or not isinstance(raw_profile, dict):
+                continue
+            driver = _as_string(raw_profile.get("driver"))
+            binding = _as_dict(raw_profile.get("binding"))
+            volume = _as_int(raw_profile.get("volume"))
+            mode = _as_string(raw_profile.get("mode"))
+            if driver and binding:
+                global_profiles[raw_key] = GlobalProfile(
+                    driver=driver,
+                    binding=binding,
+                    volume=volume,
+                    mode=mode,
+                    extra={
+                        key: copy.deepcopy(value)
+                        for key, value in raw_profile.items()
+                        if key not in {"driver", "binding", "volume", "mode"}
+                    },
+                )
+
+    def parse_game_session(session_data: Any) -> GameSession | None:
+        if not isinstance(session_data, dict):
+            return None
+        appid = _as_int(session_data.get("appid"))
+        driver = _as_string(session_data.get("driver"))
+        binding = _as_dict(session_data.get("binding"))
+        if appid is None or not driver or not binding:
+            return None
+        return GameSession(
+            appid=appid,
+            driver=driver,
+            binding=binding,
+            volume=session_data.get("volume")
+            if isinstance(session_data.get("volume"), bool)
+            else False,
+            mode=session_data.get("mode")
+            if isinstance(session_data.get("mode"), bool)
+            else False,
+            restore_volume=session_data.get("restore_volume")
+            if isinstance(session_data.get("restore_volume"), bool)
+            else False,
+            restore_mode=session_data.get("restore_mode")
+            if isinstance(session_data.get("restore_mode"), bool)
+            else False,
+            restore_expires_at=_as_float(
+                session_data.get("restore_expires_at")
+            ),
+            restore_attempts=max(
+                0, _as_int(session_data.get("restore_attempts")) or 0
+            ),
+            restore_next_attempt_at=_as_float(
+                session_data.get("restore_next_attempt_at")
+            ),
+        )
+
+    game_session = parse_game_session(data.get("game_session"))
+    raw_pending_restores = data.get("pending_game_restores")
+    pending_game_restores = (
+        [
+            session
+            for raw_session in raw_pending_restores
+            if (session := parse_game_session(raw_session)) is not None
+        ]
+        if isinstance(raw_pending_restores, list)
+        else []
+    )
+
     known = _V2_KEYS | {"receiver", "schedule", "sleep_wake"}
     return Settings(
         version=CURRENT_VERSION,
@@ -448,6 +614,9 @@ def _settings_from_data(data: dict[str, Any], secret_keys: frozenset[str]) -> Se
         schedule=schedule,
         sleep_wake=sleep_wake,
         games=games,
+        global_profiles=global_profiles,
+        game_session=game_session,
+        pending_game_restores=pending_game_restores,
         extra={
             key: copy.deepcopy(value)
             for key, value in data.items()

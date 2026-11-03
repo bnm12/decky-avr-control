@@ -488,6 +488,45 @@ class ApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(closed["snapshot"]["push"])
         self.assertEqual(PushMemoryDriver.unsubscribe_count, 2)
 
+    async def test_fresh_push_updates_only_the_profiled_field(self):
+        self.application.registry = [PushMemoryDriver]
+        PushMemoryDriver.watch_callbacks = []
+        self.application.publish = AsyncMock()
+        self.save_settings(
+            {
+                "version": 5,
+                "receiver": {
+                    "driver": "memory",
+                    "config": {"host": "receiver"},
+                    "id": "stable-id",
+                    "binding": {"driver": "memory", "id": "STABLE-ID"},
+                },
+                "cap": 150,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "300": {
+                        "name": "Pushed profile",
+                        "driver": "memory",
+                        "volume": 70,
+                    }
+                },
+            }
+        )
+        MemoryDriver.state = Status(100, False, True, "00")
+        await self.application.dispatch(SetCurrentGame(0, ""))
+        await self.application.snapshot()
+        await self.application.dispatch(GameStarted(300, "Pushed profile"))
+        await self.application.dispatch(PanelOpened())
+
+        PushMemoryDriver.watch_callbacks[-1](Status(volume=85))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        profile = self.store.load()["games"]["300"]
+        self.assertEqual(profile["volume"], 85)
+        self.assertNotIn("mode", profile)
+
     async def test_reopening_active_panel_keeps_push_watch_updates_live(self):
         self.save_settings()
         PushMemoryDriver.watch_callbacks = []
@@ -1186,6 +1225,1312 @@ class ApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((profile["volume"], profile["mode"]), (100, "00"))
         self.assertEqual(profile["driver"], "memory")
 
+    async def test_game_exit_restores_global_profile_for_each_remembered_setting(self):
+        cases = (
+            (31, {"volume": 70}, (70, "00")),
+            (32, {"mode": "11"}, (100, "11")),
+            (33, {"volume": 70, "mode": "11"}, (70, "11")),
+        )
+        for appid, saved, applied in cases:
+            with self.subTest(appid=appid):
+                self.save_settings(
+                    {
+                        "version": 2,
+                        "receiver": {
+                            "driver": "memory",
+                            "config": {"host": "receiver"},
+                            "id": "stable-id",
+                        },
+                        "cap": 150,
+                        "late_cap": None,
+                        "late": {"active": False},
+                        "games": {
+                            str(appid): {
+                                "name": "Profile game",
+                                "driver": "memory",
+                                **saved,
+                            }
+                        },
+                    }
+                )
+                MemoryDriver.state = Status(100, False, True, "00")
+                self.clock.value += 7
+                await self.application.snapshot()
+
+                started = await self.application.dispatch(
+                    GameStarted(appid, "Profile game")
+                )
+
+                self.assertTrue(started["ok"])
+                self.assertEqual(
+                    (MemoryDriver.state.volume, MemoryDriver.state.mode), applied
+                )
+                self.assertIsNotNone(self.store.load()["game_session"])
+
+                stopped = await self.application.dispatch(GameStopped(appid))
+
+                self.assertTrue(stopped["ok"])
+                self.assertEqual(
+                    (MemoryDriver.state.volume, MemoryDriver.state.mode),
+                    (100, "00"),
+                )
+                self.assertIsNone(self.store.load()["game_session"])
+
+    async def test_new_game_waits_for_previous_game_restore_to_finish(self):
+        restore_started = asyncio.Event()
+        release_restore = asyncio.Event()
+
+        class BlockingRestoreDriver(MemoryDriver):
+            async def set_volume(self, raw):
+                if raw == 100:
+                    restore_started.set()
+                    await release_restore.wait()
+                return await super().set_volume(raw)
+
+        self.application.registry = [BlockingRestoreDriver]
+        self.save_settings(
+            {
+                "version": 5,
+                "receiver": {
+                    "driver": "memory",
+                    "config": {"host": "receiver"},
+                    "id": "stable-id",
+                    "binding": {"driver": "memory", "id": "STABLE-ID"},
+                },
+                "cap": 150,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "301": {"name": "Game A", "driver": "memory", "volume": 70},
+                    "302": {"name": "Game B", "driver": "memory", "volume": 80},
+                },
+            }
+        )
+        MemoryDriver.state = Status(100, False, True, "00")
+        await self.application.snapshot()
+        await self.application.dispatch(GameStarted(301, "Game A"))
+
+        stopping = asyncio.create_task(self.application.dispatch(GameStopped(301)))
+        await asyncio.wait_for(restore_started.wait(), 1)
+        starting = asyncio.create_task(self.application.dispatch(GameStarted(302, "Game B")))
+        await asyncio.sleep(0)
+        release_restore.set()
+        await asyncio.gather(stopping, starting)
+
+        self.assertEqual(MemoryDriver.state.volume, 80)
+
+    async def test_pre_exit_poll_cannot_overwrite_global_after_session_clears(self):
+        status_started = asyncio.Event()
+        release_status = asyncio.Event()
+
+        class BlockingPollDriver(MemoryDriver):
+            block_next_status = False
+
+            async def status(self):
+                if type(self).block_next_status:
+                    type(self).block_next_status = False
+                    status_started.set()
+                    await release_status.wait()
+                    return Status(140, False, True, "00")
+                return await super().status()
+
+        self.application.registry = [BlockingPollDriver]
+        self.save_settings(
+            {
+                "version": 5,
+                "receiver": {
+                    "driver": "memory",
+                    "config": {"host": "receiver"},
+                    "id": "stable-id",
+                    "binding": {"driver": "memory", "id": "STABLE-ID"},
+                },
+                "cap": 150,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "303": {"name": "Game A", "driver": "memory", "volume": 70},
+                },
+            }
+        )
+        MemoryDriver.state = Status(100, False, True, "00")
+        await self.application.snapshot()
+        await self.application.dispatch(GameStarted(303, "Game A"))
+        BlockingPollDriver.block_next_status = True
+        poll = asyncio.create_task(self.application.snapshot())
+        await asyncio.wait_for(status_started.wait(), 1)
+
+        await self.application.dispatch(GameStopped(303))
+        self.assertIsNone(self.store.load()["game_session"])
+        release_status.set()
+        await poll
+
+        global_profile = next(iter(self.store.load()["global_profiles"].values()))
+        self.assertEqual(global_profile["volume"], 100)
+
+    async def test_setter_snapshot_does_not_save_cached_pre_transition_volume(self):
+        status_started = asyncio.Event()
+        release_status = asyncio.Event()
+
+        class BlockingPollDriver(MemoryDriver):
+            block_next_status = False
+
+            async def status(self):
+                if type(self).block_next_status:
+                    type(self).block_next_status = False
+                    status_started.set()
+                    await release_status.wait()
+                    return Status(140, False, True, "00")
+                return await super().status()
+
+        self.application.registry = [BlockingPollDriver]
+        self.save_settings(
+            {
+                "version": 5,
+                "receiver": {
+                    "driver": "memory",
+                    "config": {"host": "receiver"},
+                    "id": "stable-id",
+                    "binding": {"driver": "memory", "id": "STABLE-ID"},
+                },
+                "cap": 150,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "317": {"name": "Cached status", "driver": "memory", "volume": 70},
+                },
+            }
+        )
+        MemoryDriver.state = Status(100, False, True, "00")
+        await self.application.dispatch(SetCurrentGame(0, ""))
+        await self.application.snapshot()
+        await self.application.dispatch(GameStarted(317, "Cached status"))
+
+        BlockingPollDriver.block_next_status = True
+        poll = asyncio.create_task(self.application.snapshot())
+        await asyncio.wait_for(status_started.wait(), 1)
+        await self.application.dispatch(GameStopped(317))
+        release_status.set()
+        await poll
+
+        self.clock.value += 7
+        await self.application.dispatch(SetMute(True))
+
+        global_profile = next(iter(self.store.load()["global_profiles"].values()))
+        self.assertEqual(global_profile["volume"], 100)
+
+    async def test_game_launch_suppresses_saves_before_profile_apply_finishes(self):
+        launch_status_started = asyncio.Event()
+        release_launch_status = asyncio.Event()
+        snapshot_status_started = asyncio.Event()
+        release_snapshot_status = asyncio.Event()
+
+        class BlockingLaunchDriver(MemoryDriver):
+            status_calls = 0
+
+            async def status(self):
+                type(self).status_calls += 1
+                if type(self).status_calls == 1:
+                    launch_status_started.set()
+                    await release_launch_status.wait()
+                elif type(self).status_calls == 2:
+                    snapshot_status_started.set()
+                    await release_snapshot_status.wait()
+                return Status(100, False, True, "00")
+
+        BlockingLaunchDriver.status_calls = 0
+        self.application.registry = [BlockingLaunchDriver]
+        self.save_settings(
+            {
+                "version": 5,
+                "receiver": {
+                    "driver": "memory",
+                    "config": {"host": "receiver"},
+                    "id": "stable-id",
+                    "binding": {"driver": "memory", "id": "STABLE-ID"},
+                },
+                "cap": 150,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "304": {"name": "Game A", "driver": "memory", "volume": 70},
+                },
+            }
+        )
+        MemoryDriver.state = Status(100, False, True, "00")
+
+        launch = asyncio.create_task(
+            self.application.dispatch(GameStarted(304, "Game A"))
+        )
+        await asyncio.wait_for(launch_status_started.wait(), 1)
+        poll = asyncio.create_task(self.application.snapshot())
+        await asyncio.wait_for(snapshot_status_started.wait(), 1)
+        release_launch_status.set()
+        await launch
+        self.clock.value += 7
+        release_snapshot_status.set()
+        await poll
+
+        self.assertEqual(MemoryDriver.state.volume, 70)
+        self.assertEqual(self.store.load()["games"]["304"]["volume"], 70)
+
+    async def test_changes_during_game_update_the_active_profile_only(self):
+        self.save_settings(
+            {
+                "version": 2,
+                "receiver": {"driver": "memory", "config": {"host": "receiver"}},
+                "cap": 150,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "34": {
+                        "name": "Active profile",
+                        "driver": "memory",
+                        "volume": 80,
+                    }
+                },
+            }
+        )
+        await self.application.snapshot()
+        await self.application.dispatch(GameStarted(34, "Active profile"))
+        self.clock.value += 7
+
+        await self.client.set_volume(90)
+        MemoryDriver.state.mode = "11"
+        await self.application.snapshot()
+
+        saved = self.store.load()
+        global_profile = next(iter(saved["global_profiles"].values()))
+        self.assertEqual(saved["games"]["34"]["volume"], 90)
+        self.assertEqual(global_profile["volume"], 100)
+        self.assertEqual(global_profile["mode"], "11")
+
+    async def test_initial_status_does_not_seed_global_with_running_game_overrides(self):
+        self.save_settings(
+            {
+                "version": 5,
+                "receiver": {
+                    "driver": "memory",
+                    "config": {"host": "receiver"},
+                    "id": "stable-id",
+                    "binding": {"driver": "memory", "id": "STABLE-ID"},
+                },
+                "cap": 150,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "308": {
+                        "name": "Already running",
+                        "driver": "memory",
+                        "volume": 70,
+                        "mode": "00",
+                    }
+                },
+                "game_session": {
+                    "appid": 308,
+                    "driver": "memory",
+                    "binding": {"driver": "memory", "id": "STABLE-ID"},
+                    "volume": True,
+                    "mode": True,
+                    "restore_volume": False,
+                    "restore_mode": False,
+                },
+            }
+        )
+        MemoryDriver.state = Status(140, False, True, "11")
+
+        await self.application.snapshot()
+
+        saved = self.store.load()
+        self.assertEqual(saved["global_profiles"], {})
+
+    async def test_unsynchronized_migrated_game_status_does_not_seed_global(self):
+        self.save_settings(
+            {
+                "version": 4,
+                "receiver": {
+                    "driver": "memory",
+                    "config": {"host": "receiver"},
+                    "id": "stable-id",
+                },
+                "cap": 150,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "318": {
+                        "name": "Already running",
+                        "driver": "memory",
+                        "volume": 70,
+                        "mode": "11",
+                    }
+                },
+            }
+        )
+        MemoryDriver.state = Status(140, False, True, "11")
+
+        await self.application.snapshot()
+
+        self.assertEqual(self.store.load()["global_profiles"], {})
+
+    async def test_game_launch_seeds_global_from_preapply_status(self):
+        self.save_settings(
+            {
+                "version": 5,
+                "receiver": {
+                    "driver": "memory",
+                    "config": {"host": "receiver"},
+                    "id": "stable-id",
+                    "binding": {"driver": "memory", "id": "STABLE-ID"},
+                },
+                "cap": 150,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "314": {
+                        "name": "First game status",
+                        "driver": "memory",
+                        "volume": 70,
+                        "mode": "00",
+                    }
+                },
+            }
+        )
+        MemoryDriver.state = Status(140, False, True, "11")
+
+        await self.application.dispatch(GameStarted(314, "First game status"))
+
+        global_profile = next(iter(self.store.load()["global_profiles"].values()))
+        self.assertEqual(global_profile["volume"], 140)
+        self.assertEqual(global_profile["mode"], "11")
+
+    async def test_cold_start_launch_seeds_global_before_applying_game_profile(self):
+        self.save_settings(
+            {
+                "version": 5,
+                "receiver": {
+                    "driver": "memory",
+                    "config": {"host": "receiver"},
+                    "id": "stable-id",
+                    "binding": {"driver": "memory", "id": "STABLE-ID"},
+                },
+                "cap": 150,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "319": {
+                        "name": "Cold launch",
+                        "driver": "memory",
+                        "volume": 70,
+                    }
+                },
+            }
+        )
+        MemoryDriver.state = Status(100, False, True, "00")
+
+        await self.application.dispatch(GameStarted(319, "Cold launch"))
+
+        global_profile = next(iter(self.store.load()["global_profiles"].values()))
+        self.assertEqual(global_profile["volume"], 100)
+        self.assertEqual(MemoryDriver.state.volume, 70)
+        await self.application.dispatch(GameStopped(319))
+        self.assertEqual(MemoryDriver.state.volume, 100)
+
+    async def test_fresh_post_exit_status_updates_global_immediately(self):
+        self.save_settings(
+            {
+                "version": 5,
+                "receiver": {
+                    "driver": "memory",
+                    "config": {"host": "receiver"},
+                    "id": "stable-id",
+                    "binding": {"driver": "memory", "id": "STABLE-ID"},
+                },
+                "cap": 150,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "320": {"name": "Post-exit remote", "driver": "memory", "volume": 70},
+                    "326": {"name": "Following game", "driver": "memory", "volume": 80},
+                },
+            }
+        )
+        MemoryDriver.state = Status(100, False, True, "00")
+        await self.application.dispatch(SetCurrentGame(0, ""))
+        await self.application.snapshot()
+        await self.application.dispatch(GameStarted(320, "Post-exit remote"))
+        await self.application.dispatch(GameStopped(320))
+        MemoryDriver.state.volume = 60
+
+        await self.application.snapshot()
+
+        global_profile = next(iter(self.store.load()["global_profiles"].values()))
+        self.assertEqual(global_profile["volume"], 60)
+        await self.application.dispatch(GameStarted(326, "Following game"))
+        await self.application.dispatch(GameStopped(326))
+        self.assertEqual(MemoryDriver.state.volume, 60)
+
+    async def test_remembering_mode_does_not_seed_existing_game_volume_globally(self):
+        self.save_settings(
+            {
+                "version": 5,
+                "receiver": {
+                    "driver": "memory",
+                    "config": {"host": "receiver"},
+                    "id": "stable-id",
+                    "binding": {"driver": "memory", "id": "STABLE-ID"},
+                },
+                "cap": 150,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "315": {
+                        "name": "Volume-only game",
+                        "driver": "memory",
+                        "volume": 70,
+                    }
+                },
+            }
+        )
+        MemoryDriver.state = Status(140, False, True, "11")
+        await self.application.dispatch(GameStarted(315, "Volume-only game"))
+        await self.application.dispatch(RememberForGame("mode", True))
+
+        global_profile = next(iter(self.store.load()["global_profiles"].values()))
+        self.assertEqual(global_profile.get("volume"), 140)
+        self.assertEqual(global_profile.get("mode"), "11")
+
+    async def test_global_profile_tracks_control_and_remote_changes_outside_games(self):
+        self.save_settings()
+        await self.application.dispatch(SetCurrentGame(0, ""))
+        await self.application.snapshot()
+
+        await self.client.set_volume(82)
+        MemoryDriver.state.volume = 75
+        MemoryDriver.state.mode = "11"
+        await self.application.snapshot()
+
+        global_profile = next(iter(self.store.load()["global_profiles"].values()))
+        self.assertEqual(global_profile["volume"], 75)
+        self.assertEqual(global_profile["mode"], "11")
+
+    async def test_late_night_restore_uses_cap_without_writing_late_volume(self):
+        self.save_settings(
+            {
+                "version": 2,
+                "receiver": {"driver": "memory", "config": {"host": "receiver"}},
+                "cap": 150,
+                "late_cap": 60,
+                "late": {"active": True, "prev_volume": 120},
+                "games": {
+                    "35": {
+                        "name": "Late profile",
+                        "driver": "memory",
+                        "volume": 80,
+                    }
+                },
+            }
+        )
+        MemoryDriver.state = Status(60, False, True, "00")
+
+        await self.application.snapshot()
+        await self.application.dispatch(GameStarted(35, "Late profile"))
+        self.assertEqual(MemoryDriver.state.volume, 60)
+        await self.application.dispatch(GameStopped(35))
+
+        saved = self.store.load()
+        global_profile = next(iter(saved["global_profiles"].values()))
+        self.assertEqual(MemoryDriver.state.volume, 60)
+        self.assertEqual(global_profile["volume"], 120)
+        self.assertEqual(saved["games"]["35"]["volume"], 80)
+
+    async def test_game_exit_updates_late_night_restore_to_global_volume(self):
+        self.save_settings(
+            {
+                "version": 5,
+                "receiver": {
+                    "driver": "memory",
+                    "config": {"host": "receiver"},
+                    "id": "stable-id",
+                    "binding": {"driver": "memory", "id": "STABLE-ID"},
+                },
+                "cap": 150,
+                "late_cap": 60,
+                "late": {"active": False},
+                "games": {
+                    "305": {"name": "Late game", "driver": "memory", "volume": 70},
+                },
+            }
+        )
+        MemoryDriver.state = Status(140, False, True, "00")
+        await self.application.snapshot()
+        await self.application.dispatch(GameStarted(305, "Late game"))
+        await self.application.dispatch(SetLateNight(True))
+
+        await self.application.dispatch(GameStopped(305))
+        self.clock.value += 7
+        await self.application.dispatch(SetLateNight(False))
+
+        global_profile = next(iter(self.store.load()["global_profiles"].values()))
+        self.assertEqual(MemoryDriver.state.volume, 140)
+        self.assertEqual(global_profile["volume"], 140)
+
+    async def test_game_handoff_restores_previous_overrides_before_new_profile(self):
+        self.save_settings(
+            {
+                "version": 5,
+                "receiver": {
+                    "driver": "memory",
+                    "config": {"host": "receiver"},
+                    "id": "stable-id",
+                    "binding": {"driver": "memory", "id": "STABLE-ID"},
+                },
+                "cap": 150,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "306": {
+                        "name": "Game A",
+                        "driver": "memory",
+                        "volume": 70,
+                        "mode": "11",
+                    },
+                    "307": {
+                        "name": "Game B",
+                        "driver": "memory",
+                        "volume": 80,
+                    },
+                },
+            }
+        )
+        MemoryDriver.state = Status(100, False, True, "00")
+
+        await self.application.snapshot()
+        await self.application.dispatch(GameStarted(306, "Game A"))
+        await self.application.dispatch(GameStarted(307, "Game B"))
+
+        self.assertEqual(
+            (MemoryDriver.state.volume, MemoryDriver.state.mode), (80, "00")
+        )
+
+    async def test_failed_handoff_restore_stays_pending_while_next_game_applies(self):
+        class ModeRestoreFailureDriver(MemoryDriver):
+            fail_global_mode_restore = False
+
+            async def set_volume(self, raw):
+                if type(self).fail_global_mode_restore and raw == 100:
+                    raise DriverError("volume restore unavailable")
+                return await super().set_volume(raw)
+
+            async def set_mode(self, code):
+                if type(self).fail_global_mode_restore and code == "00":
+                    raise DriverError("mode restore unavailable")
+                return await super().set_mode(code)
+
+        self.application.registry = [ModeRestoreFailureDriver]
+        self.application.wall_clock = self.clock
+        self.save_settings(
+            {
+                "version": 5,
+                "receiver": {
+                    "driver": "memory",
+                    "config": {"host": "receiver"},
+                    "id": "stable-id",
+                    "binding": {"driver": "memory", "id": "STABLE-ID"},
+                },
+                "cap": 150,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "321": {
+                        "name": "Game A",
+                        "driver": "memory",
+                        "volume": 70,
+                        "mode": "11",
+                    },
+                    "322": {"name": "Game B", "driver": "memory", "volume": 80},
+                },
+            }
+        )
+        MemoryDriver.state = Status(100, False, True, "00")
+        await self.application.dispatch(SetCurrentGame(0, ""))
+        await self.application.snapshot()
+        await self.application.dispatch(GameStarted(321, "Game A"))
+        ModeRestoreFailureDriver.fail_global_mode_restore = True
+
+        await self.application.dispatch(GameStarted(322, "Game B"))
+
+        saved = self.store.load()
+        self.assertEqual(MemoryDriver.state.volume, 80)
+        self.assertEqual(saved["game_session"]["appid"], 322)
+        self.assertEqual(len(saved["pending_game_restores"]), 1)
+        self.assertTrue(saved["pending_game_restores"][0]["restore_mode"])
+        self.assertFalse(saved["pending_game_restores"][0]["restore_volume"])
+        self.assertEqual(saved["pending_game_restores"][0]["restore_attempts"], 1)
+        self.assertEqual(
+            saved["pending_game_restores"][0]["restore_next_attempt_at"],
+            self.clock.value + 2,
+        )
+
+        ModeRestoreFailureDriver.fail_global_mode_restore = False
+        self.clock.value += 2
+        await self.application.snapshot()
+
+        saved = self.store.load()
+        self.assertEqual((MemoryDriver.state.volume, MemoryDriver.state.mode), (80, "00"))
+        self.assertEqual(saved["game_session"]["appid"], 322)
+        self.assertEqual(saved["pending_game_restores"], [])
+
+    async def test_remember_on_cancels_only_same_setting_queued_restore(self):
+        class ModeRestoreFailureDriver(MemoryDriver):
+            fail_global_mode_restore = False
+
+            async def set_volume(self, raw):
+                if type(self).fail_global_mode_restore and raw == 100:
+                    raise DriverError("volume restore unavailable")
+                return await super().set_volume(raw)
+
+            async def set_mode(self, code):
+                if type(self).fail_global_mode_restore and code == "00":
+                    raise DriverError("mode restore unavailable")
+                return await super().set_mode(code)
+
+        self.application.registry = [ModeRestoreFailureDriver]
+        self.application.wall_clock = self.clock
+        self.save_settings(
+            {
+                "version": 5,
+                "receiver": {
+                    "driver": "memory",
+                    "config": {"host": "receiver"},
+                    "id": "stable-id",
+                    "binding": {"driver": "memory", "id": "STABLE-ID"},
+                },
+                "cap": 150,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "327": {
+                        "name": "Previous game",
+                        "driver": "memory",
+                        "volume": 70,
+                        "mode": "11",
+                    },
+                },
+            }
+        )
+        MemoryDriver.state = Status(100, False, True, "00")
+        await self.application.dispatch(SetCurrentGame(0, ""))
+        await self.application.snapshot()
+        await self.application.dispatch(GameStarted(327, "Previous game"))
+        ModeRestoreFailureDriver.fail_global_mode_restore = True
+        await self.application.dispatch(GameStarted(328, "New game"))
+        self.assertEqual(len(self.store.load()["pending_game_restores"]), 1)
+        self.assertTrue(
+            self.store.load()["pending_game_restores"][0]["restore_volume"]
+        )
+        self.assertTrue(
+            self.store.load()["pending_game_restores"][0]["restore_mode"]
+        )
+
+        ModeRestoreFailureDriver.fail_global_mode_restore = False
+        await self.application.dispatch(RememberForGame("mode", True))
+        self.assertEqual(self.store.load()["games"]["328"]["mode"], "11")
+        pending = self.store.load()["pending_game_restores"]
+        self.assertTrue(pending[0]["restore_volume"])
+        self.assertFalse(pending[0]["restore_mode"])
+        self.clock.value += 2
+        await self.application.snapshot()
+
+        saved = self.store.load()
+        self.assertEqual(MemoryDriver.state.mode, "11")
+        self.assertEqual(MemoryDriver.state.volume, 100)
+        self.assertEqual(saved["games"]["328"]["mode"], "11")
+        self.assertEqual(saved["pending_game_restores"], [])
+
+    async def test_new_game_profile_cancels_older_queued_restore_for_same_setting(self):
+        class ModeRestoreFailureDriver(MemoryDriver):
+            fail_global_mode_restore = False
+
+            async def set_mode(self, code):
+                if type(self).fail_global_mode_restore and code == "00":
+                    raise DriverError("mode restore unavailable")
+                return await super().set_mode(code)
+
+        self.application.registry = [ModeRestoreFailureDriver]
+        self.application.wall_clock = self.clock
+        self.save_settings(
+            {
+                "version": 5,
+                "receiver": {
+                    "driver": "memory",
+                    "config": {"host": "receiver"},
+                    "id": "stable-id",
+                    "binding": {"driver": "memory", "id": "STABLE-ID"},
+                },
+                "cap": 150,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "329": {"name": "Old game", "driver": "memory", "mode": "11"},
+                    "330": {"name": "New game", "driver": "memory", "mode": "11"},
+                },
+            }
+        )
+        MemoryDriver.state = Status(100, False, True, "00")
+        await self.application.dispatch(SetCurrentGame(0, ""))
+        await self.application.snapshot()
+        await self.application.dispatch(GameStarted(329, "Old game"))
+        ModeRestoreFailureDriver.fail_global_mode_restore = True
+        await self.application.dispatch(GameStarted(328, "Unprofiled game"))
+        self.assertEqual(len(self.store.load()["pending_game_restores"]), 1)
+
+        ModeRestoreFailureDriver.fail_global_mode_restore = False
+        await self.application.dispatch(GameStopped(328))
+        await self.application.dispatch(GameStarted(330, "New game"))
+        self.clock.value += 2
+        await self.application.snapshot()
+
+        saved = self.store.load()
+        self.assertEqual(MemoryDriver.state.mode, "11")
+        self.assertEqual(saved["pending_game_restores"], [])
+
+    async def test_receiver_switch_does_not_restore_another_receivers_global_profile(self):
+        self.save_settings(
+            {
+                "version": 2,
+                "receiver": {
+                    "driver": "memory",
+                    "config": {"host": "receiver-a"},
+                    "id": "receiver-a-id",
+                },
+                "cap": 150,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "36": {
+                        "name": "Receiver-bound session",
+                        "driver": "memory",
+                        "volume": 70,
+                    }
+                },
+            }
+        )
+        MemoryDriver.state = Status(100, False, True, "00")
+        await self.application.snapshot()
+        await self.application.dispatch(
+            GameStarted(36, "Receiver-bound session")
+        )
+        self.assertEqual(MemoryDriver.state.volume, 70)
+
+        await self.application.dispatch(
+            ConfigureReceiver("memory", {"host": "receiver-b"})
+        )
+        self.clock.value += 7
+        MemoryDriver.state.volume = 45
+        await self.application.snapshot()
+        await self.application.dispatch(GameStopped(36))
+
+        saved = self.store.load()
+        self.assertEqual(MemoryDriver.state.volume, 45)
+        self.assertIsNone(saved["game_session"])
+        self.assertGreaterEqual(len(saved["global_profiles"]), 2)
+        self.assertIn(
+            100,
+            [profile["volume"] for profile in saved["global_profiles"].values()],
+        )
+        self.assertIn(
+            45,
+            [profile["volume"] for profile in saved["global_profiles"].values()],
+        )
+
+    async def test_remember_on_and_off_mid_game_keeps_and_restores_global_value(self):
+        self.save_settings()
+        await self.application.snapshot()
+        await self.application.dispatch(SetCurrentGame(37, "Mid-game opt-in"))
+        self.clock.value += 7
+        MemoryDriver.state.volume = 70
+        await self.application.snapshot()
+
+        self.assertTrue(
+            (await self.application.dispatch(RememberForGame("volume", True)))["ok"]
+        )
+        self.assertEqual(self.store.load()["games"]["37"]["volume"], 70)
+        self.clock.value += 7
+        await self.client.set_volume(90)
+        self.assertEqual(self.store.load()["games"]["37"]["volume"], 90)
+
+        result = await self.application.dispatch(RememberForGame("volume", False))
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(MemoryDriver.state.volume, 70)
+        self.assertNotIn("37", self.store.load()["games"])
+        self.assertEqual(
+            next(iter(self.store.load()["global_profiles"].values()))["volume"],
+            70,
+        )
+
+    async def test_remember_mode_off_cancels_the_delayed_game_mode_reapply(self):
+        delay_started = asyncio.Event()
+        release_delay = asyncio.Event()
+
+        async def blocked_sleep(_seconds):
+            delay_started.set()
+            await release_delay.wait()
+
+        self.application.sleep = blocked_sleep
+        self.save_settings(
+            {
+                "version": 5,
+                "receiver": {
+                    "driver": "memory",
+                    "config": {"host": "receiver"},
+                    "id": "stable-id",
+                    "binding": {"driver": "memory", "id": "STABLE-ID"},
+                },
+                "cap": 150,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "312": {"name": "Mode game", "driver": "memory", "mode": "11"},
+                },
+            }
+        )
+        MemoryDriver.state = Status(100, False, True, "00")
+        await self.application.snapshot()
+        await self.application.dispatch(GameStarted(312, "Mode game"))
+        await asyncio.wait_for(delay_started.wait(), 1)
+        delayed = self.application._reapply_task
+
+        await self.application.dispatch(RememberForGame("mode", False))
+        release_delay.set()
+        if delayed is not None:
+            try:
+                await delayed
+            except asyncio.CancelledError:
+                pass
+
+        self.assertEqual(MemoryDriver.state.mode, "00")
+
+    async def test_unchanged_current_game_does_not_invalidate_delayed_mode_reapply(self):
+        delay_started = asyncio.Event()
+        release_delay = asyncio.Event()
+
+        async def blocked_sleep(_seconds):
+            delay_started.set()
+            await release_delay.wait()
+
+        self.application.sleep = blocked_sleep
+        self.save_settings(
+            {
+                "version": 5,
+                "receiver": {
+                    "driver": "memory",
+                    "config": {"host": "receiver"},
+                    "id": "stable-id",
+                    "binding": {"driver": "memory", "id": "STABLE-ID"},
+                },
+                "cap": 150,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "323": {"name": "Same game", "driver": "memory", "mode": "11"},
+                },
+            }
+        )
+        MemoryDriver.state = Status(100, False, True, "00")
+        await self.application.dispatch(SetCurrentGame(0, ""))
+        await self.application.snapshot()
+        await self.application.dispatch(GameStarted(323, "Same game"))
+        delayed = self.application._reapply_task
+        await asyncio.wait_for(delay_started.wait(), 1)
+
+        await self.application.dispatch(SetCurrentGame(323, "Same game"))
+        MemoryDriver.state.mode = "00"
+        release_delay.set()
+        if delayed is not None:
+            await delayed
+
+        self.assertEqual(MemoryDriver.state.mode, "11")
+        await self.application.snapshot()
+        self.assertEqual(self.store.load()["games"]["323"]["mode"], "11")
+
+    async def test_global_profile_and_active_game_restore_survive_application_restart(self):
+        self.save_settings(
+            {
+                "version": 2,
+                "receiver": {"driver": "memory", "config": {"host": "receiver"}},
+                "cap": 150,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "38": {
+                        "name": "Restarted session",
+                        "driver": "memory",
+                        "volume": 70,
+                    }
+                },
+            }
+        )
+        MemoryDriver.state = Status(100, False, True, "00")
+        await self.application.snapshot()
+        await self.application.dispatch(GameStarted(38, "Restarted session"))
+        self.assertEqual(MemoryDriver.state.volume, 70)
+
+        restarted = ControlApplication(
+            self.repository,
+            registry=[MemoryDriver],
+            clock=self.clock,
+            sleep=self.clock.sleep,
+            wall_clock=lambda: 0.0,
+            localtime=self.local_time,
+        )
+        result = await restarted.dispatch(GameStopped(38))
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(MemoryDriver.state.volume, 100)
+        global_profile = next(iter(self.store.load()["global_profiles"].values()))
+        self.assertEqual(global_profile["volume"], 100)
+        self.assertIsNone(self.store.load()["game_session"])
+
+    async def test_explicit_no_game_reconciles_persisted_running_session(self):
+        self.save_settings(
+            {
+                "version": 5,
+                "receiver": {
+                    "driver": "memory",
+                    "config": {"host": "receiver"},
+                    "id": "stable-id",
+                    "binding": {"driver": "memory", "id": "STABLE-ID"},
+                },
+                "cap": 150,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "313": {"name": "Exited while unloaded", "driver": "memory", "volume": 70},
+                },
+            }
+        )
+        MemoryDriver.state = Status(100, False, True, "00")
+        await self.application.snapshot()
+        await self.application.dispatch(
+            GameStarted(313, "Exited while unloaded")
+        )
+        self.assertEqual(MemoryDriver.state.volume, 70)
+
+        restarted = ControlApplication(
+            self.repository,
+            registry=[MemoryDriver],
+            clock=self.clock,
+            sleep=self.clock.sleep,
+            wall_clock=lambda: 0.0,
+            localtime=self.local_time,
+        )
+        await restarted.snapshot()
+        self.assertEqual(MemoryDriver.state.volume, 70)
+        await restarted.dispatch(SetCurrentGame(0, ""))
+
+        self.assertEqual(MemoryDriver.state.volume, 100)
+        self.assertIsNone(self.store.load()["game_session"])
+
+    async def test_failed_game_restore_retries_on_a_later_successful_status(self):
+        class IntermittentRestoreDriver(MemoryDriver):
+            fail_restore = False
+
+            async def set_volume(self, raw):
+                if type(self).fail_restore:
+                    raise DriverError("receiver unreachable")
+                return await super().set_volume(raw)
+
+        self.application.wall_clock = self.clock
+        self.save_settings(
+            {
+                "version": 2,
+                "receiver": {"driver": "memory", "config": {"host": "receiver"}},
+                "cap": 150,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "39": {
+                        "name": "Unreachable restore",
+                        "driver": "memory",
+                        "volume": 70,
+                    }
+                },
+            }
+        )
+        self.application.registry = [IntermittentRestoreDriver]
+        MemoryDriver.state = Status(100, False, True, "00")
+        await self.application.snapshot()
+        await self.application.dispatch(GameStarted(39, "Unreachable restore"))
+        IntermittentRestoreDriver.fail_restore = True
+
+        await self.application.dispatch(GameStopped(39))
+
+        self.assertIsNotNone(self.store.load()["game_session"])
+        IntermittentRestoreDriver.fail_restore = False
+        self.clock.value += 2
+        await self.application.snapshot()
+
+        self.assertEqual(MemoryDriver.state.volume, 100)
+        self.assertIsNone(self.store.load()["game_session"])
+
+    async def test_expired_game_restore_is_dropped_without_raising_volume(self):
+        class IntermittentRestoreDriver(MemoryDriver):
+            fail_restore = False
+
+            async def set_volume(self, raw):
+                if type(self).fail_restore:
+                    raise DriverError("receiver unreachable")
+                return await super().set_volume(raw)
+
+        self.application.registry = [IntermittentRestoreDriver]
+        self.application.wall_clock = self.clock
+        self.save_settings(
+            {
+                "version": 5,
+                "receiver": {
+                    "driver": "memory",
+                    "config": {"host": "receiver"},
+                    "id": "stable-id",
+                    "binding": {"driver": "memory", "id": "STABLE-ID"},
+                },
+                "cap": 150,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "309": {"name": "Expiring restore", "driver": "memory", "volume": 70},
+                },
+            }
+        )
+        MemoryDriver.state = Status(100, False, True, "00")
+        await self.application.snapshot()
+        await self.application.dispatch(GameStarted(309, "Expiring restore"))
+        IntermittentRestoreDriver.fail_restore = True
+        await self.application.dispatch(GameStopped(309))
+        self.assertIsNotNone(self.store.load()["game_session"])
+
+        MemoryDriver.state.volume = 20
+        self.clock.value += 601
+        IntermittentRestoreDriver.fail_restore = False
+        await self.application.snapshot()
+
+        self.assertEqual(MemoryDriver.state.volume, 20)
+        self.assertIsNone(self.store.load()["game_session"])
+
+    async def test_standby_does_not_consume_restore_attempts(self):
+        self.application.wall_clock = self.clock
+        self.save_settings(
+            {
+                "version": 5,
+                "receiver": {
+                    "driver": "memory",
+                    "config": {"host": "receiver"},
+                    "id": "stable-id",
+                    "binding": {"driver": "memory", "id": "STABLE-ID"},
+                },
+                "cap": 150,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "324": {"name": "Standby restore", "driver": "memory", "volume": 70},
+                },
+            }
+        )
+        MemoryDriver.state = Status(100, False, True, "00")
+        await self.application.dispatch(SetCurrentGame(0, ""))
+        await self.application.snapshot()
+        await self.application.dispatch(GameStarted(324, "Standby restore"))
+        MemoryDriver.state.power = False
+
+        await self.application.dispatch(GameStopped(324))
+        for power_state in (False, None, False):
+            MemoryDriver.state.power = power_state
+            self.clock.value += 2
+            await self.application.snapshot()
+
+        session = self.store.load()["game_session"]
+        self.assertTrue(session["restore_volume"])
+        self.assertEqual(session["restore_attempts"], 0)
+
+        self.clock.value += 1
+        MemoryDriver.state.power = True
+        await self.application.snapshot()
+
+        self.assertEqual(MemoryDriver.state.volume, 100)
+        self.assertIsNone(self.store.load()["game_session"])
+
+    async def test_game_restore_runs_for_receiver_without_power_capability(self):
+        class NoPowerStatusDriver(MemoryDriver):
+            capabilities = frozenset({VOLUME, MODE})
+
+            async def status(self):
+                return Status(
+                    self.state.volume,
+                    self.state.muted,
+                    None,
+                    self.state.mode,
+                )
+
+        self.application.registry = [NoPowerStatusDriver]
+        self.save_settings(
+            {
+                "version": 5,
+                "receiver": {
+                    "driver": "memory",
+                    "config": {"host": "receiver"},
+                    "id": "stable-id",
+                    "binding": {"driver": "memory", "id": "STABLE-ID"},
+                },
+                "cap": 150,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "325": {
+                        "name": "Receiver without power reporting",
+                        "driver": "memory",
+                        "volume": 20,
+                    }
+                },
+            }
+        )
+        MemoryDriver.state = Status(35, False, None, "00")
+        await self.application.dispatch(SetCurrentGame(0, ""))
+        await self.application.snapshot()
+        await self.application.dispatch(
+            GameStarted(325, "Receiver without power reporting")
+        )
+        self.assertEqual(MemoryDriver.state.volume, 20)
+
+        await self.application.dispatch(GameStopped(325))
+
+        self.assertEqual(MemoryDriver.state.volume, 35)
+        self.assertIsNone(self.store.load()["game_session"])
+
+    async def test_unconfirmed_game_restore_stays_pending_and_keeps_global_value(self):
+        class MismatchingRestoreDriver(MemoryDriver):
+            async def set_volume(self, raw):
+                if raw == 100:
+                    type(self).state.volume = 70
+                    return 70
+                return await super().set_volume(raw)
+
+        self.application.registry = [MismatchingRestoreDriver]
+        self.application.wall_clock = self.clock
+        self.save_settings(
+            {
+                "version": 5,
+                "receiver": {
+                    "driver": "memory",
+                    "config": {"host": "receiver"},
+                    "id": "stable-id",
+                    "binding": {"driver": "memory", "id": "STABLE-ID"},
+                },
+                "cap": 150,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "310": {"name": "Unconfirmed restore", "driver": "memory", "volume": 70},
+                },
+            }
+        )
+        MemoryDriver.state = Status(100, False, True, "00")
+        await self.application.snapshot()
+        await self.application.dispatch(GameStarted(310, "Unconfirmed restore"))
+
+        await self.application.dispatch(GameStopped(310))
+
+        session = self.store.load()["game_session"]
+        global_profile = next(iter(self.store.load()["global_profiles"].values()))
+        self.assertTrue(session["restore_volume"])
+        self.assertEqual(global_profile["volume"], 100)
+
+        self.clock.value += 2
+        await self.application.snapshot()
+        self.assertIsNotNone(self.store.load()["game_session"])
+        self.clock.value += 2
+        await self.application.snapshot()
+
+        self.assertIsNone(self.store.load()["game_session"])
+        global_profile = next(iter(self.store.load()["global_profiles"].values()))
+        self.assertEqual(global_profile["volume"], 100)
+
+    async def test_restore_clears_confirmed_setting_when_other_setting_fails(self):
+        class ModeRestoreFailureDriver(MemoryDriver):
+            async def set_mode(self, code):
+                if code == "00":
+                    raise DriverError("mode restore unavailable")
+                return await super().set_mode(code)
+
+        self.application.registry = [ModeRestoreFailureDriver]
+        self.save_settings(
+            {
+                "version": 5,
+                "receiver": {
+                    "driver": "memory",
+                    "config": {"host": "receiver"},
+                    "id": "stable-id",
+                    "binding": {"driver": "memory", "id": "STABLE-ID"},
+                },
+                "cap": 150,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "316": {
+                        "name": "Partial restore",
+                        "driver": "memory",
+                        "volume": 70,
+                        "mode": "11",
+                    }
+                },
+            }
+        )
+        MemoryDriver.state = Status(100, False, True, "00")
+        await self.application.snapshot()
+        await self.application.dispatch(GameStarted(316, "Partial restore"))
+
+        await self.application.dispatch(GameStopped(316))
+
+        session = self.store.load()["game_session"]
+        self.assertFalse(session["restore_volume"])
+        self.assertTrue(session["restore_mode"])
+        self.assertEqual(MemoryDriver.state.volume, 100)
+
+    async def test_forgetting_running_game_restores_both_global_settings(self):
+        self.save_settings(
+            {
+                "version": 5,
+                "receiver": {
+                    "driver": "memory",
+                    "config": {"host": "receiver"},
+                    "id": "stable-id",
+                    "binding": {"driver": "memory", "id": "STABLE-ID"},
+                },
+                "cap": 150,
+                "late_cap": None,
+                "late": {"active": False},
+                "games": {
+                    "311": {
+                        "name": "Forgotten while running",
+                        "driver": "memory",
+                        "volume": 70,
+                        "mode": "11",
+                    }
+                },
+            }
+        )
+        MemoryDriver.state = Status(100, False, True, "00")
+        await self.application.snapshot()
+        await self.application.dispatch(
+            GameStarted(311, "Forgotten while running")
+        )
+
+        await self.application.dispatch(ForgetGame(311))
+
+        self.assertNotIn("311", self.store.load()["games"])
+        self.assertIsNone(self.store.load()["game_session"])
+        self.assertEqual(
+            (MemoryDriver.state.volume, MemoryDriver.state.mode), (100, "00")
+        )
+
     async def test_game_start_adopts_an_unbound_profile_for_the_resolved_driver(self):
         self.save_settings(
             {
@@ -1248,7 +2593,7 @@ class ApplicationTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(MemoryDriver.state.volume, 70)
 
-    async def test_failed_game_profile_apply_suppresses_the_next_poll_save(self):
+    async def test_failed_game_profile_apply_accepts_fresh_recovery_status(self):
         MemoryDriver.fail_hosts = {"receiver"}
         MemoryDriver.state.volume = 40
         self.save_settings(
@@ -1278,7 +2623,7 @@ class ApplicationTests(unittest.IsolatedAsyncioTestCase):
         MemoryDriver.fail_hosts = set()
         await self.client.get_state()
 
-        self.assertEqual(self.store.load()["games"]["16"]["volume"], 70)
+        self.assertEqual(self.store.load()["games"]["16"]["volume"], 40)
 
     async def test_stale_profile_failure_does_not_suppress_new_receiver_game_save(self):
         status_started = asyncio.Event()
@@ -1339,10 +2684,10 @@ class ApplicationTests(unittest.IsolatedAsyncioTestCase):
         await status_started.wait()
 
         await self.client.configure("new", {"host": "receiver-b"})
-        await self.client.set_current_game(202, "Game B")
-        self.clock.value += 7
         release_status.set()
         await applying_old_profile
+        await self.client.set_current_game(202, "Game B")
+        self.clock.value += 7
 
         state = await self.client.get_state()
 
@@ -1506,6 +2851,7 @@ class ApplicationTests(unittest.IsolatedAsyncioTestCase):
             }
         )
         await self.client.set_current_game(21, "Remembered")
+        self.clock.value += 7
         MemoryDriver.state.volume = 85
         MemoryDriver.state.mode = "11"
         await self.client.get_state()
@@ -1519,7 +2865,7 @@ class ApplicationTests(unittest.IsolatedAsyncioTestCase):
         await self.client.get_state()
         self.assertEqual(self.store.load()["games"]["21"]["volume"], 85)
 
-    async def test_six_second_suppression_and_driver_mismatch_skip_both_settings(self):
+    async def test_fresh_post_apply_status_updates_profile_and_driver_mismatch_is_skipped(self):
         self.save_settings(
             {
                 "version": 2,
@@ -1544,7 +2890,7 @@ class ApplicationTests(unittest.IsolatedAsyncioTestCase):
         MemoryDriver.state.mode = "00"
         await self.client.get_state()
         profile = self.store.load()["games"]["22"]
-        self.assertEqual((profile["volume"], profile["mode"]), (60, "11"))
+        self.assertEqual((profile["volume"], profile["mode"]), (80, "00"))
         self.clock.value += 6
         await self.client.get_state()
         profile = self.store.load()["games"]["22"]
@@ -2229,6 +3575,7 @@ class ApplicationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_command_does_not_save_unchanged_driver_config(self):
         self.save_settings()
+        await self.application.snapshot()
         original_save = self.store.save
         writes = []
 

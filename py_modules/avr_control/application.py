@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import inspect
 import json
@@ -26,11 +27,20 @@ from .drivers.base import (
     Unsupported,
     VolumeScale,
 )
-from .settings import GameProfile, Settings, SettingsRepository
+from .settings import (
+    GameProfile,
+    GameSession,
+    GlobalProfile,
+    Settings,
+    SettingsRepository,
+)
 from .volume import VolumePolicy
 
 _CAPABILITY_ORDER = (VOLUME, MUTE, POWER, MODE)
 _SCHEDULE_MAX_ATTEMPTS = 3
+_GAME_RESTORE_MAX_AGE = 10 * 60
+_GAME_RESTORE_MAX_ATTEMPTS = 3
+_GAME_RESTORE_RETRY_INTERVAL = 2
 
 
 @dataclass(frozen=True)
@@ -199,8 +209,13 @@ class ControlApplication:
         self._last_rediscover: float | None = None
         self._last_found: list[Found] = []
         self._current_game: dict | None = None
-        self._suppress_save_until: tuple[int, int, float] | None = None
+        self._current_game_binding: dict | None = None
+        self._game_state_synchronized = False
+        self._profile_transition_generation = 0
+        self._profile_transition_active = False
+        self._profile_transition_owner: asyncio.Task | None = None
         self._reapply_task: asyncio.Task | None = None
+        self._reapply_generation = 0
         self._schedule_task: asyncio.Task | None = None
         self._resume_task: asyncio.Task | None = None
         self._suspend_task: asyncio.Task | None = None
@@ -212,6 +227,7 @@ class ControlApplication:
         self._schedule_late_done = False
         self._schedule_mode_done = False
         self._panel_open = False
+        self._profile_transition_lock = asyncio.Lock()
         self._watch_unsubscribe: Callable[[], Awaitable[None]] | None = None
         self._watch_driver: Driver | None = None
         self._watch_generation: int | None = None
@@ -309,9 +325,21 @@ class ControlApplication:
                 self._last_status = (generation, driver, status)
                 self._revision += 1
                 revision = self._revision
+                observation = Status(
+                    partial.volume,
+                    partial.muted,
+                    partial.power,
+                    partial.mode,
+                )
+                profile_generation = self._profile_transition_generation
                 task = asyncio.create_task(
                     self._publish_push_snapshot(
-                        revision, generation, driver, start_token
+                        revision,
+                        generation,
+                        driver,
+                        start_token,
+                        observation,
+                        profile_generation,
                     )
                 )
                 self._push_tasks.add(task)
@@ -354,7 +382,13 @@ class ControlApplication:
                     await self._stop_watch_locked()
 
     async def _publish_push_snapshot(
-        self, revision: int, generation: int, driver: Driver, start_token: int
+        self,
+        revision: int,
+        generation: int,
+        driver: Driver,
+        start_token: int,
+        observation: Status,
+        profile_generation: int,
     ) -> None:
         if (
             start_token != self._watch_start_token
@@ -364,6 +398,13 @@ class ControlApplication:
         ):
             return
         try:
+            await self._remember(
+                observation.volume,
+                observation.mode,
+                generation=generation,
+                driver=driver,
+                profile_generation=profile_generation,
+            )
             snapshot = await self._snapshot(refresh=False)
             if (
                 start_token != self._watch_start_token
@@ -392,6 +433,7 @@ class ControlApplication:
                     await self._stop_watch_locked()
 
     def _cancel_reapply(self) -> None:
+        self._reapply_generation += 1
         task = self._reapply_task
         self._reapply_task = None
         if task is not None and not task.done():
@@ -757,6 +799,7 @@ class ControlApplication:
             driver = await self._get_driver(generation)
             if not self._is_current(generation, driver):
                 return
+            profile_generation = self._profile_transition_generation
             status: Status = await self._run(
                 "status", generation=generation, driver=driver
             )
@@ -782,6 +825,7 @@ class ControlApplication:
                         schedule_generation, config, window_key, active=False
                     ):
                         return
+                    profile_generation = self._profile_transition_generation
                     await self._run(
                         "set_volume", volume, generation=generation, driver=driver
                     )
@@ -804,7 +848,10 @@ class ControlApplication:
             self._save(data)
             if previous is not None:
                 await self._remember(
-                    volume=volume, generation=generation, driver=driver
+                    volume=volume,
+                    generation=generation,
+                    driver=driver,
+                    profile_generation=profile_generation,
                 )
         except Exception as exc:
             self._log("error", f"Restoring scheduled late-night volume failed: {exc}")
@@ -986,6 +1033,60 @@ class ControlApplication:
             "config_hash": hashlib.sha256(encoded).hexdigest(),
         }
 
+    @staticmethod
+    def _global_profile_key(binding: dict) -> str:
+        encoded = json.dumps(
+            binding, sort_keys=True, separators=(",", ":"), default=str
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    def _global_profile(
+        self, data: Settings, driver_key: str, binding: dict | None = None
+    ) -> GlobalProfile | None:
+        binding = binding or self._receiver_binding(data)
+        profile = data.global_profiles.get(self._global_profile_key(binding))
+        if (
+            profile is None
+            or profile.driver != driver_key
+            or profile.binding != binding
+        ):
+            return None
+        return profile
+
+    def _seed_global_profile(
+        self,
+        data: Settings,
+        status: Status,
+        driver: Driver,
+        *,
+        skip_volume: bool = False,
+        skip_mode: bool = False,
+    ) -> bool:
+        binding = self._receiver_binding(data)
+        key = self._global_profile_key(binding)
+        profile = data.global_profiles.get(key)
+        if (
+            profile is None
+            or profile.driver != driver.key
+            or profile.binding != binding
+        ):
+            profile = GlobalProfile(driver=driver.key, binding=binding)
+            data.global_profiles[key] = profile
+            changed = True
+        else:
+            changed = False
+
+        volume = status.volume
+        if data.late.active:
+            volume = data.late.prev_volume
+        if not skip_volume and profile.volume is None and volume is not None:
+            profile.volume = volume
+            changed = True
+        if not skip_mode and profile.mode is None and status.mode is not None:
+            profile.mode = status.mode
+            changed = True
+        return changed
+
     def _legacy_receiver_binding(self, data: Settings) -> dict:
         receiver = data.receiver
         driver = receiver.driver
@@ -1092,14 +1193,138 @@ class ControlApplication:
             and self._current_game["appid"] == int(appid)
         )
 
-    def _suppress_game_saves(self, generation: int, appid: int) -> None:
-        if self._is_current_game(generation, appid):
-            self._suppress_save_until = (
-                generation,
-                int(appid),
-                self.clock() + 6.0,
+    def _drop_pending_game_restore(
+        self, appid: int, reason: str, pending_index: int | None = None
+    ) -> None:
+        data = self._settings()
+        if pending_index is None:
+            session = data.game_session
+        elif 0 <= pending_index < len(data.pending_game_restores):
+            session = data.pending_game_restores[pending_index]
+        else:
+            return
+        if session is None or session.appid != int(appid):
+            return
+        if pending_index is not None:
+            data.pending_game_restores.pop(pending_index)
+            self._save(data)
+            self._log(
+                "info", f"Dropped pending game restore for {appid}: {reason}"
             )
+            return
+        session.restore_volume = False
+        session.restore_mode = False
+        session.restore_expires_at = None
+        session.restore_attempts = 0
+        session.restore_next_attempt_at = None
+        if not (session.volume or session.mode):
+            data.game_session = None
+        self._save(data)
+        self._log("info", f"Dropped pending game restore for {appid}: {reason}")
 
+    @staticmethod
+    def _restore_session(
+        data: Settings, pending_index: int | None
+    ) -> GameSession | None:
+        if pending_index is None:
+            return data.game_session
+        if pending_index >= len(data.pending_game_restores):
+            return None
+        return data.pending_game_restores[pending_index]
+
+    def _queue_pending_game_restore(self, data: Settings, session: GameSession) -> None:
+        if not (session.restore_volume or session.restore_mode):
+            return
+        pending = copy.deepcopy(session)
+        pending.volume = False
+        pending.mode = False
+        data.pending_game_restores.append(pending)
+
+    @staticmethod
+    def _has_pending_restore(
+        data: Settings, setting: str, driver: str, binding: dict
+    ) -> bool:
+        flag = "restore_volume" if setting == "volume" else "restore_mode"
+        sessions = list(data.pending_game_restores)
+        if data.game_session is not None:
+            sessions.append(data.game_session)
+        return any(
+            session.driver == driver
+            and session.binding == binding
+            and getattr(session, flag)
+            for session in sessions
+        )
+
+    def _cancel_pending_restore_for_setting(
+        self, data: Settings, setting: str, driver: str, binding: dict
+    ) -> bool:
+        flag = "restore_volume" if setting == "volume" else "restore_mode"
+        changed = False
+        session = data.game_session
+        if (
+            session is not None
+            and session.driver == driver
+            and session.binding == binding
+            and getattr(session, flag)
+        ):
+            setattr(session, flag, False)
+            changed = True
+            if not (session.restore_volume or session.restore_mode):
+                session.restore_expires_at = None
+                session.restore_attempts = 0
+                session.restore_next_attempt_at = None
+                if not (session.volume or session.mode):
+                    data.game_session = None
+        for pending in data.pending_game_restores:
+            if (
+                pending.driver == driver
+                and pending.binding == binding
+                and getattr(pending, flag)
+            ):
+                setattr(pending, flag, False)
+                changed = True
+        if changed:
+            data.pending_game_restores = [
+                pending
+                for pending in data.pending_game_restores
+                if pending.restore_volume or pending.restore_mode
+            ]
+        return changed
+
+    def _handoff_profile_settings(
+        self, session: GameSession, profile: GameProfile | None, data: Settings
+    ) -> None:
+        if (
+            profile is None
+            or profile.driver != session.driver
+            or session.binding != self._receiver_binding(data)
+        ):
+            return
+        if profile.volume is not None:
+            session.volume = False
+            session.restore_volume = False
+        if profile.mode is not None:
+            session.mode = False
+            session.restore_mode = False
+
+    def _discard_overridden_pending_restores(
+        self, data: Settings, profile: GameProfile, driver: Driver
+    ) -> bool:
+        if profile.driver != driver.key:
+            return False
+        binding = self._receiver_binding(data)
+        changed = False
+        if profile.volume is not None:
+            changed |= self._cancel_pending_restore_for_setting(
+                data, "volume", driver.key, binding
+            )
+        if profile.mode is not None:
+            changed |= self._cancel_pending_restore_for_setting(
+                data, "mode", driver.key, binding
+            )
+        if changed:
+            self._save(data)
+        return changed
     @staticmethod
     def _stale_receiver_error() -> DriverError:
         return DriverError("Receiver changed while the operation was in progress")
@@ -1595,12 +1820,13 @@ class ControlApplication:
         driver: Driver,
         generation: int,
         expected_driver: str | None = None,
-    ) -> Driver:
+        return_status: bool = False,
+    ) -> Driver | tuple[Driver, Status | None]:
         if not self._is_current(generation, driver):
             raise self._stale_receiver_error()
         if self._initialized_driver is driver:
-            return driver
-        await self._run(
+            return (driver, None) if return_status else driver
+        status = await self._run(
             "status",
             expected_driver=expected_driver,
             generation=generation,
@@ -1609,13 +1835,14 @@ class ControlApplication:
         active_driver = self._active_driver
         if active_driver is None or not self._is_current(generation, active_driver):
             raise self._stale_receiver_error()
-        return active_driver
+        return (active_driver, status) if return_status else active_driver
 
     async def _read_state(
         self, refresh: bool = True, allow_unknown: bool = False
     ) -> dict:
         generation = self._receiver_generation
         cached = self._last_status
+        status_is_fresh = False
         if (
             not refresh
             and cached is not None
@@ -1627,6 +1854,7 @@ class ControlApplication:
             return {"ok": False, "error": "Receiver state hasn't been read yet"}
         else:
             status = None
+        profile_generation = self._profile_transition_generation
         try:
             driver = await self._get_driver(generation)
             if not self._is_current(generation, driver):
@@ -1634,16 +1862,34 @@ class ControlApplication:
             if status is not None and cached is not None and cached[1] is not driver:
                 status = None
             if status is None:
+                profile_generation = self._profile_transition_generation
                 status = await self._run(
                     "status", generation=generation, driver=driver
                 )
+                status_is_fresh = True
+            driver = self._active_driver
+            if driver is None or not self._is_current(generation, driver):
+                raise self._stale_receiver_error()
+            await self._apply_game_session_restore(
+                status=status if status_is_fresh else None,
+                generation=generation,
+                driver=driver,
+                observation_generation=(
+                    profile_generation if status_is_fresh else None
+                ),
+            )
             driver = self._active_driver
             if driver is None or not self._is_current(generation, driver):
                 raise self._stale_receiver_error()
             data = self._settings()
-            await self._remember(
-                status.volume, status.mode, generation=generation, driver=driver
-            )
+            if status_is_fresh:
+                await self._remember(
+                    status.volume,
+                    status.mode,
+                    generation=generation,
+                    driver=driver,
+                    profile_generation=profile_generation,
+                )
             data = self._settings()
             game = None
             if self._current_game:
@@ -1709,6 +1955,7 @@ class ControlApplication:
             volume = VolumePolicy.clamp(
                 requested_volume, self._effective_cap(data, scale), scale
             )
+            profile_generation = self._profile_transition_generation
             confirmed = await self._run(
                 "set_volume", volume, generation=generation, driver=driver
             )
@@ -1718,7 +1965,10 @@ class ControlApplication:
             ):
                 raise self._stale_receiver_error()
             await self._remember(
-                volume=confirmed, generation=generation, driver=current_driver
+                volume=confirmed,
+                generation=generation,
+                driver=current_driver,
+                profile_generation=profile_generation,
             )
             result = {"ok": True, "volume": confirmed}
             if confirmed != requested_volume:
@@ -1767,6 +2017,7 @@ class ControlApplication:
             driver = await self._ensure_initialized(driver, generation)
             if MODE not in driver.capabilities:
                 return {"ok": False, "error": "Listening modes need the eISCP protocol"}
+            profile_generation = self._profile_transition_generation
             confirmed = await self._run(
                 "set_mode", code, generation=generation, driver=driver
             )
@@ -1774,7 +2025,10 @@ class ControlApplication:
             if driver is None or not self._is_current(generation, driver):
                 raise self._stale_receiver_error()
             await self._remember(
-                mode=confirmed, generation=generation, driver=driver
+                mode=confirmed,
+                generation=generation,
+                driver=driver,
+                profile_generation=profile_generation,
             )
             response = {
                 "ok": True,
@@ -1795,85 +2049,226 @@ class ControlApplication:
         mode: str | None = None,
         generation: int | None = None,
         driver: Driver | None = None,
+        profile_generation: int | None = None,
     ) -> None:
         if generation is None:
             generation = self._receiver_generation
         if driver is None:
             driver = self._active_driver
-        if not self._is_current(generation, driver):
-            return
-        if not self._current_game:
-            return
-        suppression = self._suppress_save_until
+        if profile_generation is None:
+            profile_generation = self._profile_transition_generation
         if (
-            suppression is not None
-            and suppression[:2] == (generation, self._current_game["appid"])
-            and self.clock() < suppression[2]
+            not self._is_current(generation, driver)
+            or not self._game_state_synchronized
+        ):
+            return
+        if (
+            profile_generation != self._profile_transition_generation
+            or self._profile_transition_active
         ):
             return
         data = self._settings()
-        profile = data.games.get(str(self._current_game["appid"]))
-        if not profile:
-            return
-        if profile.driver != (self._active_driver.key if self._active_driver else None):
-            return
+        session = data.game_session
+        binding = self._receiver_binding(data)
+        appid = (
+            self._current_game["appid"]
+            if self._current_game
+            else (
+                session.appid
+                if session is not None
+                and (
+                    session.volume
+                    or session.mode
+                    or session.restore_volume
+                    or session.restore_mode
+                )
+                else None
+            )
+        )
+        profile = data.games.get(str(appid)) if appid is not None else None
+        if profile is not None and profile.driver != driver.key:
+            profile = None
         if data.late.active:
             volume = None
         changed = False
-        if volume is not None and profile.volume is not None and profile.volume != volume:
-            profile.volume = volume
-            changed = True
-        if mode is not None and profile.mode is not None and profile.mode != mode:
-            profile.mode = mode
-            changed = True
+
+        # A receiver gets its own global profile; an empty one is seeded from
+        # the first successful status, without replacing values already saved.
+        volume_restore_pending = self._has_pending_restore(
+            data, "volume", driver.key, binding
+        )
+        mode_restore_pending = self._has_pending_restore(
+            data, "mode", driver.key, binding
+        )
+        current_game_bound = bool(
+            self._current_game is not None
+            and self._current_game["appid"] == appid
+            and self._current_game_binding == binding
+        )
+        session_bound = bool(
+            session is not None
+            and session.appid == appid
+            and session.binding == binding
+            and session.driver == driver.key
+        )
+        volume_game_active = bool(
+            profile is not None
+            and profile.volume is not None
+            and (
+                current_game_bound
+                or session_bound and session.volume
+            )
+        )
+        mode_game_active = bool(
+            profile is not None
+            and profile.mode is not None
+            and (
+                current_game_bound
+                or session_bound and session.mode
+            )
+        )
+        changed = self._seed_global_profile(
+            data,
+            Status(volume=volume, mode=mode),
+            driver,
+            skip_volume=volume_restore_pending or volume_game_active,
+            skip_mode=mode_restore_pending or mode_game_active,
+        )
+        global_profile = self._global_profile(data, driver.key)
+        if global_profile is not None:
+            volume_is_game_active = bool(
+                profile is not None
+                and profile.volume is not None
+                and volume_game_active
+                and not (
+                    session is not None
+                    and session.appid == appid
+                    and session.restore_volume
+                )
+            )
+            mode_is_game_active = bool(
+                profile is not None
+                and profile.mode is not None
+                and mode_game_active
+                and not (
+                    session is not None
+                    and session.appid == appid
+                    and session.restore_mode
+                )
+            )
+            if volume is not None and not volume_restore_pending:
+                target = profile if volume_is_game_active else global_profile
+                if target.volume != volume:
+                    target.volume = volume
+                    changed = True
+            if mode is not None and not mode_restore_pending:
+                target = profile if mode_is_game_active else global_profile
+                if target.mode != mode:
+                    target.mode = mode
+                    changed = True
         if changed:
             if self._is_current(generation, driver):
                 self._save(data)
 
     async def _set_current_game(self, appid: int, name: str) -> None:
-        current = {"appid": int(appid), "name": name} if appid else None
+        appid = int(appid)
+        current = {"appid": appid, "name": name} if appid > 0 else None
+        data = self._settings()
+        if self._game_state_synchronized and (
+            self._current_game is None
+            and current is None
+            and data.game_session is None
+            or self._current_game is not None
+            and current is not None
+            and self._current_game["appid"] == current["appid"]
+            and self._current_game_binding == self._receiver_binding(data)
+        ):
+            self._current_game = current
+            return
+        session = data.game_session
+        was_synchronized = self._game_state_synchronized
+        previous_appid = (
+            self._current_game["appid"]
+            if self._current_game is not None
+            else session.appid
+            if session is not None
+            and (
+                not was_synchronized
+                or session.restore_volume
+                or session.restore_mode
+            )
+            else None
+        )
+        if previous_appid is not None and (
+            current is None or previous_appid != current["appid"]
+        ):
+            if (
+                session is not None
+                and current is not None
+                and session.appid != current["appid"]
+            ):
+                self._handoff_profile_settings(
+                    session,
+                    data.games.get(str(current["appid"])),
+                    data,
+                )
+                self._save(data)
+            await self._game_stopped(previous_appid)
+            data = self._settings()
+            session = data.game_session
+            if (
+                current is not None
+                and session is not None
+                and session.appid != current["appid"]
+                and (session.restore_volume or session.restore_mode)
+            ):
+                self._queue_pending_game_restore(data, session)
+                data.game_session = None
+                self._save(data)
         if current != self._current_game:
             self._cancel_reapply()
         self._current_game = current
+        self._current_game_binding = (
+            self._receiver_binding(self._settings()) if current is not None else None
+        )
+        self._game_state_synchronized = True
 
-    async def _game_started(self, appid: int, name: str) -> dict:
-        self._cancel_reapply()
-        generation = self._receiver_generation
-        self._current_game = {"appid": int(appid), "name": name}
-        data = self._settings()
-        profile = data.games.get(str(int(appid)))
-        if not profile:
-            return {"applied": False}
-        try:
-            driver = await self._get_driver(generation)
-            if not self._is_current(generation, driver):
-                raise self._stale_receiver_error()
-            if not self._current_game or self._current_game["appid"] != int(appid):
-                return {"applied": False}
+    async def _apply_profile_settings(
+        self,
+        volume: int | None,
+        mode: str | None,
+        generation: int,
+        driver: Driver,
+        status: Status | None = None,
+        strict_mode: bool = False,
+    ) -> tuple[bool, bool, Driver]:
+        applied = False
+        mode_applied = False
+        if volume is not None and VOLUME in driver.capabilities:
             data = self._settings()
-            profile = data.games.get(str(int(appid)))
-            if not profile:
-                return {"applied": False}
-            if profile.driver != driver.key:
-                return {"applied": False}
-            self._suppress_game_saves(generation, appid)
-            driver = await self._ensure_initialized(
-                driver, generation, expected_driver=driver.key
+            volume = VolumePolicy.clamp(
+                int(volume), self._effective_cap(data, driver.scale), driver.scale
             )
-            data = self._settings()
-            profile = data.games.get(str(int(appid)))
-            if not profile or profile.driver != driver.key:
-                return {"applied": False}
-            self._suppress_game_saves(generation, appid)
-            applied = False
-            volume = profile.volume
-            if volume is not None:
-                volume = VolumePolicy.clamp(
-                    int(volume), self._effective_cap(data, driver.scale), driver.scale
-                )
-                await self._run(
-                    "set_volume",
-                    volume,
+            confirmed = await self._run(
+                "set_volume",
+                volume,
+                expected_driver=driver.key,
+                generation=generation,
+                driver=driver,
+            )
+            if not self._is_current(generation):
+                raise self._stale_receiver_error()
+            driver = self._active_driver
+            if driver is None:
+                raise self._stale_receiver_error()
+            if status is not None:
+                status.volume = confirmed
+            applied = True
+        if mode and MODE in driver.capabilities:
+            try:
+                confirmed = await self._run(
+                    "set_mode",
+                    mode,
                     expected_driver=driver.key,
                     generation=generation,
                     driver=driver,
@@ -1881,32 +2276,188 @@ class ControlApplication:
                 if not self._is_current(generation):
                     raise self._stale_receiver_error()
                 driver = self._active_driver
+                if driver is None:
+                    raise self._stale_receiver_error()
+                if status is not None:
+                    status.mode = confirmed
                 applied = True
-            mode = profile.mode
-            if mode and MODE in driver.capabilities:
-                mode_applied = False
-                try:
-                    await self._run(
-                        "set_mode",
+                mode_applied = True
+            except Exception as exc:
+                if strict_mode or not self._is_current(generation):
+                    raise
+                self._log("error", f"Setting listening mode failed: {exc}")
+        return applied, mode_applied, driver
+
+    async def _game_started(self, appid: int, name: str) -> dict:
+        appid = int(appid)
+        transition_data = self._settings()
+        previous_session = transition_data.game_session
+        next_profile = transition_data.games.get(str(appid))
+        previous_appid = (
+            self._current_game["appid"]
+            if self._current_game is not None
+            else previous_session.appid
+            if previous_session is not None
+            else None
+        )
+        if previous_appid is not None and (
+            previous_appid != appid
+            or previous_session is not None
+            and (
+                previous_session.restore_volume
+                or previous_session.restore_mode
+            )
+        ):
+            if previous_session is not None and previous_session.appid != appid:
+                self._handoff_profile_settings(
+                    previous_session, next_profile, transition_data
+                )
+                self._save(transition_data)
+            await self._game_stopped(previous_appid)
+        self._cancel_reapply()
+        generation = self._receiver_generation
+        self._current_game = {"appid": appid, "name": name}
+        self._current_game_binding = self._receiver_binding(self._settings())
+        self._game_state_synchronized = True
+        data = self._settings()
+        if data.game_session is not None and (
+            data.game_session.appid != appid
+            or data.game_session.restore_volume
+            or data.game_session.restore_mode
+        ):
+            if (
+                data.game_session.appid != appid
+                and (
+                    data.game_session.restore_volume
+                    or data.game_session.restore_mode
+                )
+            ):
+                self._queue_pending_game_restore(data, data.game_session)
+            data.game_session = None
+            self._save(data)
+        profile = data.games.get(str(appid))
+        if not profile:
+            data = self._settings()
+            if data.game_session is not None and data.game_session.appid == appid:
+                data.game_session = None
+                self._save(data)
+            return {"applied": False}
+        try:
+            driver = await self._get_driver(generation)
+            if not self._is_current(generation, driver):
+                raise self._stale_receiver_error()
+            if not self._current_game or self._current_game["appid"] != appid:
+                return {"applied": False}
+            data = self._settings()
+            profile = data.games.get(str(appid))
+            if not profile:
+                return {"applied": False}
+            if profile.driver != driver.key:
+                return {"applied": False}
+            driver, status = await self._ensure_initialized(
+                driver,
+                generation,
+                expected_driver=driver.key,
+                return_status=True,
+            )
+            if status is None:
+                status = await self._run(
+                    "status", generation=generation, driver=driver
+                )
+            if not self._is_current(generation, driver):
+                raise self._stale_receiver_error()
+            if not self._is_current_game(generation, appid):
+                return {"applied": False}
+            driver = self._active_driver
+            data = self._settings()
+            profile = data.games.get(str(appid))
+            if not profile or profile.driver != driver.key:
+                return {"applied": False}
+            self._discard_overridden_pending_restores(data, profile, driver)
+            volume = (
+                profile.volume
+                if profile.volume is not None and VOLUME in driver.capabilities
+                else None
+            )
+            mode = (
+                profile.mode
+                if profile.mode is not None and MODE in driver.capabilities
+                else None
+            )
+            if volume is None and mode is None:
+                return {"applied": False}
+
+            binding = self._receiver_binding(data)
+            session = data.game_session
+            if (
+                session is None
+                or session.appid != appid
+                or session.driver != driver.key
+                or session.binding != binding
+            ):
+                session = GameSession(
+                    appid=appid,
+                    driver=driver.key,
+                    binding=binding,
+                )
+                data.game_session = session
+            session.volume = volume is not None
+            session.mode = mode is not None
+            session.restore_volume = False
+            session.restore_mode = False
+            self._seed_global_profile(
+                data,
+                status,
+                driver,
+                skip_volume=volume is None
+                or self._has_pending_restore(
+                    data, "volume", driver.key, self._receiver_binding(data)
+                ),
+                skip_mode=mode is None
+                or self._has_pending_restore(
+                    data, "mode", driver.key, self._receiver_binding(data)
+                ),
+            )
+            self._save(data)
+            applied, mode_applied, driver = await self._apply_profile_settings(
+                volume,
+                mode,
+                generation,
+                driver,
+                status=status,
+            )
+            data = self._settings()
+            session = data.game_session
+            if (
+                session is not None
+                and session.appid == appid
+                and session.driver == driver.key
+                and session.binding == self._receiver_binding(data)
+            ):
+                session.volume = (
+                    volume is not None and VOLUME in driver.capabilities
+                )
+                session.mode = mode_applied
+                if not (
+                    session.volume
+                    or session.mode
+                    or session.restore_volume
+                    or session.restore_mode
+                ):
+                    data.game_session = None
+                self._save(data)
+            if mode_applied:
+                self._reapply_task = asyncio.create_task(
+                    self._reapply_mode(
+                        appid,
                         mode,
-                        expected_driver=driver.key,
-                        generation=generation,
-                        driver=driver,
+                        generation,
+                        driver,
+                        self._reapply_generation,
                     )
-                    if not self._is_current(generation):
-                        raise self._stale_receiver_error()
-                    driver = self._active_driver
-                    applied = True
-                    mode_applied = True
-                except Exception as exc:
-                    self._log("error", f"Setting listening mode failed: {exc}")
-                if mode_applied:
-                    self._reapply_task = asyncio.create_task(
-                        self._reapply_mode(int(appid), mode, generation, driver)
-                    )
+                )
             return {"applied": applied}
         except Exception as exc:
-            self._suppress_game_saves(generation, appid)
             self._log("error", f"Applying game profile failed: {exc}")
             return {"applied": False, "error": str(exc)}
 
@@ -1916,6 +2467,7 @@ class ControlApplication:
         mode: str | None,
         generation: int | None = None,
         driver: Driver | None = None,
+        reapply_generation: int | None = None,
     ) -> None:
         if not mode:
             return
@@ -1923,6 +2475,8 @@ class ControlApplication:
             generation = self._receiver_generation
         if driver is None:
             driver = self._active_driver
+        if reapply_generation is None:
+            reapply_generation = self._reapply_generation
         if not self._is_current(generation, driver):
             return
         result = self.sleep(self.reapply_delay)
@@ -1930,33 +2484,323 @@ class ControlApplication:
             await result
         if (
             not self._is_current(generation, driver)
+            or reapply_generation != self._reapply_generation
             or not self._current_game
             or self._current_game["appid"] != appid
+            or not self._game_profile_remembers_mode(appid, driver, mode)
         ):
             return
+        async with self._profile_transition_lock:
+            if (
+                not self._is_current(generation, driver)
+                or reapply_generation != self._reapply_generation
+                or not self._current_game
+                or self._current_game["appid"] != appid
+                or not self._game_profile_remembers_mode(appid, driver, mode)
+            ):
+                return
+            self._profile_transition_generation += 1
+            self._profile_transition_active = True
+            self._profile_transition_owner = asyncio.current_task()
+            try:
+                status: Status = await self._run(
+                    "status", generation=generation, driver=driver
+                )
+                if (
+                    not self._is_current(generation, driver)
+                    or not self._current_game
+                    or self._current_game["appid"] != appid
+                    or not self._game_profile_remembers_mode(appid, driver, mode)
+                ):
+                    return
+                if status.mode and status.mode != mode:
+                    await self._run(
+                        "set_mode",
+                        mode,
+                        expected_driver=driver.key,
+                        generation=generation,
+                        driver=driver,
+                    )
+            except Exception as exc:
+                self._log("error", f"Re-applying listening mode failed: {exc}")
+            finally:
+                self._profile_transition_generation += 1
+                self._profile_transition_active = False
+                self._profile_transition_owner = None
+
+    def _game_profile_remembers_mode(
+        self, appid: int, driver: Driver, mode: str
+    ) -> bool:
+        profile = self._settings().games.get(str(appid))
+        return bool(
+            profile
+            and profile.driver == driver.key
+            and profile.mode == mode
+        )
+
+    async def _apply_game_session_restore(
+        self,
+        status: Status | None = None,
+        generation: int | None = None,
+        driver: Driver | None = None,
+        pending_index: int | None = None,
+        observation_generation: int | None = None,
+    ) -> bool:
+        if generation is None:
+            generation = self._receiver_generation
+        data = self._settings()
+        session = self._restore_session(data, pending_index)
+        if (
+            pending_index is None
+            and (session is None or not (session.restore_volume or session.restore_mode))
+        ):
+            pending_index = next(
+                (
+                    index
+                    for index, pending in enumerate(data.pending_game_restores)
+                    if pending.restore_volume or pending.restore_mode
+                ),
+                None,
+            )
+            session = self._restore_session(data, pending_index)
+        if session is None or not (
+            session.restore_volume or session.restore_mode
+        ):
+            return False
+        selected_session = session
+        if self._profile_transition_owner is not asyncio.current_task():
+            async with self._profile_transition_lock:
+                data = self._settings()
+                session = self._restore_session(data, pending_index)
+                if session != selected_session or not (
+                    session.restore_volume or session.restore_mode
+                ):
+                    return False
+                if (
+                    status is not None
+                    and observation_generation
+                    != self._profile_transition_generation
+                ):
+                    status = None
+                self._profile_transition_generation += 1
+                self._profile_transition_active = True
+                self._profile_transition_owner = asyncio.current_task()
+                try:
+                    return await self._apply_game_session_restore(
+                        status=status,
+                        generation=generation,
+                        driver=driver,
+                        pending_index=pending_index,
+                        observation_generation=observation_generation,
+                    )
+                finally:
+                    self._profile_transition_generation += 1
+                    self._profile_transition_active = False
+                    self._profile_transition_owner = None
+        data = self._settings()
+        session = self._restore_session(data, pending_index)
+        if session is None or not (
+            session.restore_volume or session.restore_mode
+        ):
+            return False
+        if (
+            session.restore_expires_at is None
+            or self.wall_clock() >= session.restore_expires_at
+        ):
+            self._drop_pending_game_restore(
+                session.appid, "restore expired", pending_index
+            )
+            return False
+        if session.restore_attempts >= _GAME_RESTORE_MAX_ATTEMPTS:
+            self._drop_pending_game_restore(
+                session.appid, "attempt limit reached", pending_index
+            )
+            return False
+        if (
+            session.restore_next_attempt_at is not None
+            and self.wall_clock() < session.restore_next_attempt_at
+        ):
+            return False
+        appid = session.appid
         try:
-            status: Status = await self._run(
-                "status", generation=generation, driver=driver
+            if driver is None:
+                driver = await self._get_driver(generation)
+            if not self._is_current(generation, driver):
+                raise self._stale_receiver_error()
+            data = self._settings()
+            session = self._restore_session(data, pending_index)
+            if session is None or session.appid != appid:
+                return False
+            binding = self._receiver_binding(data)
+            if session.binding != binding or session.driver != driver.key:
+                if pending_index is None:
+                    data.game_session = None
+                else:
+                    data.pending_game_restores.pop(pending_index)
+                self._save(data)
+                self._log(
+                    "info",
+                    "Skipped game restore because the receiver changed",
+                )
+                return False
+
+            if status is None:
+                status = await self._run(
+                    "status", generation=generation, driver=driver
+                )
+            if not self._is_current(generation, driver):
+                raise self._stale_receiver_error()
+            if POWER in driver.capabilities and status.power is not True:
+                self._log(
+                    "info",
+                    "Game restore is waiting for the receiver to leave standby",
+                )
+                return False
+
+            data = self._settings()
+            session = self._restore_session(data, pending_index)
+            if session is None or session.appid != appid:
+                return False
+            profile = self._global_profile(
+                data, session.driver, session.binding
+            )
+            restore_volume = session.restore_volume
+            restore_mode = session.restore_mode
+            volume = (
+                profile.volume
+                if restore_volume and profile is not None
+                else None
+            )
+            mode = profile.mode if restore_mode and profile is not None else None
+            if VOLUME not in driver.capabilities:
+                volume = None
+            if MODE not in driver.capabilities:
+                mode = None
+            if volume is None and mode is None:
+                return False
+            if (
+                restore_volume
+                and profile is not None
+                and profile.volume is not None
+                and data.late.active
+                and data.late.binding == session.binding
+            ):
+                data.late.prev_volume = profile.volume
+                self._save(data)
+
+            expected_volume = (
+                VolumePolicy.clamp(
+                    int(volume),
+                    self._effective_cap(data, driver.scale),
+                    driver.scale,
+                )
+                if volume is not None
+                else None
+            )
+            session.restore_attempts += 1
+            session.restore_next_attempt_at = (
+                self.wall_clock() + _GAME_RESTORE_RETRY_INTERVAL
+            )
+            self._save(data)
+            original_session = session
+            _applied, _mode_applied, driver = await self._apply_profile_settings(
+                volume,
+                mode,
+                generation,
+                driver,
+                status=status,
             )
             if not self._is_current(generation, driver):
-                return
-            if status.mode and status.mode != mode:
-                await self._run(
-                    "set_mode",
-                    mode,
-                    expected_driver=driver.key,
-                    generation=generation,
-                    driver=driver,
+                raise self._stale_receiver_error()
+            data = self._settings()
+            current_session = self._restore_session(data, pending_index)
+            if current_session != original_session:
+                return False
+            current_session.restore_volume = bool(
+                restore_volume
+                and expected_volume is not None
+                and status.volume != expected_volume
+            )
+            current_session.restore_mode = bool(
+                restore_mode and mode is not None and status.mode != mode
+            )
+            if (
+                (current_session.restore_volume or current_session.restore_mode)
+                and current_session.restore_attempts
+                >= _GAME_RESTORE_MAX_ATTEMPTS
+            ):
+                self._drop_pending_game_restore(
+                    current_session.appid,
+                    "attempt limit reached",
+                    pending_index,
                 )
+                return False
+            if not (
+                current_session.restore_volume or current_session.restore_mode
+            ):
+                current_session.restore_expires_at = None
+                current_session.restore_attempts = 0
+                current_session.restore_next_attempt_at = None
+                if pending_index is None:
+                    if not (current_session.volume or current_session.mode):
+                        data.game_session = None
+                else:
+                    data.pending_game_restores.pop(pending_index)
+            self._save(data)
+            return not (
+                current_session.restore_volume or current_session.restore_mode
+            )
         except Exception as exc:
-            self._log("error", f"Re-applying listening mode failed: {exc}")
+            self._log("error", f"Applying global game restore failed: {exc}")
+            current_data = self._settings()
+            current_session = self._restore_session(
+                current_data, pending_index
+            )
+            if (
+                current_session is not None
+                and current_session.appid == appid
+                and current_session.restore_attempts
+                >= _GAME_RESTORE_MAX_ATTEMPTS
+            ):
+                self._drop_pending_game_restore(
+                    appid, "attempt limit reached", pending_index
+                )
+            return False
 
     async def _game_stopped(self, appid: int) -> None:
-        if self._current_game and self._current_game["appid"] == int(appid):
+        appid = int(appid)
+        self._game_state_synchronized = True
+        if self._current_game and self._current_game["appid"] == appid:
             self._cancel_reapply()
             self._current_game = None
+            self._current_game_binding = None
+        data = self._settings()
+        session = data.game_session
+        if session is None or session.appid != appid:
+            return
+        was_restore_pending = bool(
+            session.restore_volume or session.restore_mode
+        )
+        session.restore_volume = session.restore_volume or session.volume
+        session.restore_mode = session.restore_mode or session.mode
+        session.volume = False
+        session.mode = False
+        if not (session.restore_volume or session.restore_mode):
+            data.game_session = None
+            self._save(data)
+            return
+        if not was_restore_pending:
+            session.restore_expires_at = (
+                self.wall_clock() + _GAME_RESTORE_MAX_AGE
+            )
+            session.restore_attempts = 0
+            session.restore_next_attempt_at = None
+        self._save(data)
+        await self._apply_game_session_restore()
 
     async def _set_game_remember(self, what: str, enabled: bool) -> dict:
+        if what == "mode" and not enabled:
+            self._cancel_reapply()
         generation = self._receiver_generation
         current_game = dict(self._current_game) if self._current_game else None
         if what not in ("volume", "mode"):
@@ -1965,6 +2809,13 @@ class ControlApplication:
             return {"ok": False, "error": "No game is running"}
         key = str(current_game["appid"])
         data = self._settings()
+        was_restore_pending = bool(
+            data.game_session
+            and (
+                data.game_session.restore_volume
+                or data.game_session.restore_mode
+            )
+        )
         if enabled:
             try:
                 driver = await self._get_driver(generation)
@@ -1983,16 +2834,55 @@ class ControlApplication:
             ):
                 return {"ok": False, "error": str(self._stale_receiver_error())}
             data = self._settings()
+            existing_profile = data.games.get(key)
+            session = data.game_session
+            seeded_global = self._seed_global_profile(
+                data,
+                status,
+                driver,
+                skip_volume=bool(
+                    existing_profile
+                    and existing_profile.driver == driver.key
+                    and existing_profile.volume is not None
+                    or session is not None
+                    and session.appid == int(key)
+                    and session.restore_volume
+                    or self._has_pending_restore(
+                        data, "volume", driver.key, self._receiver_binding(data)
+                    )
+                ),
+                skip_mode=bool(
+                    existing_profile
+                    and existing_profile.driver == driver.key
+                    and existing_profile.mode is not None
+                    or session is not None
+                    and session.appid == int(key)
+                    and session.restore_mode
+                    or self._has_pending_restore(
+                        data, "mode", driver.key, self._receiver_binding(data)
+                    )
+                ),
+            )
             if what == "volume":
                 value = status.volume
                 if data.late.active:
                     value = data.late.prev_volume if data.late.prev_volume is not None else value
                 if value is None:
+                    if seeded_global:
+                        self._save(data)
                     return {"ok": False, "error": "Receiver doesn't report volume"}
             else:
                 value = status.mode
                 if not value:
+                    if seeded_global:
+                        self._save(data)
                     return {"ok": False, "error": "Receiver doesn't report a listening mode"}
+            self._cancel_pending_restore_for_setting(
+                data,
+                what,
+                driver.key,
+                self._receiver_binding(data),
+            )
             profile = data.games.get(key)
             if profile is None:
                 profile = GameProfile(
@@ -2010,8 +2900,37 @@ class ControlApplication:
                 profile.volume = value
             else:
                 profile.mode = value
+            session = data.game_session
+            binding = self._receiver_binding(data)
+            if (
+                session is None
+                or session.appid != int(key)
+                or session.driver != driver.key
+                or session.binding != binding
+            ):
+                session = GameSession(
+                    appid=int(key),
+                    driver=driver.key,
+                    binding=binding,
+                )
+                data.game_session = session
+            if session.appid == int(key):
+                if what == "volume":
+                    session.volume = True
+                    session.restore_volume = False
+                else:
+                    session.mode = True
+                    session.restore_mode = False
         else:
             profile = data.games.get(key)
+            was_remembered = bool(
+                profile
+                and (
+                    profile.volume is not None
+                    if what == "volume"
+                    else profile.mode is not None
+                )
+            )
             if profile:
                 if what == "volume":
                     profile.volume = None
@@ -2019,14 +2938,60 @@ class ControlApplication:
                     profile.mode = None
                 if profile.volume is None and profile.mode is None:
                     data.games.pop(key, None)
+            session = data.game_session
+            if session is not None and session.appid == int(key):
+                if session.binding != self._receiver_binding(data):
+                    data.game_session = None
+                else:
+                    if what == "volume":
+                        if session.volume or was_remembered:
+                            session.restore_volume = True
+                        session.volume = False
+                    else:
+                        if session.mode or was_remembered:
+                            session.restore_mode = True
+                        session.mode = False
+            elif current_game and profile:
+                if was_remembered:
+                    session = GameSession(
+                        appid=int(key),
+                        driver=profile.driver or data.receiver.driver or "",
+                        binding=self._receiver_binding(data),
+                        restore_volume=what == "volume",
+                        restore_mode=what == "mode",
+                    )
+                    data.game_session = session
         if not self._is_current(generation) or self._current_game != current_game:
             return {"ok": False, "error": str(self._stale_receiver_error())}
+        session = data.game_session
+        if (
+            session is not None
+            and (session.restore_volume or session.restore_mode)
+            and not was_restore_pending
+        ):
+            session.restore_expires_at = (
+                self.wall_clock() + _GAME_RESTORE_MAX_AGE
+            )
+            session.restore_attempts = 0
+            session.restore_next_attempt_at = None
         self._save(data)
+        session = data.game_session
+        if session is not None and (session.restore_volume or session.restore_mode):
+            await self._apply_game_session_restore()
         return {"ok": True}
 
     async def _forget_game(self, appid: int) -> None:
+        appid = int(appid)
+        if self._current_game and self._current_game["appid"] == appid:
+            self._cancel_reapply()
+            await self._set_game_remember("volume", False)
+            await self._set_game_remember("mode", False)
+        else:
+            session = self._settings().game_session
+            if session is not None and session.appid == appid:
+                await self._game_stopped(appid)
         data = self._settings()
-        data.games.pop(str(int(appid)), None)
+        data.games.pop(str(appid), None)
         self._save(data)
 
     async def _set_schedule(self, intent: SetSchedule) -> dict:
@@ -2113,6 +3078,7 @@ class ControlApplication:
                 self._save(data)
                 cap = self._effective_cap(data, driver.scale)
                 if status.volume > cap:
+                    profile_generation = self._profile_transition_generation
                     confirmed = await self._run(
                         "set_volume",
                         cap,
@@ -2127,6 +3093,7 @@ class ControlApplication:
                             volume=confirmed,
                             generation=generation,
                             driver=current_driver,
+                            profile_generation=profile_generation,
                         )
             elif not on and active:
                 previous = data.late.prev_volume
@@ -2142,6 +3109,7 @@ class ControlApplication:
                         self._effective_cap(data, driver.scale),
                         driver.scale,
                     )
+                    profile_generation = self._profile_transition_generation
                     confirmed = await self._run(
                         "set_volume",
                         volume,
@@ -2156,6 +3124,7 @@ class ControlApplication:
                             volume=confirmed,
                             generation=generation,
                             driver=current_driver,
+                            profile_generation=profile_generation,
                         )
             elif not on and not active and data.late.auto:
                 data.late.auto = False
@@ -2348,6 +3317,36 @@ class ControlApplication:
         }
 
     async def dispatch(self, intent: ControlIntent) -> dict[str, Any]:
+        if isinstance(intent, SetCurrentGame) and self._game_state_synchronized:
+            target_appid = int(intent.appid)
+            data = self._settings()
+            if (
+                target_appid == 0
+                and self._current_game is None
+                and data.game_session is None
+                or target_appid > 0
+                and self._current_game is not None
+                and self._current_game["appid"] == target_appid
+                and self._current_game_binding == self._receiver_binding(data)
+            ):
+                return await self._dispatch(intent)
+        if isinstance(
+            intent,
+            (GameStarted, GameStopped, SetCurrentGame, RememberForGame, ForgetGame),
+        ):
+            async with self._profile_transition_lock:
+                self._profile_transition_generation += 1
+                self._profile_transition_active = True
+                self._profile_transition_owner = asyncio.current_task()
+                try:
+                    return await self._dispatch(intent)
+                finally:
+                    self._profile_transition_generation += 1
+                    self._profile_transition_active = False
+                    self._profile_transition_owner = None
+        return await self._dispatch(intent)
+
+    async def _dispatch(self, intent: ControlIntent) -> dict[str, Any]:
         result: dict[str, Any] | None
         result_generation: int | None = None
         result_driver: Driver | None = None
